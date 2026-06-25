@@ -1,0 +1,50 @@
+# Build output
+build/
+build_*/
+cmake-build-*/
+out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+*.cmake
+compile_commands.json
+
+# Qt / MOC / AUTOGEN
+*_autogen/
+moc_*.cpp
+moc_*.cpp.d
+qrc_*.cpp
+ui_*.h
+
+# Visual Studio / MSBuild
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj.user
+*.vcxproj.filters
+*.tlog
+*.recipe
+*.ipch
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.obj
+*.idb
+*.log
+*.opendb
+*.exe
+*.dll
+*.manifest
+
+# Misc
+*.stackdump
+*.tmp
+*.temp
+Thumbs.db
+Desktop.ini
