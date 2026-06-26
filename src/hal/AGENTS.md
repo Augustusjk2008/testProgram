@@ -5,7 +5,7 @@
 - Keep the module UI-free; it is a core Qt library only.
 
 ## Architecture
-- Treat `docs/design/five-layer-architecture.md` and `docs/design/hal-interface-protocol.md` as the source of truth.
+- Treat `docs/design/overview/five-layer-architecture.md` and `docs/design/contracts/hal-interface-protocol.md` as the source of truth.
 - Keep public HAL headers under `src/hal/include/hal/` stable and minimal.
 - Keep internal implementation in `src/hal/src/`.
 - Keep the mock backend working first; it is the default development path.

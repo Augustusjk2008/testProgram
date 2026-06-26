@@ -2,7 +2,7 @@
 
 > 技术栈：Qt 5.15 / C++17 / Qt Widgets / Windows 7+
 > 当前范围：AD、DA、DI、DO、串口、CANFD。
-> 本文定位：总览、分层边界、跨层依赖。业务调度细节见 `business-scheduling-layer.md`，HAL 细节见 `hal-interface-protocol.md`，日志细节见 `log-interface-protocol.md`，测试规范见 `testing-specification.md`。
+> 本文定位：总览、分层边界、跨层依赖。业务调度细节见 `../contracts/business-scheduling-layer.md`，HAL 细节见 `../contracts/hal-interface-protocol.md`，日志细节见 `../contracts/log-interface-protocol.md`，测试规范见 `../testing/testing-specification.md`。
 
 ---
 
@@ -10,16 +10,16 @@
 
 | 文档 | 主定义 |
 | --- | --- |
-| `five-layer-architecture.md` | 五层关系、模块边界、跨层流程 |
-| `business-scheduling-layer.md` | 业务调度层契约 |
-| `hal-interface-protocol.md` | HAL 对上接口、Adapter ABI、资源和错误映射 |
-| `log-interface-protocol.md` | `LogEvent`、`LogService`、`logProduced`、source 约定 |
-| `testing-specification.md` | 测试目录、分层边界、用例范围、运行方式 |
+| `overview/five-layer-architecture.md` | 五层关系、模块边界、跨层流程 |
+| `contracts/business-scheduling-layer.md` | 业务调度层契约 |
+| `contracts/hal-interface-protocol.md` | HAL 对上接口、Adapter ABI、资源和错误映射 |
+| `contracts/log-interface-protocol.md` | `LogEvent`、`LogService`、`logProduced`、source 约定 |
+| `testing/testing-specification.md` | 测试目录、分层边界、用例范围、运行方式 |
 
 冲突处理：
 
-- HAL 术语以 `hal-interface-protocol.md` 和 `src/hal/include/hal/*.h` 为准。
-- 日志术语以 `log-interface-protocol.md` 为准。
+- HAL 术语以 `../contracts/hal-interface-protocol.md` 和 `src/hal/include/hal/*.h` 为准。
+- 日志术语以 `../contracts/log-interface-protocol.md` 为准。
 - 业务入口以 `TestRunService` 为准；`SchedulerAPI` 只作附件术语或兼容别名。
 - 执行核心以 `TestFlowEngine` 为准；`TestEngine` 只作内部实现名或历史别名。
 
@@ -184,7 +184,7 @@ UI 请求停止
 - 业务层为每个测试步骤生成 `requestId`，UI、业务、算法、HAL、Adapter 同链路复用。
 - 报告模块读取日志摘要，不负责收集日志。
 
-详见 `log-interface-protocol.md`。
+详见 `../contracts/log-interface-protocol.md`。
 
 ---
 
@@ -198,8 +198,8 @@ UI 请求停止
 
 安全策略主定义：
 
-- 业务层的 `SafetyPolicy` 见 `business-scheduling-layer.md`。
-- HAL 输出校验和 `safeState` 执行见 `hal-interface-protocol.md`。
+- 业务层的 `SafetyPolicy` 见 `../contracts/business-scheduling-layer.md`。
+- HAL 输出校验和 `safeState` 执行见 `../contracts/hal-interface-protocol.md`。
 
 ---
 

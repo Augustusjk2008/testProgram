@@ -3,7 +3,7 @@
 > 适用项目：多产品通用硬件测试软件（Qt 5.15 / C++17 / Windows）
 > 本文定位：业务调度层对上接口、内部执行核心、配置/计划/结果模型、资源与安全边界。
 > 当前范围：测试生命周期调度、配置解析、计划生成、资源管理、安全护栏、日志、报告；硬件能力对接 AD、DA、DI、DO、串口、CANFD；测试总线和被测总线支持串口、CANFD、网口；统一采用 `EXCHANGE` 测试模式和 JSON 协议配置。
-> 事实来源：`docs/design/five-layer-architecture.md`、`docs/design/hal-interface-protocol.md`、`docs/design/log-interface-protocol.md`、`src/hal/include/hal/*.h`、附件《业务调度层接口契约文档_V3.1.md》。
+> 事实来源：`docs/design/overview/five-layer-architecture.md`、`docs/design/contracts/hal-interface-protocol.md`、`docs/design/contracts/log-interface-protocol.md`、`src/hal/include/hal/*.h`、附件《业务调度层接口契约文档_V3.1.md》。
 > 冲突处理：HAL 术语以 HAL 文档和头文件为准；日志术语以 `log-interface-protocol.md` 为准；业务入口以 `TestRunService` 为准，`SchedulerAPI` 只作兼容名；执行核心以 `TestFlowEngine` 为准，`TestEngine` 只作历史/内部别名。
 
 ---

@@ -1,7 +1,7 @@
 # 仓库规范
 
 ## 当前事实来源
-- `docs/design/five-layer-architecture.md` 与 `docs/design/hal-interface-protocol.md` 定义了 HAL 合约与架构。
+- `docs/design/overview/five-layer-architecture.md` 与 `docs/design/contracts/hal-interface-protocol.md` 定义了 HAL 合约与架构。
 - 代码变更须与上述文档保持一致；当接口或配置结构发生变化时，同步更新文档。
 
 ## 模块布局
