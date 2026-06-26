@@ -2,7 +2,7 @@
 
 > 技术栈：Qt 5.15 / C++17 / Qt Widgets / Windows 7+
 > 当前范围：AD、DA、DI、DO、串口、CANFD。
-> 本文定位：总览、分层边界、跨层依赖。业务调度细节见 `business-scheduling-layer.md`，HAL 细节见 `hal-interface-protocol.md`，日志细节见 `log-interface-protocol.md`。
+> 本文定位：总览、分层边界、跨层依赖。业务调度细节见 `business-scheduling-layer.md`，HAL 细节见 `hal-interface-protocol.md`，日志细节见 `log-interface-protocol.md`，测试规范见 `testing-specification.md`。
 
 ---
 
@@ -14,6 +14,7 @@
 | `business-scheduling-layer.md` | 业务调度层契约 |
 | `hal-interface-protocol.md` | HAL 对上接口、Adapter ABI、资源和错误映射 |
 | `log-interface-protocol.md` | `LogEvent`、`LogService`、`logProduced`、source 约定 |
+| `testing-specification.md` | 测试目录、分层边界、用例范围、运行方式 |
 
 冲突处理：
 

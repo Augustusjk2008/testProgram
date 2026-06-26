@@ -24,6 +24,7 @@ set(HAL_PRIVATE_HEADERS
 
 set(HAL_SOURCES
     src/hal_types.cpp
+    src/hal_error_mapper.cpp
     src/resource_mapper.cpp
     src/safety_guard.cpp
     src/mock_adapter.cpp
