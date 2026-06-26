@@ -1,55 +1,41 @@
-# 日志模块接口协议设计
+# 日志模块接口协议
 
-> 适用项目：多产品通用硬件测试软件（Qt 5.15 / C++ / Windows）  
-> 设计范围：独立日志模块与 UI、业务调度、测试算法、HAL、Adapter 五层之间的日志事件边界。  
-> 原则：KISS。各层只通过 signal 生产日志事件，不直接写日志文件、数据库或报告摘要。
+> 适用项目：多产品通用硬件测试软件（Qt 5.15 / C++17 / Windows）
+> 本文定位：日志模型、生产接口、来源约定、HAL/Adapter 映射。
+> 原则：五层只生产日志事件，不直接写日志文件、数据库或报告摘要。
 
 ---
 
 ## 1. 模块定位
 
-日志模块是五层架构旁路的独立基础模块，不属于 UI、业务调度、测试算法、HAL 或 Adapter 任一层。
+日志模块是五层架构旁路基础模块，不属于 UI、业务调度、算法、HAL 或 Adapter。
 
 ```text
-UI / 业务调度 / 测试算法 / HAL / Adapter
-  -> emit log event
+UI / 业务调度 / 算法 / HAL / Adapter
+  -> emit logProduced(...)
   -> LogService
+  -> 缓存 / 持久化 / 查询 / 导出 / UI 展示
 ```
 
-HAL 侧边界：
+边界：
 
-```text
-测试算法/业务层
-  -> IHalService / IHalDevice 调用携带 OperationOptions.requestId
-  -> HAL 计时并生成 HalLogEvent
-  -> IHalService::logProduced(HalLogEvent)
-  -> LogService::append(LogEvent)
-
-Adapter host.log
-  -> HAL 接收
-  -> HalLogEvent{source="adapter"}
-  -> LogService
-```
-
-边界约定：
-
-- 五层都可以向日志模块 `emit signal` 生产日志事件。
-- 五层不直接写日志文件、数据库、CSV 或报告摘要。
-- 日志模块不反向调用 UI、业务流程、测试算法、HAL 或 Adapter。
-- UI 可以订阅日志模块输出，用于实时展示。
+- 五层可通过 signal 生产日志事件。
+- 五层不直接写日志存储。
+- 日志模块不反向调用 UI、业务流程、算法、HAL 或 Adapter。
+- 报告模块只读取日志摘要，不负责收集日志。
 
 ---
 
 ## 2. 日志事件模型
 
-最小日志事件字段：
+主模型：
 
 ```cpp
 struct LogEvent {
     qint64 timestampUs = 0;
     QString level;       // TRACE / DEBUG / INFO / WARN / ERROR
     QString source;      // ui / flow / algorithm / hal / adapter / system
-    QString category;    // 例如 hal.analog.read
+    QString category;
     QString message;
     QString requestId;
     qint64 durationMs = -1;
@@ -59,58 +45,39 @@ struct LogEvent {
 };
 ```
 
-字段说明：
+字段：
 
 | 字段 | 含义 |
 | --- | --- |
-| `timestampUs` | 事件发生时间，微秒 |
+| `timestampUs` | Unix epoch 微秒 |
 | `level` | 日志级别 |
-| `source` | 日志来源层或模块 |
-| `category` | 细分分类 |
-| `message` | 可读日志内容 |
-| `requestId` | 测试项或操作追踪 ID，可为空 |
-| `durationMs` | 操作耗时；无耗时语义时为 `-1` |
-| `status` | 操作结果，例如 `Ok` / `Timeout` / `IoError` |
-| `adapterCode` | Adapter 统一错误码；非硬件日志可为空 |
+| `source` | 来源层或模块 |
+| `category` | 细分分类，如 `hal.analog.readAd` |
+| `message` | 可读信息 |
+| `requestId` | 测试项或操作追踪 ID，可空 |
+| `durationMs` | 操作耗时；无耗时语义为 `-1` |
+| `status` | 操作结果，如 `Ok` / `Timeout` / `IoError` |
+| `adapterCode` | Adapter 统一错误码；非硬件日志可空 |
 | `context` | 产品、工位、步骤、设备、资源等扩展上下文 |
 
 ---
 
-## 3. 追踪链约定
+## 3. 生产接口
 
-- 业务调度层为每个测试步骤生成 `requestId`。
-- UI、业务调度、测试算法、HAL、Adapter 产生同一操作链日志时复用同一个 `requestId`。
-- HAL 调用 Adapter 前记录开始时间，调用结束后补齐 `durationMs`、`status`、`adapterCode`。
-- Adapter 不能接收 `requestId` 时，由 HAL 在转发 Adapter 日志时补齐。
-- 不适用的字段保持空值或默认值，不为简单日志强行造字段。
-
----
-
-## 4. 生产接口
-
-各层通过信号或轻量接口投递日志事件：
+各层使用一致语义：
 
 ```cpp
-class ILogProducer {
-public:
-    virtual ~ILogProducer() = default;
-
 signals:
     void logProduced(const LogEvent& event);
-};
 ```
 
-Qt 实现时不强制所有类继承统一基类；只要信号语义一致即可：
+Qt 实现不强制继承统一基类；信号语义一致即可。
 
-```cpp
-emit logProduced(event);
-```
+禁止把 `ILogger` 或 `logGenerated` 作为项目主契约。若附件或历史代码出现这些名称，只能作为兼容名映射到 `logProduced(LogEvent)`。
 
 ---
 
-## 5. 日志服务接口
-
-日志模块对外暴露最小服务接口：
+## 4. 日志服务接口
 
 ```cpp
 class ILogService : public QObject {
@@ -126,15 +93,15 @@ signals:
 };
 ```
 
-使用方式：
+约定：
 
-- 各层信号连接到 `ILogService::append`。
-- `LogService` 负责缓存、持久化、查询和导出；具体存储实现后续再定。
+- 各层 `logProduced` 连接到 `ILogService::append`。
+- `LogService` 负责缓存、持久化、查询和导出。
 - UI 订阅 `logAppended` 做实时展示。
 
 ---
 
-## 6. 来源约定
+## 5. 来源约定
 
 | source | 来源 |
 | --- | --- |
@@ -145,22 +112,59 @@ signals:
 | `adapter` | 硬件适配器层 |
 | `system` | 应用框架、启动关闭、全局异常 |
 
+`source` 只描述来源，不描述业务状态；状态写入 `status` 或 `context`。
+
 ---
 
-## 7. 与现有模块关系
+## 6. 追踪链
 
-- HAL 当前的 `IHalService::logMessage` 可视为 HAL 到日志模块的兼容事件源。
-- HAL 新代码应优先连接 `IHalService::logProduced(const HalLogEvent&)`；`logMessage` 只保留给旧 UI/旧日志接入。
-- Adapter C ABI 的 `host.log` 进入 HAL 后，应转换为 `source = "adapter"` 的 `LogEvent`。
-- 报告模块只读取日志摘要，不负责收集日志。
-- CSV 数据记录是否复用日志模块后续再定，本协议只约束日志事件。
+- 业务调度层为每个测试步骤生成 `requestId`。
+- UI、业务、算法、HAL、Adapter 同一操作链复用同一个 `requestId`。
+- HAL 调 Adapter 前后计时，补齐 `durationMs`、`status`、`adapterCode`。
+- Adapter 不能接收 `requestId` 时，由 HAL 在转发 Adapter 日志时补齐。
+- 不适用字段保持空值或默认值。
 
-字段映射：
+---
+
+## 7. HAL/Adapter 映射
+
+HAL 内部事件类型为 `HalLogEvent`，定义在 `hal_types.h`。
+
+映射到 `LogEvent`：
 
 | LogEvent 字段 | HAL 来源 |
 | --- | --- |
+| `timestampUs` | `HalLogEvent.timestampUs` |
+| `level` | `HalLogEvent.level` |
+| `source` | `HalLogEvent.source`，通常为 `hal` 或 `adapter` |
+| `category` | `HalLogEvent.category` |
+| `message` | `HalLogEvent.message` |
 | `requestId` | `OperationOptions.requestId` |
 | `durationMs` | HAL 调用计时 |
 | `status` | `HalStatusCode` 字符串 |
 | `adapterCode` | `HalStatus.error.adapterCode` |
-| `deviceId` / `resourceId` | 放入 `context`，来自设备描述和资源映射 |
+| `context.deviceId` | `HalLogEvent.deviceId` |
+| `context.resourceId` | `HalLogEvent.resourceId` |
+| `context.operation` | `HalLogEvent.operation` |
+
+兼容信号：
+
+- `IHalService::logProduced(const HalLogEvent&)` 是 HAL 新日志入口。
+- `IHalService::logMessage(...)` 只保留给旧 UI/旧日志接入。
+- HAL 发 `logProduced` 时可同步桥接 `logMessage`，但不得把 `logMessage` 作为新主契约。
+
+Adapter 日志：
+
+- Adapter C ABI 的 `host.log` 进入 HAL。
+- HAL 转换为 `source = "adapter"` 的 `HalLogEvent`。
+- 再由日志接入层转为 `LogEvent`。
+
+---
+
+## 8. 验收标准
+
+- 项目主日志模型只有 `LogEvent`。
+- 项目主生产语义只有 `logProduced`。
+- `ILogger`、`logGenerated` 不作为主契约出现。
+- HAL/Adapter 日志可追踪到 `requestId`、耗时、状态、设备和资源。
+- 日志模块不承担 CSV 数据记录或报告生成职责。
