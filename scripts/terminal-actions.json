@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "actions": [
+    {
+      "id": "test",
+      "label": "编译测试",
+      "icon": "Hammer",
+      "windowsCommand": "cmake -S . -B build_vs -G \"Visual Studio 17 2022\" -A x64; cmake --build build_vs --config Debug --target hwtest_hal_tests; ctest --test-dir build_vs -C Debug --output-on-failure",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
+      "confirm": false,
+      "enabled": true
+    },
+    {
+      "id": "test_only",
+      "label": "单独测试",
+      "icon": "TestTube2",
+      "windowsCommand": "ctest --test-dir build_vs -C Debug --output-on-failure",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
+      "confirm": false,
+      "enabled": true
+    }
+  ]
+}

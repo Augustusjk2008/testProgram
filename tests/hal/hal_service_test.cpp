@@ -129,3 +129,16 @@ TEST(HalServiceTest, CloseAppliesSafeStateBeforeReopen)
     ASSERT_TRUE(digitalSample.ok());
     EXPECT_EQ(digitalSample.value.level, DigitalLevel::Low);
 }
+
+TEST(HalServiceTest, ReportsMissingSessionAndSupportsFactoryPair)
+{
+    std::unique_ptr<IHalService> service(createHalService());
+    EXPECT_FALSE(service->device(QStringLiteral("missing")).ok());
+    EXPECT_EQ(service->closeDevice(QStringLiteral("missing"), OperationOptions{}).code, HalStatusCode::NotFound);
+    EXPECT_EQ(service->resetDevice(QStringLiteral("missing"), OperationOptions{}).code, HalStatusCode::NotFound);
+    EXPECT_EQ(service->healthCheck(QStringLiteral("missing"), OperationOptions{}).code, HalStatusCode::NotFound);
+
+    IHalService* raw = createHalService();
+    ASSERT_NE(raw, nullptr);
+    destroyHalService(raw);
+}
