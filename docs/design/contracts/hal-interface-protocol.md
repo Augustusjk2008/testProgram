@@ -147,7 +147,7 @@ struct HalLogEvent {
 };
 ```
 
-`HalLogEvent` 只定义 HAL 内部硬件上下文。日志模块主模型仍是 `LogEvent`，映射规则见 `log-interface-protocol.md`。
+`HalLogEvent` 只定义 HAL 内部硬件上下文。日志模块主模型仍是 `LogEvent`，映射规则见 `log-interface-protocol.md`。不得把 `LogService` 或 `LogEvent` 放入 `src/hal/include/hal/`，日志模块接入不得修改 `hal_adapter_abi.h`。
 
 ### 3.5 设备与能力
 
@@ -483,7 +483,8 @@ OperationOptions.requestId
   -> Adapter 调用
   -> HalStatus / adapterCode / durationMs
   -> emit IHalService::logProduced(HalLogEvent)
-  -> LogService::append(LogEvent)
+  -> hwtest::logging::fromHalLogEvent(...)
+  -> ILogService::append(LogEvent)
 ```
 
 字段来源：
@@ -503,6 +504,7 @@ OperationOptions.requestId
 - Adapter C ABI 可通过 `HalAdapterHostApiV1::log` 输出日志。
 - HAL 接收后转换为 `HalLogEvent{source="adapter"}`。
 - 当前 ABI 不向 Adapter 传 `requestId`；HAL 在调用上下文中补齐。
+- HAL 不依赖 `hwtest_log`；`src/logging/hal_log_bridge.*` 同时链接 HAL 与日志模块，负责边界映射。
 
 ---
 

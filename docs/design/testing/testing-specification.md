@@ -1,7 +1,7 @@
 # 测试规范
 
 > 适用项目：多产品通用硬件测试软件（Qt 5.15 / C++17 / Windows）
-> 当前落地范围：HAL 层 GoogleTest / CTest。
+> 当前落地范围：HAL 层和日志模块 GoogleTest / CTest。
 > 本文定位：测试目录、分层边界、用例范围、运行方式。
 
 ---
@@ -15,6 +15,7 @@
 ```powershell
 cmake -S . -B build_vs -G "Visual Studio 17 2022" -A x64
 cmake --build build_vs --config Debug --target hwtest_hal_tests
+cmake --build build_vs --config Debug --target hwtest_log_tests
 ctest --test-dir build_vs -C Debug --output-on-failure
 ```
 
@@ -45,6 +46,7 @@ tests/
   business/
   algorithms/
   hal/
+  log/
   adapters/
   integration/
 ```
@@ -66,6 +68,12 @@ tests/
 - `ResourceMapper`：默认 Mock 资源、自定义设备和资源、能力、安全状态配置。
 - `SafetyGuard`：模拟量安全钳位、禁止越界输出、数字量/串口/CANFD 参数校验。
 - `HalService`：未初始化错误、初始化、扫描、打开、日志 `requestId`、AD/DA 回环、DI/DO 回环、串口 echo、CANFD loopback、关闭和重开安全状态。
+
+当前日志模块测试范围：
+
+- `LogService`：默认时间戳和等级补齐、最小等级过滤、`Off` 过滤、有界 recent 缓存、signal、sink 分发。
+- `JsonLineFileSink`：JSONL 单行结构化输出、context 保留、flush 后可读、作为 `LogService` sink 使用。
+- `hal_log_bridge`：`HalLogEvent -> LogEvent` 字段映射、空 source 补 `hal`、Adapter source 保留、连接 `IHalService::logProduced` 到 `ILogService::append`。
 
 验收命令：
 
@@ -127,4 +135,5 @@ ctest --test-dir build_vs -C Release --output-on-failure
 
 - 相关单元测试通过。
 - Debug 和 Release 至少各跑一次 HAL 测试。
+- 修改日志模块时，Debug 和 Release 至少各跑一次 `hwtest_log_tests`。
 - 无真实硬件环境时，Mock 主流程必须通过。

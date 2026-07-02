@@ -1,24 +1,25 @@
 # 仓库规范
 
-## 当前事实来源
-- `docs/design/overview/five-layer-architecture.md` 与 `docs/design/contracts/hal-interface-protocol.md` 定义了 HAL 合约与架构。
-- 代码变更须与上述文档保持一致；当接口或配置结构发生变化时，同步更新文档。
+## 事实源
+- `docs/design/overview/five-layer-architecture.md`
+- `docs/design/contracts/hal-interface-protocol.md`
+- `docs/design/testing/testing-specification.md`
+- `src/hal/AGENTS.md` 适用 `src/hal/` 子树
 
-## 模块布局
-- 公共 HAL 头文件位于 `src/hal/include/hal/` 下。
-- 内部实现位于 `src/hal/src/` 下。
-- 本仓库保持无 UI；HAL 模块仅为核心库。
+## 当前结构
+- 根构建入口: `CMakeLists.txt`
+- HAL 产物: `src/hal/` 下的 `hwtest_hal` 静态 Qt Core 库
+- 公共头: `src/hal/include/hal/`
+- 内部实现: `src/hal/src/`
+- 测试: `tests/`，以 GoogleTest 为主，含 HAL 夹具和单测
 
-## 代码风格
-- 遵循 Qt 5.15 / C++17 规范，使用 `hwtest::hal` 命名空间。
-- 注释力求精简且有用：仅说明意图、边界情况或不变量。
-- 优先使用小而专注的类与辅助工具，避免大而全的文件。
-
-## API 稳定性
-- 将公共 HAL 头文件视为兼容性表面。
-- 尽可能在结构体尾部扩展字段，避免破坏枚举语义。
-- 若适配器 ABI 发生变更，同步更新 `hal_adapter_abi.h` 与设计文档。
+## 约束
+- 遵循 Qt 5.15 / C++17，命名空间用 `hwtest::hal`
+- 当前仓库只落地 HAL 核心库和测试，不引入 UI
+- 公共 HAL 头视为兼容面；接口或配置结构变更时同步更新设计文档
+- 结构体尽量尾部扩展；ABI 变更时同步更新 `hal_adapter_abi.h`
 
 ## 构建
-- 根构建入口为 `CMakeLists.txt`。
-- HAL 模块应继续作为独立的 Qt Core 库进行构建。
+- `CMakeLists.txt` 先找 Qt5 Core，失败后转 Qt6 Core
+- `src/hal` 必须保持可独立构建
+- `tests` 通过 `BUILD_TESTING` 控制

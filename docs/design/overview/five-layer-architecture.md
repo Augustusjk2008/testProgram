@@ -53,8 +53,13 @@
 │ 封装厂家 DLL/lib/SDK/Win32 API               │
 └─────────────────────────────────────────────┘
 
-UI / 业务 / 算法 / HAL / Adapter
-  -> emit logProduced(LogEvent 或 HalLogEvent)
+UI / 业务 / 算法
+  -> emit logProduced(LogEvent)
+  -> LogService
+
+HAL / Adapter 日志
+  -> emit IHalService::logProduced(HalLogEvent)
+  -> hal_log_bridge
   -> LogService
 ```
 
@@ -65,6 +70,7 @@ UI / 业务 / 算法 / HAL / Adapter
 - 算法层不得包含厂家 SDK 头文件，不直接调厂家函数。
 - 更换板卡优先新增或替换 Adapter，HAL 以上少改或不改。
 - 日志模块为旁路基础模块，不属于五层任一层。
+- 当前日志模块源码位于 `src/logging/`，命名空间为 `hwtest::logging`，构建产物为 `hwtest_log`。
 
 ---
 
@@ -84,8 +90,8 @@ UI / 业务 / 算法 / HAL / Adapter
 | --- | --- | --- |
 | UI | 业务层 Service / ViewModel、日志服务 | HAL、Adapter、厂家 SDK |
 | 业务 | 算法注册表、配置模型、报告、日志、HAL 服务句柄 | Adapter、厂家 SDK |
-| 算法 | HAL 对上接口、测试上下文 | UI、业务流程实现、厂家 SDK |
-| HAL | Adapter ABI、资源配置 | UI、业务调度、测试判定 |
+| 算法 | HAL 对上接口、测试上下文、日志事件模型 | UI、业务流程实现、厂家 SDK |
+| HAL | Adapter ABI、资源配置 | UI、业务调度、测试判定、日志服务 |
 | Adapter | 厂家 DLL/lib/SDK/Win32 API | UI、业务、算法判定 |
 
 ---
@@ -181,6 +187,7 @@ UI 请求停止
 - 五层均通过 `logProduced` 语义生产日志事件。
 - 统一日志模型为 `LogEvent`。
 - HAL 内部事件为 `HalLogEvent`，进入日志模块时映射为 `LogEvent`。
+- Adapter 日志先进入 HAL，再由 HAL 产生 `source = "adapter"` 的 `HalLogEvent`。
 - 业务层为每个测试步骤生成 `requestId`，UI、业务、算法、HAL、Adapter 同链路复用。
 - 报告模块读取日志摘要，不负责收集日志。
 
@@ -205,7 +212,7 @@ UI 请求停止
 
 ## 8. 推荐源码结构
 
-当前仓库只落地 HAL 核心库。完整系统推荐结构：
+当前仓库已落地 HAL 核心库和独立日志模块。完整系统推荐结构：
 
 ```text
 src/
@@ -223,6 +230,9 @@ src/
   hal/
     include/hal/
     src/
+  logging/
+    include/logging/
+    src/
   adapters/
 
 configs/products/
@@ -236,6 +246,9 @@ data/
 ```text
 src/hal/include/hal/   公共 HAL 头文件
 src/hal/src/           HAL 内部实现和 Mock/C ABI Adapter 包装
+src/logging/include/   公共日志头文件
+src/logging/src/       日志服务、JSONL sink、HAL 日志桥接
+tests/log/             日志模块 GoogleTest
 docs/design/           架构与接口协议
 ```
 

@@ -11,10 +11,15 @@
 日志模块是五层架构旁路基础模块，不属于 UI、业务调度、算法、HAL 或 Adapter。
 
 ```text
-UI / 业务调度 / 算法 / HAL / Adapter
-  -> emit logProduced(...)
-  -> LogService
-  -> 缓存 / 持久化 / 查询 / 导出 / UI 展示
+UI / 业务调度 / 算法
+  -> emit logProduced(LogEvent)
+  -> ILogService::append(LogEvent)
+  -> recent 缓存 / sink 持久化 / UI 展示
+
+HAL / Adapter
+  -> emit IHalService::logProduced(HalLogEvent)
+  -> hal_log_bridge 映射
+  -> ILogService::append(LogEvent)
 ```
 
 边界：
@@ -23,6 +28,8 @@ UI / 业务调度 / 算法 / HAL / Adapter
 - 五层不直接写日志存储。
 - 日志模块不反向调用 UI、业务流程、算法、HAL 或 Adapter。
 - 报告模块只读取日志摘要，不负责收集日志。
+- Adapter C ABI 日志先通过 HAL host 回调进入 HAL，再由 HAL 产出 `source = "adapter"` 的 `HalLogEvent`。
+- `monitor.hpp`、`monitor_ui.*`、`monitor_ui_logger.*` 不属于本契约范围。
 
 ---
 
@@ -33,7 +40,7 @@ UI / 业务调度 / 算法 / HAL / Adapter
 ```cpp
 struct LogEvent {
     qint64 timestampUs = 0;
-    QString level;       // TRACE / DEBUG / INFO / WARN / ERROR
+    QString level;       // TRACE / DEBUG / INFO / WARN / ERROR / FATAL
     QString source;      // ui / flow / algorithm / hal / adapter / system
     QString category;
     QString message;
@@ -44,6 +51,27 @@ struct LogEvent {
     QVariantMap context;
 };
 ```
+
+辅助等级：
+
+```cpp
+enum class LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Fatal,
+    Off
+};
+```
+
+约定：
+
+- 文本字段使用大写等级名：`TRACE`、`DEBUG`、`INFO`、`WARN`、`ERROR`、`FATAL`。
+- `Off` 只用于 `LogService` 最小等级过滤，不作为事件等级写入。
+- 空等级由 `LogService` 补为 `INFO`。
+- 空时间戳由 `LogService` 补为当前 UTC Unix epoch 微秒。
 
 字段：
 
@@ -96,8 +124,23 @@ signals:
 约定：
 
 - 各层 `logProduced` 连接到 `ILogService::append`。
-- `LogService` 负责缓存、持久化、查询和导出。
+- `LogService` 负责等级过滤、有界 recent 缓存、sink 分发和 `logAppended`。
 - UI 订阅 `logAppended` 做实时展示。
+- `LogService` 不在内部状态锁内调用 sink 或 emit signal，避免回调重入导致死锁。
+- recent 缓存按追加顺序保存最近事件，`recent(maxCount)` 返回最多 `maxCount` 条。
+
+sink 约定：
+
+```cpp
+class ILogSink {
+public:
+    virtual ~ILogSink() = default;
+    virtual void append(const LogEvent& event) = 0;
+    virtual void flush() {}
+};
+```
+
+当前文件 sink 为 `JsonLineFileSink`，每条日志写为一行紧凑 JSON，不输出 ANSI 颜色。
 
 ---
 
@@ -146,6 +189,14 @@ HAL 内部事件类型为 `HalLogEvent`，定义在 `hal_types.h`。
 | `context.deviceId` | `HalLogEvent.deviceId` |
 | `context.resourceId` | `HalLogEvent.resourceId` |
 | `context.operation` | `HalLogEvent.operation` |
+
+规则：
+
+- `HalLogEvent.source` 为空时补 `hal`。
+- `deviceId`、`resourceId`、`operation` 写入 `LogEvent.context`。
+- `requestId`、`durationMs`、`status`、`adapterCode` 同时保留在 `LogEvent` 顶层字段和 `context`。
+- 原始 `HalLogEvent.context` 字段保留；同名标准字段以 HAL 顶层字段为准。
+- `connectHalLogs(IHalService*, ILogService*)` 只负责 signal 连接和映射，不修改 HAL ABI。
 
 兼容信号：
 

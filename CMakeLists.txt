@@ -23,6 +23,7 @@ else()
 endif()
 
 add_subdirectory(src/hal)
+add_subdirectory(src/logging)
 
 if (BUILD_TESTING)
     add_subdirectory(tests)
