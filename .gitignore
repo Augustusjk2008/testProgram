@@ -48,3 +48,6 @@ ui_*.h
 *.temp
 Thumbs.db
 Desktop.ini
+
+# tmp
+tmp/

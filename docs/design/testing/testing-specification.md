@@ -1,23 +1,27 @@
 # 测试规范
 
 > 适用项目：多产品通用硬件测试软件（Qt 5.15 / C++17 / Windows）
-> 当前落地范围：HAL 层和日志模块 GoogleTest / CTest。
+> 当前落地范围：HAL、日志和可运行的 BIZ 配置/调度/报告实现；BIZ 测试使用 FakeAlgorithmExecutor，不以 HAL 假对象替代算法端口。
 > 本文定位：测试目录、分层边界、用例范围、运行方式。
 
 ---
 
 ## 1. 构建目录
 
-- `build_vs/`：CMake + Visual Studio 17 2022 x64 生成目录。当前 HAL 测试在此构建和运行。
+- `build_vs/`：CMake + Visual Studio 17 2022 x64 生成目录。HAL、日志和 `hwtest_biz` 均在此构建。
 
 推荐命令：
 
 ```powershell
 cmake -S . -B build_vs -G "Visual Studio 17 2022" -A x64
+cmake --build build_vs --config Debug --target hwtest_biz
+cmake --build build_vs --config Debug --target hwtest_biz_tests
 cmake --build build_vs --config Debug --target hwtest_hal_tests
 cmake --build build_vs --config Debug --target hwtest_log_tests
 ctest --test-dir build_vs -C Debug --output-on-failure
 ```
+
+`hwtest_biz_tests` 已加入同一构建目录，并通过 `gtest_discover_tests` 注册到 CTest。
 
 ---
 
@@ -43,9 +47,10 @@ ctest --test-dir build_vs -C Debug --output-on-failure
 ```text
 tests/
   ui/
-  business/
+  biz/
   algorithms/
   hal/
+  protocol/
   log/
   adapters/
   integration/
@@ -60,7 +65,7 @@ tests/
 
 ---
 
-## 4. 当前 HAL 测试范围
+## 4. 当前模块与 BIZ 测试范围
 
 已覆盖：
 
@@ -74,6 +79,14 @@ tests/
 - `LogService`：默认时间戳和等级补齐、最小等级过滤、`Off` 过滤、有界 recent 缓存、signal、sink 分发。
 - `JsonLineFileSink`：JSONL 单行结构化输出、context 保留、flush 后可读、作为 `LogService` sink 使用。
 - `hal_log_bridge`：`HalLogEvent -> LogEvent` 字段映射、空 source 补 `hal`、Adapter source 保留、连接 `IHalService::logProduced` 到 `ILogService::append`。
+
+BIZ 测试入口和范围：
+
+- 目录为 `tests/biz/`，测试目标为 `hwtest_biz_tests`。
+- BIZ 单元测试只构造 `FakeAlgorithmExecutor`、配置样本和报告结果样本。
+- 当前注册 35 个 GoogleTest 用例，覆盖 `ITestRunService` 与 `IAlgorithmExecutor` 契约、配置迁移与严格校验、附件样例加载、稳定拓扑排序、重试、暂停/停止状态、优先级边界、结果编排、四种报告和 `executionConfig`/协议/安全配置透传。
+- BIZ 单元测试禁止构造 HAL 假对象、设备假对象、Socket、测量基类/工厂或 codec；这些属于算法或 HAL 层测试。
+- 对 `src/biz/` 和 `tests/biz/` 运行静态架构扫描，确保没有直接硬件执行依赖。
 
 验收命令：
 
@@ -107,17 +120,19 @@ ctest --test-dir build_vs -C Release --output-on-failure
 | 层级 | 单元测试允许依赖 | 禁止 |
 | --- | --- | --- |
 | UI | ViewModel、业务接口假对象、日志假对象 | HAL、Adapter、厂家 SDK |
-| 业务调度 | 算法假对象、HAL 假对象、配置样本 | UI 控件、Adapter、厂家 SDK |
+| BIZ | `FakeAlgorithmExecutor`、配置样本、结果/报告样本 | HAL 假对象、设备假对象、Socket、测量对象/工厂、codec、Adapter、厂家 SDK |
 | 核心算法 | `IHalService` / `IHalDevice` 假对象、测试上下文 | UI、业务流程实现、厂家 SDK |
 | HAL | Mock Adapter、C ABI 假对象、资源配置 | UI、业务判定、测试项结论 |
+| 协议 | 协议 CSV 样本、帧编解码器、字段 Schema | UI、Adapter、厂家 SDK |
 | Adapter | 厂家 SDK 假对象或仿真 DLL、ABI Host 假对象 | UI、业务、算法判定 |
 
-跨层测试只允许两类：
+跨层测试只允许以下几类：
 
 - 契约测试：相邻层公共接口、错误码、日志字段、配置字段。
-- 集成测试：业务 -> 算法 -> HAL -> Mock Adapter 的主流程。
+- 协议契约测试：协议 CSV 校验、字段布局、pack/unpack、字段 Schema。
+- 集成测试：`hwtest_biz` -> 算法实现 -> `hwtest_hal` -> Mock Adapter 的主流程。
 
-端到端测试默认使用 Mock Adapter；真实硬件端到端测试必须独立开关、独立机器、独立报告。
+`tests/biz/` 的单元测试不等于上述完整集成链：它只验证 BIZ 对算法端口的编排，并由 `FakeAlgorithmExecutor` 替代算法实现。端到端测试默认使用 Mock Adapter；真实硬件端到端测试必须独立开关、独立机器、独立报告。
 
 ---
 
@@ -126,14 +141,17 @@ ctest --test-dir build_vs -C Release --output-on-failure
 新增或修改接口时：
 
 - 公共头文件变化，同步协议文档和契约测试。
+- BIZ 公共头、数据模型或执行端口变化，同步 `business-scheduling-layer.md`、BIZ 契约测试和架构扫描。
 - Adapter ABI 变化，同步 `hal_adapter_abi.h`、协议文档和 ABI 兼容测试。
 - 新增错误码，同步错误映射测试。
 - 新增资源类型，同步资源映射、安全校验、Mock Adapter 测试。
+- 新增或修改协议 CSV 字段规则，同步 `device-communication-protocol.md` 和协议契约测试。
 - 修复缺陷，先补回归测试，再修实现。
 
 提交前最低要求：
 
 - 相关单元测试通过。
+- 修改 BIZ 时，运行 `hwtest_biz_tests`；BIZ 单测不得引入 HAL 假对象，且 BIZ 架构扫描必须通过。
 - Debug 和 Release 至少各跑一次 HAL 测试。
 - 修改日志模块时，Debug 和 Release 至少各跑一次 `hwtest_log_tests`。
 - 无真实硬件环境时，Mock 主流程必须通过。

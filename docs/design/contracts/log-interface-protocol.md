@@ -161,8 +161,8 @@ public:
 
 ## 6. 追踪链
 
-- 业务调度层为每个测试步骤生成 `requestId`。
-- UI、业务、算法、HAL、Adapter 同一操作链复用同一个 `requestId`。
+- 业务调度层为每次测试任务生成一个非空 `requestId`。
+- 任务内各步骤以及 UI、业务、算法、HAL、Adapter 同一操作链复用该 `requestId`。
 - HAL 调 Adapter 前后计时，补齐 `durationMs`、`status`、`adapterCode`。
 - Adapter 不能接收 `requestId` 时，由 HAL 在转发 Adapter 日志时补齐。
 - 不适用字段保持空值或默认值。

@@ -300,6 +300,8 @@ public:
 
 主定义文件：`src/hal/include/hal/i_serial_bus.h`。
 
+串口接口只负责端口配置和原始字节收发。测试设备与被测件之间的字段级帧结构、CSV 建模、打包和解析规则见 `device-communication-protocol.md`。
+
 ```cpp
 class ISerialBus {
 public:
@@ -325,6 +327,8 @@ public:
 ### 4.6 CANFD `ICanFdBus`
 
 主定义文件：`src/hal/include/hal/i_canfd_bus.h`。
+
+CANFD 接口只负责 CANFD 总线配置和原始帧收发。CANFD payload 中承载的字段级协议结构见 `device-communication-protocol.md`。
 
 ```cpp
 class ICanFdBus {

@@ -22,7 +22,7 @@ HAL 是五层架构中的第 4 层，位于核心测试算法层和硬件 Adapte
 
 ```mermaid
 flowchart LR
-  Caller["算法层 / 业务调用方"]
+  Caller["算法层调用方"]
 
   subgraph PublicApi["公共 HAL 接口"]
     Factory["hal_factory"]

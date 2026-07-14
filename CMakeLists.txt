@@ -16,14 +16,18 @@ include(CTest)
 
 find_package(Qt5 5.15 QUIET COMPONENTS Core)
 if (Qt5_FOUND)
-    set(HAL_QT_CORE_TARGET Qt5::Core)
+    set(HWTEST_QT_CORE_TARGET Qt5::Core)
 else()
     find_package(Qt6 REQUIRED COMPONENTS Core)
-    set(HAL_QT_CORE_TARGET Qt6::Core)
+    set(HWTEST_QT_CORE_TARGET Qt6::Core)
 endif()
+
+# Compatibility variable for the independently buildable HAL module.
+set(HAL_QT_CORE_TARGET ${HWTEST_QT_CORE_TARGET})
 
 add_subdirectory(src/hal)
 add_subdirectory(src/logging)
+add_subdirectory(src/biz)
 
 if (BUILD_TESTING)
     add_subdirectory(tests)
