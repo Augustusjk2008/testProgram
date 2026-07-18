@@ -28,6 +28,7 @@ set(HAL_QT_CORE_TARGET ${HWTEST_QT_CORE_TARGET})
 add_subdirectory(src/hal)
 add_subdirectory(src/logging)
 add_subdirectory(src/biz)
+add_subdirectory(src/algorithm)
 
 if (BUILD_TESTING)
     add_subdirectory(tests)

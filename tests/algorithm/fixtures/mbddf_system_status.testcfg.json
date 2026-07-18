@@ -1,0 +1,102 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-system-status-sim",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF system status smoke",
+  "configVersion": "0.1.0",
+  "steps": [
+    {
+      "stepId": "SYSTEM_STATUS",
+      "testItemId": "system_status",
+      "name": "Read system status",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.system_status",
+      "parameters": {
+        "protocol": {
+          "requestValues": {}
+        }
+      },
+      "timeoutMs": 200,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": [
+        {
+          "metric": "status",
+          "op": "Equal",
+          "ref": 0,
+          "tol": 0,
+          "passIfMatched": true
+        },
+        {
+          "metric": "err_code",
+          "op": "Equal",
+          "ref": 0,
+          "tol": 0,
+          "passIfMatched": true
+        }
+      ]
+    }
+  ],
+  "hardwareRequirements": [],
+  "protocolProfiles": [
+    {
+      "id": "system_status_request",
+      "busType": "SERIAL",
+      "payloadEncoding": "raw",
+      "frameFormat": {
+        "header": "55AA",
+        "lengthBytes": 1,
+        "crc": "CRC-16/XMODEM",
+        "crcByteOrder": "little"
+      },
+      "timing": {
+        "timeoutMs": 200
+      }
+    },
+    {
+      "id": "system_status_response",
+      "busType": "SERIAL",
+      "payloadEncoding": "raw",
+      "frameFormat": {
+        "header": "55AA",
+        "lengthBytes": 1,
+        "crc": "CRC-16/XMODEM",
+        "crcByteOrder": "little"
+      },
+      "timing": {
+        "timeoutMs": 200
+      }
+    }
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {
+      "requestProfileId": "system_status_request",
+      "responseProfileId": "system_status_response"
+    },
+    "serial": {
+      "baudRate": 614400,
+      "dataBits": 8,
+      "parity": "Even",
+      "stopBits": 1,
+      "flowControl": "None"
+    },
+    "initialSequence": 4660
+  },
+  "safetyPolicy": {
+    "enterSafeStateOnStop": true,
+    "enterSafeStateOnError": true
+  },
+  "runtimeConfig": {
+    "parallelEnabled": false,
+    "maxParallel": 1,
+    "defaultTimeoutMs": 200,
+    "defaultRetryCount": 0,
+    "retryIntervalMs": 0,
+    "taskPriorityDefault": 2,
+    "stopOnFirstFailure": true,
+    "allowResume": false
+  },
+  "reportFields": {}
+}
