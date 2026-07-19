@@ -236,49 +236,52 @@ TEST(MbddfProtocolTest, HandlesBitFieldsScaledValuesAndReservedBytesWhenAssetsEx
 
     const MessageDefinition* helmRequest =
         catalog.findByName(QStringLiteral("helm_board_test_request"));
-    const MessageDefinition* adResponse = catalog.findByName(QStringLiteral("ad_read_response"));
+    const MessageDefinition* elecHealthResponse =
+        catalog.findByName(QStringLiteral("elec_health_status_response"));
     ASSERT_NE(helmRequest, nullptr);
-    ASSERT_NE(adResponse, nullptr);
+    ASSERT_NE(elecHealthResponse, nullptr);
 
     QVariantMap helmValues;
-    helmValues.insert(QStringLiteral("pwm_level[0]"), 1);
-    helmValues.insert(QStringLiteral("pwm_level[1]"), 0);
-    helmValues.insert(QStringLiteral("pwm_level[2]"), 1);
-    helmValues.insert(QStringLiteral("pwm_level[3]"), 0);
     helmValues.insert(QStringLiteral("direction[0]"), 0);
     helmValues.insert(QStringLiteral("direction[1]"), 1);
     helmValues.insert(QStringLiteral("direction[2]"), 0);
     helmValues.insert(QStringLiteral("direction[3]"), 1);
+    helmValues.insert(QStringLiteral("pwm_duty_percent[0]"), 10);
+    helmValues.insert(QStringLiteral("pwm_duty_percent[1]"), 20);
+    helmValues.insert(QStringLiteral("pwm_duty_percent[2]"), 30);
+    helmValues.insert(QStringLiteral("pwm_duty_percent[3]"), 40);
 
     QByteArray helmPayload;
     ASSERT_TRUE(encodePayload(*helmRequest, helmValues, 3, &helmPayload, &error))
         << error.toStdString();
     ASSERT_EQ(helmPayload.size(), 48);
-    EXPECT_EQ(static_cast<uchar>(helmPayload.at(5)), 0xA5u);
+    EXPECT_EQ(static_cast<uchar>(helmPayload.at(5)), 0xA0u);
 
     QVariantMap decodedHelm;
     ASSERT_TRUE(decodePayload(*helmRequest, helmPayload, &decodedHelm, &error))
         << error.toStdString();
-    EXPECT_EQ(decodedHelm.value(QStringLiteral("pwm_level[2]")).toUInt(), 1u);
     EXPECT_EQ(decodedHelm.value(QStringLiteral("direction[3]")).toUInt(), 1u);
+    EXPECT_EQ(decodedHelm.value(QStringLiteral("pwm_duty_percent[2]")).toUInt(), 30u);
 
+    const ProtocolField* helmPadding = helmRequest->findField(QStringLiteral("pad"));
+    ASSERT_NE(helmPadding, nullptr);
     QByteArray corruptPayload = helmPayload;
-    corruptPayload[6] = static_cast<char>(1);
+    corruptPayload[helmPadding->payloadOffset()] = static_cast<char>(1);
     EXPECT_FALSE(decodePayload(*helmRequest, corruptPayload, &decodedHelm, &error));
     EXPECT_FALSE(error.isEmpty());
 
-    QVariantMap adValues;
-    adValues.insert(QStringLiteral("status"), 0);
-    adValues.insert(QStringLiteral("err_code"), 0);
-    adValues.insert(QStringLiteral("value_YX"), 5.045);
-    QByteArray adPayload;
-    ASSERT_TRUE(encodePayload(*adResponse, adValues, 8, &adPayload, &error))
+    QVariantMap elecHealthValues;
+    elecHealthValues.insert(QStringLiteral("status"), 0);
+    elecHealthValues.insert(QStringLiteral("err_code"), 0);
+    elecHealthValues.insert(QStringLiteral("value_YX"), 5.045);
+    QByteArray elecHealthPayload;
+    ASSERT_TRUE(encodePayload(*elecHealthResponse, elecHealthValues, 8, &elecHealthPayload, &error))
         << error.toStdString();
 
-    QVariantMap decodedAd;
-    ASSERT_TRUE(decodePayload(*adResponse, adPayload, &decodedAd, &error))
+    QVariantMap decodedElecHealth;
+    ASSERT_TRUE(decodePayload(*elecHealthResponse, elecHealthPayload, &decodedElecHealth, &error))
         << error.toStdString();
-    EXPECT_NEAR(decodedAd.value(QStringLiteral("value_YX")).toDouble(), 5.045, 1e-9);
+    EXPECT_NEAR(decodedElecHealth.value(QStringLiteral("value_YX")).toDouble(), 5.045, 1e-9);
 }
 
 TEST(MbddfProtocolTest, EveryCurrentDefinitionSupportsDefaultFrameRoundTripWhenAssetsExist)
@@ -291,7 +294,7 @@ TEST(MbddfProtocolTest, EveryCurrentDefinitionSupportsDefaultFrameRoundTripWhenA
     ProtocolCatalog catalog;
     QString error;
     ASSERT_TRUE(catalog.loadFromDirectory(directory, &error)) << error.toStdString();
-    ASSERT_EQ(catalog.size(), 36);
+    ASSERT_EQ(catalog.size(), 32);
 
     for (const MessageDefinition& definition : catalog.messages()) {
         QByteArray payload;

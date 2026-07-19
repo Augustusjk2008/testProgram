@@ -14,6 +14,7 @@ struct ResourceBinding {
     QString direction;
     int physicalIndex = -1;
     QVariantMap properties;
+    QString providerId;
 };
 
 class ResourceMapper {

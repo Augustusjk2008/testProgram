@@ -2,6 +2,7 @@
 
 #include "hal_global.h"
 #include "hal_types.h"
+#include "i_control_channel.h"
 
 namespace hwtest::hal {
 
@@ -21,6 +22,7 @@ public:
     virtual IDigitalIo* digitalIo() = 0;
     virtual ISerialBus* serialBus() = 0;
     virtual ICanFdBus* canFdBus() = 0;
+    virtual IControlChannel* controlChannel() { return nullptr; }
 };
 
 } // namespace hwtest::hal

@@ -11,6 +11,24 @@ namespace hwtest::algorithm::mbddf {
 
 namespace {
 
+class TransportCloseGuard {
+public:
+    explicit TransportCloseGuard(IByteTransport* transport)
+        : m_transport(transport)
+    {
+    }
+
+    ~TransportCloseGuard()
+    {
+        if (m_transport != nullptr) {
+            m_transport->close();
+        }
+    }
+
+private:
+    IByteTransport* m_transport = nullptr;
+};
+
 using hwtest::biz::CmpOp;
 using hwtest::biz::ErrorCode;
 using hwtest::biz::Result;
@@ -143,6 +161,7 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
     }
 
     const QVariantMap serial = nestedMap(executionConfig, QStringLiteral("serial"));
+    QVariantMap transportOptions = nestedMap(executionConfig, QStringLiteral("transport"));
     if (!serial.isEmpty()) {
         const int baudRate = serial.value(QStringLiteral("baudRate"), 614400).toInt();
         const int dataBits = serial.value(QStringLiteral("dataBits"), 8).toInt();
@@ -158,13 +177,19 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
                               QStringLiteral("mbddf.prepare"));
         }
 
-        QString transportConfigError;
-        if (!m_transport->configure(serial, &transportConfigError)) {
-            return makeStatus(ErrorCode::ConfigSchemaError,
-                              QStringLiteral("Invalid MB_DDF transport settings: %1")
-                                  .arg(transportConfigError),
-                              QStringLiteral("mbddf.prepare"));
+        for (auto it = serial.constBegin(); it != serial.constEnd(); ++it) {
+            if (!transportOptions.contains(it.key())) {
+                transportOptions.insert(it.key(), it.value());
+            }
         }
+    }
+
+    QString transportConfigError;
+    if (!m_transport->configure(transportOptions, &transportConfigError)) {
+        return makeStatus(ErrorCode::ConfigSchemaError,
+                          QStringLiteral("Invalid MB_DDF transport settings: %1")
+                              .arg(transportConfigError),
+                          QStringLiteral("mbddf.prepare"));
     }
 
     const QString initialSequenceText = executionConfig.value(QStringLiteral("initialSequence")).toString();
@@ -191,13 +216,6 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
             }
             initialSequence = static_cast<quint16>(parsed);
         }
-    }
-
-    QString transportError;
-    if (!m_transport->open(&transportError)) {
-        return makeStatus(ErrorCode::DriverMissing,
-                          QStringLiteral("Unable to open MB_DDF byte transport: %1").arg(transportError),
-                          QStringLiteral("mbddf.prepare"));
     }
 
     m_plan = plan;
@@ -253,7 +271,7 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
         requestValues.insert(iterator.key(), iterator.value());
     }
 
-    const quint16 sequence = m_nextSequence++;
+    const quint16 sequence = m_nextSequence;
     QString error;
     QByteArray payload;
     if (!encodePayload(*m_request, requestValues, sequence, &payload, &error)) {
@@ -271,6 +289,14 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
         if (m_stopRequested.load()) {
             return failure(step, ErrorCode::Cancelled, QStringLiteral("SYSTEM_STATUS was cancelled"));
         }
+        QString transportError;
+        if (!m_transport->open(&transportError)) {
+            return failure(step,
+                           ErrorCode::DriverMissing,
+                           QStringLiteral("Unable to open MB_DDF byte transport: %1")
+                               .arg(transportError));
+        }
+        TransportCloseGuard closeGuard(m_transport.get());
         transportResult = m_transport->transact(frame, qMax(1, step.timeoutMs));
     }
     if (!transportResult.ok) {
@@ -306,6 +332,7 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     if (values.value(QStringLiteral("seq")).toUInt() != sequence) {
         return protocolFailure(step, QStringLiteral("SYSTEM_STATUS response sequence does not echo request"));
     }
+    ++m_nextSequence;
 
     TestResult result;
     result.stepId = step.stepId;

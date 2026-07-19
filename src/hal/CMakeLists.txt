@@ -8,6 +8,7 @@ set(HAL_PUBLIC_HEADERS
     include/hal/i_digital_io.h
     include/hal/i_serial_bus.h
     include/hal/i_canfd_bus.h
+    include/hal/i_control_channel.h
     include/hal/hal_factory.h
 )
 
@@ -16,6 +17,10 @@ set(HAL_PRIVATE_HEADERS
     src/mock_adapter.h
     src/c_abi_adapter.h
     src/adapter_loader.h
+    src/control_io_provider.h
+    src/qt_serial_control_provider.h
+    src/qt_udp_control_provider.h
+    src/control_channel_manager.h
     src/resource_mapper.h
     src/safety_guard.h
     src/hal_device.h
@@ -25,6 +30,9 @@ set(HAL_PRIVATE_HEADERS
 set(HAL_SOURCES
     src/hal_types.cpp
     src/hal_error_mapper.cpp
+    src/qt_serial_control_provider.cpp
+    src/qt_udp_control_provider.cpp
+    src/control_channel_manager.cpp
     src/resource_mapper.cpp
     src/safety_guard.cpp
     src/mock_adapter.cpp
@@ -53,7 +61,13 @@ target_include_directories(hwtest_hal
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(hwtest_hal PUBLIC ${HAL_QT_CORE_TARGET})
+target_link_libraries(hwtest_hal
+    PUBLIC
+        ${HAL_QT_CORE_TARGET}
+    PRIVATE
+        ${HAL_QT_NETWORK_TARGET}
+        ${HAL_QT_SERIALPORT_TARGET}
+)
 
 target_compile_features(hwtest_hal PUBLIC cxx_std_17)
 

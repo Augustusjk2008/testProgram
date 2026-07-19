@@ -49,6 +49,7 @@ target_link_libraries(hal_adapter_missing_symbol_fixture
 
 add_executable(hwtest_hal_tests
     adapter_loader_test.cpp
+    control_channel_test.cpp
     hal_device_test.cpp
     hal_error_mapper_test.cpp
     hal_service_test.cpp
@@ -74,6 +75,7 @@ target_compile_definitions(hwtest_hal_tests
 target_link_libraries(hwtest_hal_tests
     PRIVATE
         hwtest_hal
+        ${HAL_QT_NETWORK_TARGET}
         GTest::gtest_main
 )
 

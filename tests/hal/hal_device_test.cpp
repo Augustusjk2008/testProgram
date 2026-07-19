@@ -37,6 +37,16 @@ SessionId openSession(MockAdapter* backend)
     return session.value;
 }
 
+class LegacyStyleHalDevice final : public IHalDevice {
+public:
+    DeviceDescriptor descriptor() const override { return {}; }
+    DeviceCapabilities capabilities() const override { return {}; }
+    IAnalogIo* analogIo() override { return nullptr; }
+    IDigitalIo* digitalIo() override { return nullptr; }
+    ISerialBus* serialBus() override { return nullptr; }
+    ICanFdBus* canFdBus() override { return nullptr; }
+};
+
 } // namespace
 
 TEST(HalDeviceTest, RejectsOperationsOnClosedSession)
@@ -104,4 +114,27 @@ TEST(HalDeviceTest, AppliesSafeStateOnClose)
 
     EXPECT_TRUE(device.close(OperationOptions{}).ok());
     EXPECT_FALSE(device.isOpen());
+}
+
+TEST(HalDeviceTest, ControlChannelRejectsMissingControlResource)
+{
+    LegacyStyleHalDevice legacyDevice;
+    EXPECT_EQ(legacyDevice.controlChannel(), nullptr);
+
+    MockAdapter backend;
+    EXPECT_TRUE(backend.initialize(testsupport::defaultHalConfig()).ok());
+    const SessionId sessionId = openSession(&backend);
+
+    HalDevice device(&backend,
+                     sessionId,
+                     descriptor(),
+                     capabilities(),
+                     bindings(),
+                     QVariantMap{});
+
+    ASSERT_NE(device.controlChannel(), nullptr);
+    EXPECT_EQ(device.controlChannel()->openControl(QStringLiteral("CONTROL_MISSING"),
+                                                    OperationOptions{})
+                  .code,
+              HalStatusCode::NotFound);
 }

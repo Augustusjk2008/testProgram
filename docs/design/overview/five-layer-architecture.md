@@ -1,248 +1,104 @@
 # 多产品通用硬件测试软件五层架构
 
-> 技术栈：Qt 5.15 / C++17 / Qt Widgets / Windows 7+
-> 当前范围：AD、DA、DI、DO、串口、CANFD。
-> 本文定位：总览、分层边界、跨层依赖。业务调度细节见 `../contracts/business-scheduling-layer.md`，HAL 细节见 `../contracts/hal-interface-protocol.md`，设备通讯协议见 `../contracts/device-communication-protocol.md`，日志细节见 `../contracts/log-interface-protocol.md`，测试规范见 `../testing/testing-specification.md`。
-
----
+> 本文只定义分层边界和依赖方向。BIZ API 见 `../contracts/business-scheduling-layer.md`，HAL API 见 `../contracts/hal-interface-protocol.md`，协议 CSV 和帧规则见 `../contracts/device-communication-protocol.md`，日志模型与映射见 `../contracts/log-interface-protocol.md`，测试边界见 `../testing/testing-specification.md`。
+>
+> `[当前实现]` 是已由代码、CMake 或测试注册核对的事实；`[目标契约-未实现]` 是批准的目标，不能作为已落地能力或验收结论。
 
 ## 1. 事实来源
 
 | 文档 | 主定义 |
 | --- | --- |
-| `overview/five-layer-architecture.md` | 五层关系、模块边界、跨层流程 |
-| `contracts/business-scheduling-layer.md` | 业务调度层契约 |
-| `contracts/hal-interface-protocol.md` | HAL 对上接口、Adapter ABI、资源和错误映射 |
-| `contracts/device-communication-protocol.md` | 测试设备与被测件底层通讯协议、CSV 建模和字段布局 |
-| `contracts/log-interface-protocol.md` | `LogEvent`、`LogService`、`logProduced`、source 约定 |
-| `testing/testing-specification.md` | 测试目录、分层边界、用例范围、运行方式 |
+| `overview/five-layer-architecture.md` | 分层边界、依赖方向和生产 I/O 归属 |
+| `contracts/business-scheduling-layer.md` | BIZ 服务、模型、调度与算法端口 |
+| `contracts/hal-interface-protocol.md` | HAL 对上接口、资源和 Adapter ABI |
+| `contracts/device-communication-protocol.md` | 测试设备与 DUT 的协议 CSV、字段和物理帧 |
+| `contracts/log-interface-protocol.md` | `LogEvent`、来源、追踪和 HAL/Adapter 日志映射 |
+| `testing/testing-specification.md` | 测试分层、范围和运行方式 |
 
-冲突处理：
+代码、公共头、CMake 目标和测试注册优先于设计文本。总览不重述各契约的字段、错误码或日志映射。
 
-- HAL 术语以 `../contracts/hal-interface-protocol.md` 和 `src/hal/include/hal/*.h` 为准。
-- 测试设备与被测件的底层通讯帧以 `../contracts/device-communication-protocol.md` 为准。
-- 日志术语以 `../contracts/log-interface-protocol.md` 为准。
-- 业务入口以 `biz::ITestRunService` 为准；`SchedulerAPI` 只作迁移期兼容名。
-- BIZ 到算法层的唯一执行端口是 `biz::IAlgorithmExecutor`；算法层内部实现名不构成跨层契约。
+## 2. 边界模型
 
----
+`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法和命令行组合入口；仓库没有图形 UI、TCP Provider、真实厂家链或真实硬件验收。
 
-## 2. 总体架构
+```text
+hwtest_pc_runner
+  -> hwtest_biz
+  -> biz::IAlgorithmExecutor
+  -> hwtest_algorithm_mbddf
+       -> HalControlTransport
+       -> hwtest_hal::IControlChannel
+       -> ControlChannelManager
+            -> qt.serial -> QSerialPort
+            -> qt.udp -> QUdpSocket
+```
+
+控制资源按 HAL 部署配置中的 `control.resourceId` 和资源 `providerId` 选择串口或 UDP；Qt 标准接口不经过 Vendor Adapter。AD/DA、DI/DO、旧 `ISerialBus` 和 CANFD 等既有资源仍走 `CAbiAdapter -> MockAdapter`。纯协议 golden 测试仍可注入 `SystemStatusSimulator`。
+
+`[目标契约-未实现]` 完整依赖方向如下。图形 UI、通用 Router、Vendor Provider 和控制通道 Mock Provider 不代表当前已实现。
 
 ```text
 UI
   -> hwtest_biz
-  -> biz::IAlgorithmExecutor  (implemented by the algorithm layer)
+  -> biz::IAlgorithmExecutor
+  -> 算法层
   -> hwtest_hal
-  -> Adapter
-  -> vendor DLL / SDK / driver
-
-UI / BIZ / algorithm
-  -> hwtest::logging::LogEvent  (provided by hwtest_log_types)
-  -> logging service or sink
+  -> providerId 路由
+       -> Qt 标准 API Provider
+       -> Vendor Adapter
+       -> Mock Provider
 ```
 
-边界：
+日志是旁路基础模块，不属于上述任一层；其来源、`requestId` 和 HAL/Adapter 映射只以 `../contracts/log-interface-protocol.md` 为主定义。
 
-- `hwtest_biz` 是配置和调度库，不是硬件执行层。
-- BIZ 只直接依赖 Qt Core 和无 HAL 依赖的 `hwtest_log_types`；不得 include、link、call 或 own `hwtest_hal`、`IHalService`、`IHalDevice`。
-- `biz::IAlgorithmExecutor` 由算法层实现，是 BIZ 唯一的执行出口；算法实现拥有 HAL 生命周期、单步执行和硬件安全收尾。
-- Adapter 是本软件维护的最下层；厂家 DLL、SDK、驱动是外部依赖。
-- 日志模块为旁路基础模块，不属于五层任一层。
+## 3. 职责边界
 
----
-
-## 3. 分层职责
-
-| 层级 | 职责 | 不做 |
+| 层或边界 | 负责 | 不负责 |
 | --- | --- | --- |
-| UI 交互层 | 登录、产品选择、配置编辑、测试启停、进度和结果展示 | 不直接访问算法实现、HAL、Adapter |
-| 业务调度层 | 配置、计划、依赖排序、重试、运行状态、结果编排、报告 | 不执行单步算法；不直接使用 HAL、Socket、codec、测量工厂或安全输出 |
-| 核心测试算法层 | 实现 `IAlgorithmExecutor`、单步算法、测量工厂、协议 codec/Socket、HAL 生命周期和安全输出执行 | 不操作 UI，不实现 BIZ 流程或报告编排 |
-| HAL 层 | 设备发现、资源映射、参数归一化、安全校验、统一错误、调用 Adapter | 不做业务流程，不做测试判定 |
-| Adapter 层 | 加载/链接厂家库，封装设备调用，转换数据和错误 | 不接触 UI、业务流程、测试判定 |
+| UI / 组合入口 | `[当前实现]` CLI 读取配置并组装当前单项测试；`[目标契约-未实现]` 图形 UI 的产品选择、测试启停、进度和结果展示 | 解释协议、绕过 BIZ 直接执行测试判定 |
+| BIZ | 配置、计划、稳定拓扑排序、重试、运行状态、结果编排和报告 | 解释协议字段、执行单步判定、持有硬件或通讯对象、执行安全动作 |
+| 算法 | `[当前实现]` MB_DDF CSV、编解码、流式分帧、命令/序号匹配和 `SYSTEM_STATUS` 判定 | BIZ 流程、UI、具体 Qt/厂家连接、物理 safe state |
+| HAL | `[当前实现]` 提供资源、会话、安全 API 和控制通道原始 I/O；控制资源持有 Qt 串口/UDP 对象并执行操作 timeout | 业务调度、产品协议字段解释和测试判定 |
+| Provider / Adapter | `[当前实现]` 控制资源按 `providerId` 选择 `qt.serial` 或 `qt.udp`；既有硬件资源仍走 Mock/C ABI 兼容链；`[目标契约-未实现]` 通用 Qt/Vendor/Mock Router | UI、业务流程和产品判定 |
 
-依赖规则：
+BIZ 只能直接依赖 Qt Core、`hwtest_log_types`、自身公共模型和 `biz::IAlgorithmExecutor`。它不得 include、link、call 或持有 HAL、Adapter、Socket、codec、测量工厂或安全输出执行对象。
 
-| 层级 | 可以依赖 | 禁止依赖 |
-| --- | --- | --- |
-| UI | `hwtest_biz` 对上服务、日志服务 | 算法实现、HAL、Adapter、厂家 SDK |
-| BIZ | Qt Core、`hwtest_log_types`、业务数据模型、`IAlgorithmExecutor` | HAL、Adapter、厂家 SDK、Socket、codec、测量与安全执行接口 |
-| 算法 | BIZ 数据模型和执行端口、HAL 对上接口、日志事件模型 | UI、BIZ 流程实现、厂家 SDK |
-| HAL | Adapter ABI、资源配置 | UI、业务调度、测试判定、日志服务 |
-| Adapter | 厂家 DLL/lib/SDK/Win32 API | UI、业务、算法判定 |
+## 4. 生产 I/O 与配置边界
 
----
+- 面向测试设备或 DUT 的全部生产态硬件和通讯 I/O 必须统一经 HAL；当前控制通道已遵守该边界，算法不持有 `QSerialPort` 或 `QUdpSocket`。
+- 控制资源当前使用显式 `providerId` 路由 `qt.serial`/`qt.udp`；没有 `INetworkBus`，TCP、通用 Provider Router、Vendor Provider 和控制通道 Mock Provider 仍未实现。
+- 配置、日志和报告文件 I/O 不属于上述生产硬件/通讯 I/O 规则。
+- 新写出的 BIZ 配置只使用不透明的 `executionConfig`；旧根字段 `halConfig` 只允许在读取迁移阶段出现。BIZ 的字段和迁移语义见 `../contracts/business-scheduling-layer.md`。
 
-## 4. 配置驱动
-
-`.testcfg` 是产品测试方案输入，描述：
-
-- 产品信息。
-- 硬件设备匹配规则。
-- 逻辑资源映射。
-- 测试项启用状态和顺序。
-- 测试参数、阈值、超时、重试。
-- 算法执行配置 `executionConfig`。
-- 协议 CSV 资产引用；由算法层解释和执行。
-- 业务报告字段。
-
-典型流向：
+边界流只表达责任归属：
 
 ```text
-.testcfg
-  -> hwtest_biz 校验并标准化配置
-  -> hwtest_biz 生成依赖有序 TestPlan
-  -> hwtest_biz 创建 TestContext
-  -> IAlgorithmExecutor.prepare(plan, context, executionConfig)
-  -> hwtest_biz 按计划调用 executeStep 并编排重试/结果
-  -> 算法层调用 HAL 逻辑资源
-  -> HAL 映射真实设备和通道
+BIZ 编排 TestPlan / TestContext / executionConfig
+  -> 算法解释产品协议与执行判定
+  -> HAL 管理生命周期并执行生产 I/O
+  -> 算法返回单步结果
+  -> BIZ 编排结果、状态和报告
 ```
 
-逻辑资源示例：
+## 5. 测试边界
 
-```text
-AD_MAIN_0
-DA_MAIN_0
-DI_POWER_OK
-DO_POWER_EN
-SERIAL_A
-CANFD_A
-```
+- 纯协议或 golden 单元测试可直接使用 Simulator；产品模拟和集成测试必须经过 HAL，可使用 HAL Mock 或标准 Provider 连接隔离模拟目标。
+- `[当前实现]` `SystemStatusSimulator` 直接注入 `SystemStatusAlgorithmExecutor` 的闭环测试仍存在。这是过渡测试路径，不是“产品模拟已通过 HAL Mock”的证据。
+- `[当前实现]` Qt UDP 本机模拟目标测试已经过 BIZ、算法、HAL 和 `qt.udp` Provider；它证明标准 Provider 闭环，不证明真实目标板或真实网口。
+- 任何生产 I/O 或产品集成结论都不能由直连 Simulator 单独证明。
 
----
+## 6. 当前落地范围
 
-## 5. 运行流程
+- `src/algorithm/` 已有 `hwtest_algorithm_mbddf`、协议目录加载、payload/物理帧编解码、流式 `HalControlTransport`、`SystemStatusAlgorithmExecutor` 和 `SYSTEM_STATUS` 测试配置。
+- `src/app/` 的 `hwtest_pc_runner` 读取 `configs/mbddf_system_status.testcfg.json` 和 HAL 部署配置；修改 `control.resourceId` 即在 PC 端选择串口或 UDP，DUT 端无需切换模式。
+- 根 CMake 构建 HAL、日志、BIZ、算法和 CLI，并查找同一 Qt 主版本的 Core、Network、SerialPort。
+- 当前测试目标、源码清单和统计口径以 `../testing/testing-specification.md` 为主定义，不以源级数量代替通过结果。
+- `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容是已批准的 MB_DDF 协议 CSV 基线。它仍是仓库外依赖，当前清单与可复现性限制见 `../contracts/device-communication-protocol.md`。
 
-### 5.1 启动
+## 7. 边界验收
 
-```text
-启动程序
-  -> 初始化日志模块
-  -> 加载全局设置
-  -> 初始化业务服务
-  -> 初始化 UI
-  -> 等待用户选择产品配置
-```
-
-### 5.2 加载配置
-
-```text
-UI 选择 .testcfg
-  -> TestConfigManager 解析和校验
-  -> TestPlanBuilder 生成 TestPlan
-  -> UI 展示测试项列表
-```
-
-### 5.3 执行测试
-
-```text
-UI 请求开始
-  -> hwtest_biz 创建 TestContext、冻结 TestPlan
-  -> hwtest_biz 调 IAlgorithmExecutor.prepare
-  -> hwtest_biz 依据依赖顺序调用 IAlgorithmExecutor.executeStep 并处理重试
-  -> 算法层按协议 CSV 编解码测试设备与被测件通讯帧
-  -> 算法层管理 HAL 初始化、调用和安全输出
-  -> HAL 调 Adapter -> 厂家库
-  -> 结果和日志回到 hwtest_biz；报告只读取编排后的快照
-```
-
-### 5.4 停止
-
-```text
-UI 请求停止
-  -> hwtest_biz 更新 IRunControl 并调用 IAlgorithmExecutor.requestStop(timeoutMs)
-  -> 算法层使当前步骤在安全点结束，并负责 HAL 安全态和设备生命周期
-  -> hwtest_biz 停止后续调度、汇总已产生结果、更新状态并通知 UI
-```
-
----
-
-## 6. 日志与追踪
-
-- 五层均通过 `logProduced` 语义生产日志事件。
-- 统一日志模型为 `LogEvent`。
-- HAL 内部事件为 `HalLogEvent`，进入日志模块时映射为 `LogEvent`。
-- Adapter 日志先进入 HAL，再由 HAL 产生 `source = "adapter"` 的 `HalLogEvent`。
-- 业务层为每次测试任务生成一个非空 `requestId`，任务内各步骤以及 UI、业务、算法、HAL、Adapter 同链路复用。
-- 报告模块读取日志摘要，不负责收集日志。
-
-详见 `../contracts/log-interface-protocol.md`。
-
----
-
-## 7. 安全与稳定性
-
-- 所有硬件调用都必须有超时；该调用和错误细化由算法/HAL 层处理。
-- 输出类安全范围校验、safe state、设备关闭和 HAL reset/shutdown 属于算法/HAL 层。
-- BIZ 只保存和透传 `executionConfig`，并把算法端口返回的业务 `Status`、结果和日志编排给上层。
-- 停止、取消、设备断开、严重 IO 错误、应用退出时，算法层负责硬件安全收尾，BIZ 负责状态和结果收尾。
-- 低配 Win7 机器优先保证稳定、简洁、可维护。
-
-安全策略主定义：
-
-- 配置迁移和 BIZ 的业务边界见 `../contracts/business-scheduling-layer.md`。
-- HAL 输出校验和安全态执行见 `../contracts/hal-interface-protocol.md`。
-
----
-
-## 8. 推荐源码结构
-
-当前仓库已落地 HAL、日志和可运行的 BIZ 配置/调度/报告实现。完整系统推荐结构：
-
-```text
-src/
-  ui/
-  biz/
-    include/biz/
-    src/
-  algorithms/
-    analog/
-    digital/
-    serial/
-    canfd/
-  hal/
-    include/hal/
-    src/
-  logging/
-    include/logging/
-    src/
-  adapters/
-
-configs/products/
-logs/
-reports/
-data/
-```
-
-本仓库当前落地范围：
-
-```text
-src/hal/include/hal/   公共 HAL 头文件
-src/hal/src/           HAL 内部实现和 Mock/C ABI Adapter 包装
-src/logging/include/   公共日志头文件
-src/logging/src/       日志服务、JSONL sink、HAL 日志桥接
-src/biz/include/biz/   BIZ 数据模型、配置/计划、对上服务、报告和算法端口契约
-src/biz/src/           配置迁移与校验、稳定拓扑计划、串行调度/重试、状态控制和报告实现
-src/biz/               hwtest_biz 静态库；仅直接依赖 Qt Core 和 hwtest_log_types
-tests/biz/             35 个 BIZ 用例；仅使用 FakeAlgorithmExecutor、配置与结果样本
-docs/design/           架构与接口协议
-```
-
-算法层具体实现仍由完整系统提供：它实现 `IAlgorithmExecutor` 并持有 HAL。当前 BIZ 按稳定拓扑顺序串行执行步骤；并行配置字段已保留，但并行调度尚未启用。
-
----
-
-## 9. 验收标准
-
-- UI 不直接调用算法实现、HAL 或 Adapter。
-- BIZ API 和源码不得出现 HAL、`IHal*`、Socket、`MeasurementBase`/`MeasurementFactory`、codec 或安全输出执行接口；允许出现“禁止直接使用”的架构说明。
-- 算法层实现 `IAlgorithmExecutor`，并承担单步执行、协议/通讯、HAL 生命周期和安全输出执行。
-- HAL 不包含具体测试判定逻辑。
-- Adapter 不包含 UI、业务流程、测试判定逻辑。
-- 新产品优先新增 `.testcfg`。
-- 新板卡优先新增或替换 Adapter。
-- 新写出的配置只使用 `executionConfig`；旧 `halConfig` 仅可作为迁移读取输入。
-- 所有硬件操作有超时、统一错误、日志和 `requestId`。
-- Mock Adapter 能支撑无真实硬件联调。
+- BIZ 保持硬件无关，只有 `IAlgorithmExecutor` 是其执行出口。
+- 新生产硬件/通讯 I/O 必须进入 HAL；当前只声明控制通道支持 Qt 串口和 UDP，不声明 TCP、真实串口联调、通用 Router 或真实厂家链。
+- 协议/golden 单测与产品模拟/集成测试按第 5 节隔离；后者以“实际经过 HAL”为证据边界，并继续区分 Mock、Qt Provider 和真实硬件等级。
+- 新配置只写 `executionConfig`，旧 `halConfig` 仅作为迁移读入键。
+- 日志映射不在本文复制，统一引用 `../contracts/log-interface-protocol.md`。

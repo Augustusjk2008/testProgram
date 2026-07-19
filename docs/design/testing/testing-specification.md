@@ -1,157 +1,99 @@
 # 测试规范
 
-> 适用项目：多产品通用硬件测试软件（Qt 5.15 / C++17 / Windows）
-> 当前落地范围：HAL、日志和可运行的 BIZ 配置/调度/报告实现；BIZ 测试使用 FakeAlgorithmExecutor，不以 HAL 假对象替代算法端口。
-> 本文定位：测试目录、分层边界、用例范围、运行方式。
+> 适用项目：多产品通用硬件测试软件（Qt 5.15 兼容、Qt 6 Core/Network/SerialPort fallback / C++17 / Windows）。
+>
+> 本文是仓库全局唯一的测试规则、测试准入、运行方式和当前测试清单。HAL 专属覆盖快照见 [HAL 测试设计报告](hal-test-design-report.md)；其他设计文档不得复制或替代本文的公共规则。
+>
+> 当前实现事实以公共 API、CMake 目标和测试注册为准。本文的“源级定义数”不是已执行、已通过或已验证的 CTest 结果。
 
----
+## 1. 当前清单与统计口径
 
-## 1. 构建目录
+根 CMake 在 BUILD_TESTING 为真时加入 tests/；tests/CMakeLists.txt 当前加入 HAL、日志、BIZ 和算法四组。四个目标均用 gtest_discover_tests 在构建后发现 CTest 条目。
 
-- `build_vs/`：CMake + Visual Studio 17 2022 x64 生成目录。HAL、日志和 `hwtest_biz` 均在此构建。
+| 目录 | 测试目标 | 测试源文件 | 源级 GoogleTest 定义 | 当前范围 |
+| --- | --- | ---: | ---: | --- |
+| tests/hal/ | hwtest_hal_tests | 9 | 30 | HAL 接口、资源、安全、Mock、Loader、Qt 控制 Provider |
+| tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
+| tests/biz/ | hwtest_biz_tests | 6 | 35 | 配置、计划、调度、报告和架构边界 |
+| tests/algorithm/ | hwtest_algorithm_tests | 2 | 20 | MB_DDF CSV、流式控制传输和 SYSTEM_STATUS |
+| 合计 | 4 个目标 | 20 | 92 | 当前源级测试清单 |
 
-推荐命令：
+92 是当前测试源码中的 GoogleTest 定义数。CTest 条数必须先完整构建对应配置，再用 ctest -N 确认；只有实际执行 ctest 并报告零失败，才能表述为通过。
 
-```powershell
-cmake -S . -B build_vs -G "Visual Studio 17 2022" -A x64
-cmake --build build_vs --config Debug --target hwtest_biz
-cmake --build build_vs --config Debug --target hwtest_biz_tests
-cmake --build build_vs --config Debug --target hwtest_hal_tests
-cmake --build build_vs --config Debug --target hwtest_log_tests
-ctest --test-dir build_vs -C Debug --output-on-failure
-```
+测试源文件使用 *_test.cpp 命名。两个 HAL DLL fixture 仅服务 AdapterLoaderTest，不计入 20 个测试源文件。
 
-`hwtest_biz_tests` 已加入同一构建目录，并通过 `gtest_discover_tests` 注册到 CTest。
+## 2. 当前覆盖与条件资产
 
----
-
-## 2. 测试框架
-
-- C++ 单元测试使用 GoogleTest。
-- CMake 负责拉取、构建和注册测试。
-- CTest 负责统一执行测试。
-
-不用 qmake 的原因：
-
-- 仓库事实来源已指定根入口为 CMake。
-- HAL 已作为 CMake Qt Core 库构建。
-- GoogleTest、CTest、FetchContent、CI 集成更直接。
-- qmake 更适合旧式 Qt 工程，不适合作为多模块测试主入口。
-
----
-
-## 3. 测试目录
-
-推荐结构：
-
-```text
-tests/
-  ui/
-  biz/
-  algorithms/
-  hal/
-  protocol/
-  log/
-  adapters/
-  integration/
-```
-
-命名规则：
-
-- 测试文件：`*_test.cpp`。
-- 测试目标：`<module>_tests`。
-- 测试名：`对象_行为_结果` 或 `ClassName.BehaviorResult`。
-- 测试数据优先内联小样本；大样本放 `tests/data/`。
-
----
-
-## 4. 当前模块与 BIZ 测试范围
-
-已覆盖：
-
-- `HalErrorMapper`：Adapter 状态码到 `HalStatusCode` 映射、未知错误、错误字段。
-- `ResourceMapper`：默认 Mock 资源、自定义设备和资源、能力、安全状态配置。
-- `SafetyGuard`：模拟量安全钳位、禁止越界输出、数字量/串口/CANFD 参数校验。
-- `HalService`：未初始化错误、初始化、扫描、打开、日志 `requestId`、AD/DA 回环、DI/DO 回环、串口 echo、CANFD loopback、关闭和重开安全状态。
-
-当前日志模块测试范围：
-
-- `LogService`：默认时间戳和等级补齐、最小等级过滤、`Off` 过滤、有界 recent 缓存、signal、sink 分发。
-- `JsonLineFileSink`：JSONL 单行结构化输出、context 保留、flush 后可读、作为 `LogService` sink 使用。
-- `hal_log_bridge`：`HalLogEvent -> LogEvent` 字段映射、空 source 补 `hal`、Adapter source 保留、连接 `IHalService::logProduced` 到 `ILogService::append`。
-
-BIZ 测试入口和范围：
-
-- 目录为 `tests/biz/`，测试目标为 `hwtest_biz_tests`。
-- BIZ 单元测试只构造 `FakeAlgorithmExecutor`、配置样本和报告结果样本。
-- 当前注册 35 个 GoogleTest 用例，覆盖 `ITestRunService` 与 `IAlgorithmExecutor` 契约、配置迁移与严格校验、附件样例加载、稳定拓扑排序、重试、暂停/停止状态、优先级边界、结果编排、四种报告和 `executionConfig`/协议/安全配置透传。
-- BIZ 单元测试禁止构造 HAL 假对象、设备假对象、Socket、测量基类/工厂或 codec；这些属于算法或 HAL 层测试。
-- 对 `src/biz/` 和 `tests/biz/` 运行静态架构扫描，确保没有直接硬件执行依赖。
-
-验收命令：
-
-```powershell
-ctest --test-dir build_vs -C Debug --output-on-failure
-ctest --test-dir build_vs -C Release --output-on-failure
-```
-
----
-
-## 5. HAL 后续补测
-
-优先补：
-
-- `HalDevice`：各接口空指针、会话失效、能力不匹配。
-- `MockAdapter`：超时、错误码注入、噪声、批量读写边界。
-- `CAbiAdapter`：函数指针缺失、缓冲区不足、ABI 版本不匹配。
-- `AdapterLoader`：DLL 加载失败、符号缺失、路径错误。
-- 参数归一化：模拟量单位/量程、串口参数、CANFD DLC 和 payload。
-- 生命周期：重复初始化、重复关闭、异常 shutdown、设备断开。
-- 日志：失败路径也必须携带 operation、resourceId、deviceId、requestId。
-
-真实硬件测试单独标记为 `hardware`，默认 CI 不运行。
-
----
-
-## 6. 五层测试边界
-
-单元测试只测本层职责，不跨层验证实现细节。
-
-| 层级 | 单元测试允许依赖 | 禁止 |
+| 目标 | 当前已覆盖的行为 | 证据边界 |
 | --- | --- | --- |
-| UI | ViewModel、业务接口假对象、日志假对象 | HAL、Adapter、厂家 SDK |
-| BIZ | `FakeAlgorithmExecutor`、配置样本、结果/报告样本 | HAL 假对象、设备假对象、Socket、测量对象/工厂、codec、Adapter、厂家 SDK |
-| 核心算法 | `IHalService` / `IHalDevice` 假对象、测试上下文 | UI、业务流程实现、厂家 SDK |
-| HAL | Mock Adapter、C ABI 假对象、资源配置 | UI、业务判定、测试项结论 |
-| 协议 | 协议 CSV 样本、帧编解码器、字段 Schema | UI、Adapter、厂家 SDK |
-| Adapter | 厂家 SDK 假对象或仿真 DLL、ABI Host 假对象 | UI、业务、算法判定 |
+| HAL | 错误映射、资源映射、安全校验、会话、Mock AD/DA、DI/DO、串口 echo、CANFD loopback、AdapterLoader fixture、控制资源路由、Qt UDP 回环和 timeout | Qt UDP 仅是本机 Provider 证据；没有真实串口、真实网口或厂家 SDK 证据 |
+| 日志 | LogService、JsonLineFileSink、HalLogEvent 到 LogEvent 桥接 | 不覆盖 UI 或真实设备日志链 |
+| BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象 |
+| 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器及 Qt UDP 成功/超时/坏 CRC 路径 | 当前只实现 mbddf.system_status；本机 UDP 模拟目标不等同于真实板端通讯 |
 
-跨层测试只允许以下几类：
+下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
 
-- 契约测试：相邻层公共接口、错误码、日志字段、配置字段。
-- 协议契约测试：协议 CSV 校验、字段布局、pack/unpack、字段 Schema。
-- 集成测试：`hwtest_biz` -> 算法实现 -> `hwtest_hal` -> Mock Adapter 的主流程。
+- 5 个 MB_DDF 协议测试和 7 个 SYSTEM_STATUS 跨层/集成测试依赖 MB_DDF_PROTOCOL_CSV_DIR 指向的外部 CSV 资产目录。
+- BIZ 的导入附件样例测试依赖 tmp/hwtest_BIZ/configs/sample_product.testcfg；tmp 不是仓库实现事实。
+- 算法测试中有 8 个自包含的帧、传输或临时 CSV 用例；其余 12 个依赖外部 MB_DDF CSV。
 
-`tests/biz/` 的单元测试不等于上述完整集成链：它只验证 BIZ 对算法端口的编排，并由 `FakeAlgorithmExecutor` 替代算法实现。端到端测试默认使用 Mock Adapter；真实硬件端到端测试必须独立开关、独立机器、独立报告。
+协议 CSV 是运行期资产。用户已批准 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容作为 MB_DDF 基线，当前为 32 个 CSV；协议测试按一文件一定义及当前实际字段校验。仓库不保存这些 CSV fixture，因此测试仍可能因目录缺失而跳过；基线已批准不等于 manifest/hash 可复现快照已经实现。
 
----
+## 3. 五级证据模型
 
-## 7. 测试准入
+下表按证据强度递增。低级证据不能替代高级证据，也不得把未实现级别写成已验证能力。
 
-新增或修改接口时：
+| 级别 | 证据对象 | 当前状态 | 可证明与不可证明的范围 |
+| --- | --- | --- | --- |
+| 1. 协议 Simulator | 配置 -> BIZ -> SystemStatusAlgorithmExecutor -> SystemStatusSimulator -> golden request frame | 已有；遗留的非 HAL 跨层替身回归，依赖外部 CSV | 仅证明当前 SYSTEM_STATUS 的模拟器闭环、CRC 和超时处理；不是产品模拟或集成验收范式 |
+| 2. HAL Mock 集成 | 算法 -> IControlChannel -> HAL Mock Provider | SYSTEM_STATUS 正向闭环未实现 | 现有 MockAdapter 回环不是控制通道 Mock Provider；算法 fake 只作传输契约测试 |
+| 3. Qt Provider | `qt.serial`/`qt.udp` 标准 Qt 通讯 Provider | 部分实现 | Qt UDP 已有原始回环及经 BIZ/算法/HAL 的本机模拟目标闭环；Qt 串口只有配置错误契约和可编译证据，无实机联调；TCP 未实现 |
+| 4. Vendor Adapter | 真实厂家 Adapter DLL/SDK 经 C ABI 接入 | 未实现 | AdapterLoader fixture 仅证明最小加载器行为；CAbiAdapter 当前仍委托 MockAdapter |
+| 5. 真实硬件 | 隔离台架上的真实目标和测试设备 | 未实现 | 当前没有真实硬件测试目标，也没有 CTest hardware label |
 
-- 公共头文件变化，同步协议文档和契约测试。
-- BIZ 公共头、数据模型或执行端口变化，同步 `business-scheduling-layer.md`、BIZ 契约测试和架构扫描。
-- Adapter ABI 变化，同步 `hal_adapter_abi.h`、协议文档和 ABI 兼容测试。
-- 新增错误码，同步错误映射测试。
-- 新增资源类型，同步资源映射、安全校验、Mock Adapter 测试。
-- 新增或修改协议 CSV 字段规则，同步 `device-communication-protocol.md` 和协议契约测试。
-- 修复缺陷，先补回归测试，再修实现。
+新增五级中的任何目标时，文档、CMake 和测试必须同时标明其级别、依赖资产、隔离条件和通过证据。在代码与测试落地前，一律标记为“未实现”。
 
-提交前最低要求：
+## 4. 分层与集成规则
 
-- 相关单元测试通过。
-- 修改 BIZ 时，运行 `hwtest_biz_tests`；BIZ 单测不得引入 HAL 假对象，且 BIZ 架构扫描必须通过。
-- Debug 和 Release 至少各跑一次 HAL 测试。
-- 修改日志模块时，Debug 和 Release 至少各跑一次 `hwtest_log_tests`。
-- 无真实硬件环境时，Mock 主流程必须通过。
+| 范围 | 单元测试允许依赖 | 禁止或不作为通过证据 |
+| --- | --- | --- |
+| BIZ | FakeAlgorithmExecutor、配置样本、结果和报告样本 | HAL、Adapter、Socket、codec、测量对象、硬件安全执行 |
+| 算法 | 协议 CSV 样本、Simulator、脚本化传输、IHalDevice 测试替身 | UI、业务调度实现、厂家 SDK |
+| HAL | MockAdapter、最小 ABI fixture、资源配置 | 业务判定、产品协议字段解释、真实厂家硬件结论 |
+| Vendor Adapter | 厂家 SDK 假对象或隔离仿真 DLL | UI、BIZ、算法判定 |
+| 真实硬件 | 经授权的隔离设备、独立报告和显式硬件目标 | 默认 CI 或开发机自动执行 |
+
+跨层验收必须明确是契约测试、协议测试、HAL Mock 集成、Provider 集成、Vendor Adapter 集成或真实硬件验收。不得把串口 echo、CANFD loopback 或 Simulator 结果描述为真实通讯证据。
+
+SYSTEM_STATUS 当前同时有 Simulator golden 链和“BIZ -> 算法 -> HalControlTransport -> HAL -> qt.udp -> 本机模拟目标”成功链。HAL Mock Provider 正向链、真实串口/目标板链和 `ProtocolProfile -> CSV -> HAL ResourceId` 一致性校验仍是未实现验收项。
+
+## 5. 测试准入
+
+- 公共 HAL 或 BIZ 头文件、配置字段、状态语义、错误码、资源类型或 Adapter ABI 变化时，必须同步相应契约文档和回归测试。
+- 修改 BIZ 时，必须运行 hwtest_biz_tests 和 BIZ 架构扫描；BIZ 测试不得引入硬件执行依赖。
+- 修改协议 CSV 规则、解析器或资产引用时，必须同步 device-communication-protocol.md 和协议契约测试，并记录基线路径、观测时间与清单；manifest/hash 机制落地后再记录固定版本和内容哈希。
+- 修改 Mock 行为时，必须说明证据级别；可配置超时/错误注入和 SYSTEM_STATUS 控制通道 Mock Provider 集成仍未实现，不得作为既有能力验收。
+- 修改 Qt Provider、Vendor Adapter 或真实硬件路径时，必须新增相应级别的隔离测试；当前 Qt UDP 有本机隔离测试，Qt 串口实机、真实 Adapter、CTest hardware label 和真实硬件验收仍未实现。
+- 修复行为缺陷时，先补能复现问题的回归测试，再修改实现。
+
+## 6. 构建与验证
+
+以下是唯一的通用构建和 CTest 命令。完整构建是动态发现四个测试目标的前提。
+
+    cmake -S . -B build_vs -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
+    cmake --build build_vs --config Debug --parallel
+    ctest --test-dir build_vs -C Debug -N
+    ctest --test-dir build_vs -C Debug --output-on-failure
+    cmake --build build_vs --config Release --parallel
+    ctest --test-dir build_vs -C Release -N
+    ctest --test-dir build_vs -C Release --output-on-failure
+
+ctest -N 只确认构建后动态发现的 CTest 清单；它不执行测试，也不证明通过。执行结果中的 GTEST_SKIP 必须在报告中单列为“未验证”，不能合并为通过。
+
+要执行已批准 MB_DDF 基线的相关测试，而不是接受跳过，先在同一 PowerShell 会话显式设置并检查资产目录。该目录是当前协议事实源，但不是不可变的仓库内 fixture；每次结果应记录观测时间与实际文件清单：
+
+    $env:MB_DDF_PROTOCOL_CSV_DIR = "H:\Resources\RTLinux\Demos\MB_DDF_v2\docs\design\product_protocol_csv"
+    if (-not (Test-Path $env:MB_DDF_PROTOCOL_CSV_DIR)) { throw "MB_DDF CSV assets are required" }
+    ctest --test-dir build_vs -C Debug -R "^(MbddfProtocolTest|SystemStatusExecutorTest|HalControlTransportTest|SystemStatusUdpIntegrationTest)\." --output-on-failure
+
+HAL 专属覆盖快照和缺口见 [HAL 测试设计报告](hal-test-design-report.md)。本文以外的历史计划不是现行测试规则或通过证据。

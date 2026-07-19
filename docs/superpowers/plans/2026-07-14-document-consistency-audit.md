@@ -1,5 +1,7 @@
 # Repository Documentation Consistency Audit Implementation Plan
 
+> 历史记录（已被替代，非现行事实源）：本计划记录 2026-07-14 的文档一致性审计方案；现行事实源、模块边界和测试准入以 [仓库规范](../../../AGENTS.md) 与 [测试规范](../../design/testing/testing-specification.md) 为准。本计划中的检查项不表示当前完成状态。
+
 > **Execution note:** This plan should be executable either inline in the current session or by a delegated worker. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 更新仓库级 `AGENTS.md`，并在忽略 `tmp/` 与构建目录的前提下消除代码/文档冲突、文档间冲突和不必要的重复定义。

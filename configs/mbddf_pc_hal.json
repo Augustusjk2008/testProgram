@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "1.0",
+  "control": {
+    "deviceId": "mbddf_dut",
+    "resourceId": "CONTROL_SERIAL",
+    "runTimeoutMs": 5000
+  },
+  "logging": {
+    "filePath": "../logs/mbddf_pc.jsonl"
+  },
+  "hardware": {
+    "devices": [
+      {
+        "alias": "mbddf_dut",
+        "adapterId": "mock.adapter.v1",
+        "vendor": "MB_DDF",
+        "model": "MB_DDF_v2"
+      }
+    ],
+    "resources": {
+      "CONTROL_SERIAL": {
+        "device": "mbddf_dut",
+        "module": "control",
+        "direction": "bidirectional",
+        "providerId": "qt.serial",
+        "physicalIndex": 0,
+        "properties": {
+          "portName": "COM_CHANGE_ME",
+          "baudRate": 614400,
+          "dataBits": 8,
+          "parity": "Even",
+          "stopBits": 1,
+          "flowControl": "None"
+        }
+      },
+      "CONTROL_NETWORK": {
+        "device": "mbddf_dut",
+        "module": "control",
+        "direction": "bidirectional",
+        "providerId": "qt.udp",
+        "physicalIndex": 1,
+        "properties": {
+          "localAddress": "0.0.0.0",
+          "localPort": 0,
+          "remoteAddress": "127.0.0.1",
+          "remotePort": 3003
+        }
+      }
+    }
+  },
+  "safeState": {}
+}

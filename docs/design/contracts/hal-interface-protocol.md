@@ -1,576 +1,267 @@
 # HAL 层接口协议
 
-> 适用项目：多产品通用硬件测试软件（Qt 5.15 / C++17 / Windows）
-> 本文定位：HAL 对上接口、Adapter ABI、资源映射、错误映射、日志链路。
-> 当前范围：AD、DA、DI、DO、串口、CANFD。
-> 公共头文件以 `src/hal/include/hal/` 为准；本文与代码需保持一致。
+> 适用项目：多产品通用硬件测试软件（Qt 5.15 兼容、Qt 6 Core/Network/SerialPort fallback / C++17 / Windows）
+> 本文定位：HAL 公共接口、生产态 I/O 边界、资源与安全语义、Provider 路由目标以及 Vendor Adapter C ABI。
+> 代码事实源：`src/hal/include/hal/`、`src/hal/src/`；公共头与本文冲突时，先判断代码是否违反本契约，再修正文档或代码。
+> 状态标记：**当前**表示仓库已实现，**目标**表示已确认但尚未实现，**扩展点**表示尚未冻结接口。
 
 ---
 
 ## 1. 边界
 
+生产态中，凡涉及测试设备或被测件（DUT）的硬件访问与通讯 I/O，均必须经过 HAL。配置、协议资产、日志和报告的文件 I/O 不属于这条规则。
+
+目标调用链：
+
 ```text
-核心测试算法层
-  -> IHalService / IHalDevice / IAnalogIo / IDigitalIo / ISerialBus / ICanFdBus
-  -> HAL
-  -> HardwareAdapter / HalAdapterApiV1
-  -> Adapter
-  -> 厂家 DLL / lib / SDK / Win32 API
+算法层
+  -> HAL 公共接口（逻辑 ResourceId、原始数据）
+  -> HAL 内部 providerId 路由
+       -> Qt 标准 API Provider
+       -> Vendor Adapter Provider
+       -> Mock Provider
+  -> 测试设备或 DUT
 ```
 
-HAL 负责：
+当前控制调用链：
 
-- 设备发现、打开、关闭、复位、健康检查。
-- 逻辑资源到真实设备、通道、总线端口的映射。
-- 参数归一化。
-- 输出安全校验。
-- Adapter 和厂家错误到 `HalStatusCode` 的统一映射。
-- 操作耗时、状态和硬件上下文日志。
+```text
+算法层 HalControlTransport
+  -> IHalDevice / IControlChannel
+  -> ControlChannelManager
+       -> qt.serial -> QSerialPort
+       -> qt.udp -> QUdpSocket
+```
 
-HAL 不负责：
+该路由只覆盖 `module = "control"` 的资源，Qt 标准接口不经过 Vendor C ABI。其他现有资源仍走 `HalService -> CAbiAdapter -> MockAdapter`；因此不能描述为通用 Provider Router 已完成。TCP、控制通道 Mock Provider、Vendor Provider 和真实厂家 Adapter 尚未接入。
 
-- UI 展示。
-- 业务流程编排。
-- 测试项判定。
-- 报告生成。
-- 厂家业务规则。
+职责分配：
+
+| 能力 | 所有者 |
+| --- | --- |
+| CSV 加载、帧边界、产品 CRC、命令/序号、请求响应匹配 | 算法/协议层 |
+| 测试步骤、依赖、状态、步骤级重试、结果与报告编排 | BIZ |
+| 逻辑资源、连接对象、原始 I/O、操作 deadline、归一错误 | HAL |
+| 输出范围校验、物理安全态执行、连接关闭 | HAL |
+| 厂家 SDK、DLL、驱动调用 | Vendor Adapter |
+| Qt 串口、UDP 的标准 API 调用 | HAL 内部 Qt 控制 Provider（当前） |
+| TCP 标准 API 调用 | Qt Provider（目标，未实现） |
+| 协议字段解释、测试判定 | 不属于 HAL、Provider 或 Adapter |
+
+算法可以请求 HAL 初始化、打开、关闭和安全收尾，但具体连接对象及物理动作由 HAL 持有并执行。BIZ 不得直接依赖 HAL。
 
 ---
 
-## 2. 对上协议原则
+## 2. 公共兼容面
 
-- 命名空间：`hwtest::hal`。
-- 对上使用 Qt/C++ 类型：`QString`、`QByteArray`、`QVector`、`QVariantMap`。
-- 硬件调用必须携带 `OperationOptions` 或等价选项，至少含 `timeoutMs`。
-- 返回值统一为 `HalStatus` 或 `HalResult<T>`。
-- 调用方只传逻辑资源 ID，不传厂家句柄或物理通道。
-- 新代码连接 `IHalService::logProduced(const HalLogEvent&)`；`logMessage` 只作兼容信号。
+命名空间为 `hwtest::hal`。公共头位于 `src/hal/include/hal/`，使用 Qt/C++ 类型和逻辑资源 ID，不暴露厂家句柄或物理通道。
 
----
+| 公共接口 | 当前职责 |
+| --- | --- |
+| `IHalService` | 初始化、扫描、能力查询、设备会话和日志信号 |
+| `IHalDevice` | 聚合设备描述、能力及各类 I/O 接口 |
+| `IAnalogIo` | AD/DA 配置、采样和输出 |
+| `IDigitalIo` | DI/DO 读写及边沿等待 |
+| `ISerialBus` | 串口配置与原始字节收发 |
+| `ICanFdBus` | CAN/CANFD 配置与原始总线帧收发 |
+| `IControlChannel` | 按逻辑资源打开/关闭控制通道，并执行原始字节读写 |
 
-## 3. 公共类型
+`IHalDevice::controlChannel()` 返回当前控制通道接口。公共方法签名以对应头文件为准；没有新增或冻结 `INetworkBus`，`IControlChannel` 不向算法暴露 `QSerialPort`、`QUdpSocket` 或 UDP 数据报类型。TCP 仍待真实用例、deadline 和流语义明确后评审。
 
-主定义文件：`src/hal/include/hal/hal_types.h`。
+### 2.1 `IHalService` 语义
 
-```cpp
-using DeviceId = QString;
-using AdapterId = QString;
-using ResourceId = QString;
-using RequestId = QString;
-using SessionId = QString;
-```
+- `initialize(const QVariantMap&)`：加载资源、安全配置并创建既有 `CAbiAdapter` 会话后端；控制资源的 `providerId` 在首次打开时由 `ControlChannelManager` 解析。
+- `scanDevices()` / `queryCapabilities()`：返回 HAL 归一化描述。当前结果来自 `ResourceMapper` 配置，不是物理扫描。
+- `openDevice()`：返回 `SessionId`；连接及底层 handle 归 HAL 所有。
+- `closeDevice()` / `shutdown()`：先尽力执行物理安全态并关闭连接，再释放后端；不得构造产品协议停机命令。
+- `device(sessionId)`：返回受该 HAL 会话生命周期约束的聚合设备接口。
 
-### 3.1 状态码
+### 2.2 原始通讯语义
 
-```cpp
-enum class HalStatusCode {
-    Ok = 0,
-    InvalidArgument,
-    InvalidState,
-    NotInitialized,
-    NotFound,
-    NotSupported,
-    PermissionDenied,
-    Busy,
-    Timeout,
-    Cancelled,
-    SafetyLimitExceeded,
-    DeviceDisconnected,
-    AdapterLoadFailed,
-    AdapterSymbolMissing,
-    AdapterError,
-    IoError,
-    ProtocolError,
-    CrcMismatch,
-    DataMismatch,
-    BufferTooSmall,
-    InternalError
-};
-```
+`ISerialBus` 只负责端口配置与原始字节收发。当前 `transactSerial()` 的实现等价于一次 `writeSerial()` 加一次有界 `readSerial()`：
 
-### 3.2 状态与结果
+- 不保证一次读取获得完整产品响应；
+- 不累积流式字节，不搜索 terminator；
+- 当前不执行 `expectedPrefix`、`readMinBytes` 或产品 CRC 校验；
+- 不匹配产品命令、序号或请求响应关系。
 
-```cpp
-struct HalError {
-    HalStatusCode code = HalStatusCode::Ok;
-    QString message;
-    QString adapterCode;
-    QString deviceId;
-    QString resourceId;
-    QString operation;
-    QVariantMap detail;
-};
+多段读取、产品帧组装和响应匹配由算法层完成。`SerialTransaction` 中相关字段是现有兼容字段，不能据此宣称相应能力已实现。
 
-struct HalStatus {
-    HalStatusCode code = HalStatusCode::Ok;
-    HalError error;
-    bool ok() const noexcept;
-};
-
-template <typename T>
-struct HalResult {
-    HalStatus status;
-    T value {};
-    bool ok() const noexcept;
-};
-```
-
-### 3.3 操作选项
-
-```cpp
-struct OperationOptions {
-    int timeoutMs = 1000;
-    int retryCount = 0;
-    int retryIntervalMs = 50;
-    RequestId requestId;
-    QVariantMap tags;
-};
-```
-
-### 3.4 HAL 日志事件
-
-```cpp
-struct HalLogEvent {
-    qint64 timestampUs = 0;
-    QString level;
-    QString source;
-    QString category;
-    QString message;
-    RequestId requestId;
-    qint64 durationMs = -1;
-    QString status;
-    QString adapterCode;
-    DeviceId deviceId;
-    ResourceId resourceId;
-    QString operation;
-    QVariantMap context;
-};
-```
-
-`HalLogEvent` 只定义 HAL 内部硬件上下文。日志模块主模型仍是 `LogEvent`，映射规则见 `log-interface-protocol.md`。不得把 `LogService` 或 `LogEvent` 放入 `src/hal/include/hal/`，日志模块接入不得修改 `hal_adapter_abi.h`。
-
-### 3.5 设备与能力
-
-```cpp
-struct DeviceDescriptor {
-    DeviceId deviceId;
-    AdapterId adapterId;
-    QString vendor;
-    QString model;
-    QString serialNumber;
-    QString location;
-    QString firmwareVersion;
-    QVariantMap properties;
-};
-
-struct ChannelDescriptor {
-    ResourceId resourceId;
-    QString module;
-    QString direction;
-    int physicalIndex = -1;
-    QVariantMap properties;
-};
-
-struct DeviceCapabilities {
-    DeviceDescriptor device;
-    QVector<ChannelDescriptor> channels;
-    QStringList supportedModules;
-    QVariantMap limits;
-};
-```
+`ICanFdBus` 负责 CAN/CANFD 配置、过滤和原始 `CanFdFrame` 收发。HAL 可校验总线帧的 ID、DLC 和 payload 上限，但不得解释 payload 中的产品字段。
 
 ---
 
-## 4. HAL 对上接口
+## 3. 公共类型与错误边界
 
-### 4.1 `IHalService`
+主定义文件为 `src/hal/include/hal/hal_types.h`。`DeviceId`、`AdapterId`、`ResourceId`、`RequestId` 和 `SessionId` 均为现有兼容类型。
 
-主定义文件：`src/hal/include/hal/i_hal_service.h`。
+`HalStatusCode` 的现有顺序和值不得随意调整：
 
-```cpp
-class IHalService : public QObject {
-    Q_OBJECT
-public:
-    virtual HalStatus initialize(const QVariantMap& halConfig) = 0;
-    virtual HalStatus shutdown() = 0;
-
-    virtual HalResult<QVector<DeviceDescriptor>> scanDevices(const OperationOptions& options) = 0;
-    virtual HalResult<DeviceCapabilities> queryCapabilities(const DeviceId& deviceId,
-                                                            const OperationOptions& options) = 0;
-
-    virtual HalResult<SessionId> openDevice(const DeviceId& deviceId,
-                                            const OperationOptions& options) = 0;
-    virtual HalStatus closeDevice(const SessionId& sessionId,
-                                  const OperationOptions& options) = 0;
-    virtual HalStatus resetDevice(const SessionId& sessionId,
-                                  const OperationOptions& options) = 0;
-    virtual HalStatus healthCheck(const SessionId& sessionId,
-                                  const OperationOptions& options) = 0;
-
-    virtual HalResult<IHalDevice*> device(const SessionId& sessionId) = 0;
-
-signals:
-    void deviceChanged(const DeviceDescriptor& device, const QString& state);
-    void hardwareEvent(const QString& eventType, const QVariantMap& payload);
-    void logProduced(const HalLogEvent& event);
-    void logMessage(const QString& level,
-                    const QString& category,
-                    const QString& message,
-                    const QVariantMap& context);
-};
+```text
+Ok, InvalidArgument, InvalidState, NotInitialized, NotFound,
+NotSupported, PermissionDenied, Busy, Timeout, Cancelled,
+SafetyLimitExceeded, DeviceDisconnected, AdapterLoadFailed,
+AdapterSymbolMissing, AdapterError, IoError, ProtocolError,
+CrcMismatch, DataMismatch, BufferTooSmall, InternalError
 ```
 
-约定：
+三个易混淆状态的使用边界：
 
-- `initialize` 建立 Adapter、设备能力、资源映射和安全配置。
-- `scanDevices` 返回 HAL 归一化设备描述。
-- `openDevice` 返回 `SessionId`，后续用 `device(sessionId)` 取得聚合设备接口。
-- `shutdown` 需关闭设备、释放 Adapter，并尽量让输出进入安全状态。
+| 状态 | 允许语义 | 禁止语义 |
+| --- | --- | --- |
+| `ProtocolError` | Provider/驱动明确报告的链路协议或传输帧化错误 | MB_DDF 帧头、长度、命令、序号、字段或响应匹配错误 |
+| `CrcMismatch` | 驱动或链路层已报告的底层 CRC 错误 | HAL 自行计算产品 CRC |
+| `DataMismatch` | HAL 自检或回环完整性错误的兼容值 | DUT 字段值、测试阈值或业务判定不一致 |
 
-### 4.2 `IHalDevice`
+来源不明的 Vendor 错误应映射为 `AdapterError` 并保留原始诊断，不能猜测为产品协议错误。
 
-主定义文件：`src/hal/include/hal/i_hal_device.h`。
+### 3.1 操作选项
 
-```cpp
-class IHalDevice {
-public:
-    virtual DeviceDescriptor descriptor() const = 0;
-    virtual DeviceCapabilities capabilities() const = 0;
+`OperationOptions.timeoutMs` 的目标语义是一次 HAL 操作的总 deadline 预算。内部 Provider 重试只能消耗剩余预算，且不得根据产品响应内容重试。
 
-    virtual IAnalogIo* analogIo() = 0;
-    virtual IDigitalIo* digitalIo() = 0;
-    virtual ISerialBus* serialBus() = 0;
-    virtual ICanFdBus* canFdBus() = 0;
-};
-```
+当前 `HalControlTransport` 使用单调时钟把一次请求的剩余预算分别传给控制写和后续读取；Qt 串口写入也在同一 HAL 写操作预算内排空待写字节。整个 HAL 尚未统一完成该语义：`retryCount` / `retryIntervalMs` 未执行，旧 `transactSerial()` 仍把同一个 `timeoutMs` 分别交给写和读。步骤级重试由 BIZ 编排。
 
-### 4.3 模拟量 `IAnalogIo`
+### 3.2 日志类型
 
-主定义文件：`src/hal/include/hal/i_analog_io.h`。
-
-```cpp
-class IAnalogIo {
-public:
-    virtual HalStatus configureAd(const ResourceId& channel,
-                                  const AnalogRange& range,
-                                  const OperationOptions& options) = 0;
-    virtual HalResult<AnalogSample> readAd(const ResourceId& channel,
-                                           const AnalogReadOptions& options) = 0;
-    virtual HalResult<QVector<AnalogSample>> readAdBatch(const QVector<ResourceId>& channels,
-                                                         const AnalogReadOptions& options) = 0;
-
-    virtual HalStatus configureDa(const ResourceId& channel,
-                                  const AnalogRange& range,
-                                  const OperationOptions& options) = 0;
-    virtual HalStatus writeDa(const ResourceId& channel,
-                              double value,
-                              const AnalogWriteOptions& options) = 0;
-    virtual HalStatus writeDaBatch(const QMap<ResourceId, double>& values,
-                                   const AnalogWriteOptions& options) = 0;
-};
-```
-
-约定：算法传工程值，HAL 负责单位转换、安全量程校验和 Adapter 调用。
-
-### 4.4 数字量 `IDigitalIo`
-
-主定义文件：`src/hal/include/hal/i_digital_io.h`。
-
-```cpp
-class IDigitalIo {
-public:
-    virtual HalResult<DigitalSample> readDi(const ResourceId& channel,
-                                            const OperationOptions& options) = 0;
-    virtual HalResult<QVector<DigitalSample>> readDiBatch(const QVector<ResourceId>& channels,
-                                                          const OperationOptions& options) = 0;
-
-    virtual HalStatus writeDo(const ResourceId& channel,
-                              DigitalLevel level,
-                              const DigitalWriteOptions& options) = 0;
-    virtual HalStatus writeDoBatch(const QMap<ResourceId, DigitalLevel>& values,
-                                   const DigitalWriteOptions& options) = 0;
-
-    virtual HalResult<DigitalSample> waitEdge(const ResourceId& channel,
-                                              DigitalLevel targetLevel,
-                                              const OperationOptions& options) = 0;
-};
-```
-
-### 4.5 串口 `ISerialBus`
-
-主定义文件：`src/hal/include/hal/i_serial_bus.h`。
-
-串口接口只负责端口配置和原始字节收发。测试设备与被测件之间的字段级帧结构、CSV 建模、打包和解析规则见 `device-communication-protocol.md`。
-
-```cpp
-class ISerialBus {
-public:
-    virtual HalStatus openSerial(const ResourceId& port,
-                                 const SerialConfig& config,
-                                 const OperationOptions& options) = 0;
-    virtual HalStatus closeSerial(const ResourceId& port,
-                                  const OperationOptions& options) = 0;
-    virtual HalStatus flushSerial(const ResourceId& port,
-                                  const OperationOptions& options) = 0;
-
-    virtual HalStatus writeSerial(const ResourceId& port,
-                                  const QByteArray& data,
-                                  const OperationOptions& options) = 0;
-    virtual HalResult<QByteArray> readSerial(const ResourceId& port,
-                                             int maxBytes,
-                                             const OperationOptions& options) = 0;
-    virtual HalResult<SerialTransactionResult> transactSerial(const ResourceId& port,
-                                                              const SerialTransaction& transaction) = 0;
-};
-```
-
-### 4.6 CANFD `ICanFdBus`
-
-主定义文件：`src/hal/include/hal/i_canfd_bus.h`。
-
-CANFD 接口只负责 CANFD 总线配置和原始帧收发。CANFD payload 中承载的字段级协议结构见 `device-communication-protocol.md`。
-
-```cpp
-class ICanFdBus {
-public:
-    virtual HalStatus openCan(const ResourceId& bus,
-                              const CanFdConfig& config,
-                              const OperationOptions& options) = 0;
-    virtual HalStatus closeCan(const ResourceId& bus,
-                               const OperationOptions& options) = 0;
-    virtual HalStatus setCanFilters(const ResourceId& bus,
-                                    const QVector<CanFdFilter>& filters,
-                                    const OperationOptions& options) = 0;
-    virtual HalStatus sendCan(const ResourceId& bus,
-                              const CanFdFrame& frame,
-                              const OperationOptions& options) = 0;
-    virtual HalResult<CanFdFrame> receiveCan(const ResourceId& bus,
-                                             const OperationOptions& options) = 0;
-    virtual HalResult<QVector<CanFdFrame>> receiveCanBatch(const ResourceId& bus,
-                                                           int maxFrames,
-                                                           const OperationOptions& options) = 0;
-};
-```
+HAL 通过 `HalLogEvent` 和 `IHalService::logProduced` 暴露硬件上下文；`logMessage` 仅作兼容信号。HAL 不依赖完整日志服务，字段映射和 `requestId` 规则统一见 [日志接口协议](log-interface-protocol.md)。
 
 ---
 
-## 5. Adapter ABI
+## 4. 控制通道 Provider 路由（当前，局部实现）
 
-主定义文件：`src/hal/include/hal/hal_adapter_abi.h`。
+Provider 是 HAL 内部后端分类，不是新的业务层，也不向 BIZ 暴露。当前只冻结两个控制资源注册值：
 
-外部 Adapter DLL 导出：
+| `providerId` | 连接与原始 I/O | 是否经过 Vendor C ABI |
+| --- | --- | --- |
+| `qt.serial` | `QSerialPort`；端口名、波特率、数据位、校验、停止位和流控来自资源 `properties` | 否 |
+| `qt.udp` | `QUdpSocket`；本地绑定地址/端口和远端地址/端口来自资源 `properties`，接收时忽略非配置远端的数据报 | 否 |
+
+`providerId` 只在 HAL 部署配置和内部路由中解析；算法和 BIZ 只使用 `ResourceId`。控制资源缺少 `providerId` 返回 `InvalidArgument`，未知值返回 `NotSupported`，不得静默回退到 Mock。当前资源链为：
+
+```text
+ResourceId
+  -> ResourceBinding(module = control, device alias, properties)
+  -> providerId = qt.serial | qt.udp
+  -> HAL 持有的 QSerialPort | QUdpSocket
+```
+
+可运行配置见 `configs/mbddf_pc_hal.json`。PC 端通过 `control.resourceId` 在同一份配置中的串口和 UDP 资源之间选择；这只是 PC 每次运行前的选择，不向 DUT 发送“切换控制口”命令。远端 IP/端口属于部署事实，不从 MB_DDF 板端网口自环测试地址推断。
+
+通用 Router、Provider 级设备扫描、`Mock Provider`、`Vendor Adapter Provider` 和 TCP 仍是目标能力。当前设备 `adapterId` 仍用于建立兼容会话，不能与控制资源 `providerId` 混为一谈。
+
+HAL 部署配置与 BIZ 的产品测试配置是不同边界：BIZ 新配置使用 `executionConfig` 向算法透传产品执行参数，不得把 Provider、SDK、物理端点或扫描结果塞入 `ProtocolProfile`、`ExchangeAction` 或协议 CSV。
+
+---
+
+## 5. 资源、参数和安全
+
+HAL 对外只接受逻辑资源 ID，并负责：
+
+- 校验资源存在、模块和方向匹配；
+- 依据设备能力校验物理索引和功能支持；
+- 归一化模拟量、数字量、串口和 CAN/CANFD 参数；
+- 对输出执行范围、电平和 payload 上限校验；
+- 在关闭、停止或异常路径按策略进入物理安全态。
+
+HAL 可以转换工程单位和厂家单位，但不得把产品字段转换或测试阈值判定伪装成硬件归一化。
+
+目标生命周期：
+
+```text
+initialize
+  -> 校验 HAL 部署配置
+  -> 建 Provider 路由
+  -> 扫描/匹配设备并建立 ResourceId 映射
+  -> 加载安全边界
+
+openDevice
+  -> Provider 创建并持有连接
+  -> HAL 返回 SessionId / IHalDevice
+
+I/O
+  -> 查资源和会话
+  -> 校验参数、安全和剩余 deadline
+  -> Provider 原始 I/O
+  -> 归一错误与日志
+
+closeDevice / shutdown
+  -> 执行物理安全态
+  -> 关闭连接
+  -> 释放 Provider
+```
+
+若产品需要发送业务级停机命令，应由算法在 HAL 物理安全收尾之前明确编排；HAL 的最终安全动作不得依赖产品协议成功。
+
+---
+
+## 6. Vendor Adapter C ABI（当前兼容面）
+
+主定义文件为 `src/hal/include/hal/hal_adapter_abi.h`。外部 Vendor Adapter DLL 的入口为：
 
 ```cpp
 int HAL_ADAPTER_CALL hal_adapter_get_api_v1(const HalAdapterHostApiV1* host,
                                             HalAdapterApiV1* outApi);
 ```
 
-当前 ABI：
+当前 ABI 版本为 `HAL_ADAPTER_ABI_VERSION == 1`。函数表覆盖设备生命周期、模拟量、数字量、串口和 CAN/CANFD 操作。
 
-```cpp
-#define HAL_ADAPTER_ABI_VERSION 1
-```
+兼容规则：
 
-`HalAdapterApiV1` 函数表：
+- C ABI 只使用固定宽度整数、POD、opaque handle 和调用方分配缓冲区；
+- 字符串为 UTF-8 且以 `\0` 结尾；
+- 阻塞函数必须尊重传入的 `timeoutMs`；
+- 不支持的函数指针可为 `nullptr`，HAL 调用前返回 `NotSupported`；
+- 新函数只能追加到函数表尾部，并以 `structSize` 判断兼容；
+- 改变已有字段语义必须升级 ABI 主版本。
+
+该 ABI 只服务 Vendor Adapter Provider。Qt Provider 和 Mock Provider 为进程内实现，不经过此 ABI。
+
+当前 Adapter 状态码映射保持兼容；其中 `HAL_ADAPTER_PROTOCOL_ERROR` 只有在厂家明确说明为传输层错误时才映射 `ProtocolError`，否则使用 `AdapterError` 并保留厂家码。
+
+---
+
+## 7. 日志与诊断
+
+HAL 关键生命周期和 I/O 操作应产生结构化事件，至少可追踪：
+
+- `requestId`、操作名、耗时和归一状态；
+- `deviceId`、`resourceId`；
+- 目标 Provider 路由落地后的 `providerId`、`providerKind`；
+- Vendor 分支的 `adapterCode` 和原始厂家诊断。
+
+只有 Vendor 分支涉及 DLL 加载/卸载日志；Qt/Mock 分支记录进程内 Provider 创建、连接和释放。日志字段的唯一主定义见 [日志接口协议](log-interface-protocol.md)。
+
+---
+
+## 8. Mock 与测试边界
+
+纯协议编解码单元测试可以直接使用 `ScriptedByteTransport` 或 `SystemStatusSimulator`，因为这类测试不宣称验证 HAL。
+
+产品模拟、算法集成和端到端测试必须经过 HAL。HAL Mock 的目标链路为：
 
 ```text
-getInfo
-initialize / shutdown / enumerateDevices
-openDevice / closeDevice / resetDevice / getCapabilities
-analogConfigure / analogRead / analogWrite
-digitalRead / digitalWrite / digitalWaitEdge
-serialOpen / serialClose / serialWrite / serialRead
-canOpen / canClose / canSetFilters / canSend / canReceive
+算法 -> HAL（providerId 指向 Mock）-> Mock Provider -> 模拟设备行为
 ```
 
-ABI 规则：
+也可以使用标准 Provider 连接隔离模拟目标，但必须单独标为 Qt Provider 证据，不能冒充 HAL Mock 或真实硬件证据。
 
-- C ABI 只使用固定宽度整数、POD、调用方分配缓冲区和 opaque handle。
-- 所有字符串为 UTF-8、`\0` 结尾。
-- 阻塞函数必须尊重 `timeoutMs`。
-- 不支持能力的函数指针可为 `nullptr`；HAL 调用前检查并返回 `NotSupported`。
-- 新增函数只能追加到函数表尾部，并用 `structSize` 判断兼容。
-- 修改字段语义必须升级 ABI 主版本。
+当前保留直连 `SystemStatusSimulator` 的 golden 测试，并新增“算法 -> HAL -> `qt.udp` -> 本机隔离模拟目标”的 `SYSTEM_STATUS` 集成测试。后者证明 Qt UDP Provider 路径，但不是 HAL Mock Provider、真实网口或真实 DUT 证据。当前 `MockAdapter` 的串口 echo 和 CAN loopback 仍只证明基础原始 I/O。
+
+完整测试分层、证据等级和真实硬件隔离要求见 [测试规范](../testing/testing-specification.md)。
 
 ---
 
-## 6. 资源映射
+## 9. 当前差距与验收
 
-`.testcfg` 使用逻辑资源，不暴露物理通道：
+| 能力 | 当前 | 目标验收 |
+| --- | --- | --- |
+| 后端选择 | 控制资源按 `providerId` 路由；其他资源固定 `CAbiAdapter -> MockAdapter` | 扩展为通用 Router |
+| Qt 串口 | `qt.serial` 已实现配置、打开、原始读写和关闭；无实机证据 | 真实 Windows 串口隔离联调 |
+| UDP/TCP | `qt.udp` 已实现并有本机闭环；TCP 未实现 | 明确现场 UDP 端点；另行评审 TCP |
+| Vendor Adapter | Loader 和 ABI 已有，未接入调用链 | 真实 DLL 经 Vendor Provider 使用 ABI v1 |
+| 设备发现 | 来自配置 | Provider 扫描并与配置 match |
+| deadline | 部分方法传递 timeout | 一次 HAL 操作共享总预算 |
+| 产品级 Mock | Simulator 绕过 HAL；另有 Qt UDP 隔离模拟目标 | 增加控制通道 Mock Provider 闭环 |
+| 生产安全 | 有基础 safeState | 异常、停止和关闭路径均有可验证物理收尾 |
 
-```json
-{
-  "hardware": {
-    "devices": [
-      {
-        "alias": "main_daq",
-        "adapterId": "acme.daq.v1",
-        "match": {"serialNumber": "DAQ-001"}
-      }
-    ],
-    "resources": {
-      "AD_MAIN_0": {"device": "main_daq", "module": "analog", "direction": "input", "physicalIndex": 0},
-      "DA_MAIN_0": {"device": "main_daq", "module": "analog", "direction": "output", "physicalIndex": 0},
-      "SERIAL_A": {"device": "main_daq", "module": "serial", "physicalIndex": 0},
-      "CANFD_A": {"device": "main_daq", "module": "canfd", "physicalIndex": 0}
-    }
-  }
-}
-```
-
-HAL 初始化后建立：
-
-```text
-ResourceId -> DeviceSession -> AdapterDeviceHandle -> physicalIndex -> Adapter API
-```
-
-HAL 必须校验：
-
-- 资源是否存在。
-- 模块和方向是否匹配。
-- 设备能力是否支持。
-- 物理索引是否有效。
-- 安全范围是否允许。
-
----
-
-## 7. 参数归一化
-
-HAL 调 Adapter 前统一处理：
-
-- 模拟量单位和量程转换。
-- DI/DO 电平值转换。
-- 串口校验位、停止位、流控转换。
-- CANFD DLC、payload 长度、ID 类型、bitrate 配置校验。
-- 默认超时、重试和 requestId 透传。
-- 输出安全边界校验。
-
----
-
-## 8. 错误映射
-
-Adapter 到 HAL 映射：
-
-| Adapter code | HAL code |
-| --- | --- |
-| `HAL_ADAPTER_OK` | `Ok` |
-| `HAL_ADAPTER_INVALID_ARGUMENT` | `InvalidArgument` |
-| `HAL_ADAPTER_NOT_FOUND` | `NotFound` |
-| `HAL_ADAPTER_NOT_SUPPORTED` | `NotSupported` |
-| `HAL_ADAPTER_BUSY` | `Busy` |
-| `HAL_ADAPTER_TIMEOUT` | `Timeout` |
-| `HAL_ADAPTER_IO_ERROR` | `IoError` |
-| `HAL_ADAPTER_PROTOCOL_ERROR` | `ProtocolError` |
-| `HAL_ADAPTER_DEVICE_DISCONNECTED` | `DeviceDisconnected` |
-| `HAL_ADAPTER_BUFFER_TOO_SMALL` | `BufferTooSmall` |
-| `HAL_ADAPTER_INTERNAL_ERROR` | `InternalError` |
-
-HAL 返回错误时必须尽量携带：
-
-- `operation`
-- `deviceId`
-- `resourceId`
-- `adapterCode`
-- 底层 message
-- 关键参数上下文
-- 厂家原始错误码，放入 `HalError.detail["vendorCode"]`
-
----
-
-## 9. 日志链路
-
-HAL 每次关键硬件调用生成 `HalLogEvent`：
-
-```text
-OperationOptions.requestId
-  -> HAL 调用计时
-  -> Adapter 调用
-  -> HalStatus / adapterCode / durationMs
-  -> emit IHalService::logProduced(HalLogEvent)
-  -> hwtest::logging::fromHalLogEvent(...)
-  -> ILogService::append(LogEvent)
-```
-
-字段来源：
-
-| 字段 | 来源 |
-| --- | --- |
-| `requestId` | `OperationOptions.requestId` |
-| `durationMs` | HAL 调用前后计时 |
-| `status` | `HalStatusCode` |
-| `adapterCode` | `HalStatus.error.adapterCode` |
-| `deviceId` | 设备描述或会话 |
-| `resourceId` | 逻辑资源映射 |
-| `source` | `hal` 或 `adapter` |
-
-`host.log` 边界：
-
-- Adapter C ABI 可通过 `HalAdapterHostApiV1::log` 输出日志。
-- HAL 接收后转换为 `HalLogEvent{source="adapter"}`。
-- 当前 ABI 不向 Adapter 传 `requestId`；HAL 在调用上下文中补齐。
-- HAL 不依赖 `hwtest_log`；`src/logging/hal_log_bridge.*` 同时链接 HAL 与日志模块，负责边界映射。
-
----
-
-## 10. 生命周期
-
-### 初始化
-
-```text
-IHalService.initialize(halConfig)
-  -> 加载或创建 Adapter
-  -> adapter.initialize(configJson)
-  -> adapter.enumerateDevices()
-  -> 建立 DeviceDescriptor / DeviceCapabilities
-  -> 建立 ResourceMapper
-  -> 加载安全配置
-```
-
-### 调用
-
-```text
-算法传 ResourceId
-  -> HAL 查映射
-  -> 校验能力和安全范围
-  -> 参数归一化
-  -> 调 Adapter API
-  -> 映射数据、错误和日志
-  -> 返回 HalResult<T> 或 HalStatus
-```
-
-### 关闭
-
-```text
-shutdown / closeDevice
-  -> 停止采样或监听
-  -> 输出进入安全状态
-  -> closeDevice
-  -> adapter.shutdown
-  -> unload adapter DLL
-```
-
----
-
-## 11. Mock Adapter
-
-Mock Adapter 是默认开发路径，必须支持：
-
-- AD 模拟采样。
-- DA 输出记录和 AD/DA 回环。
-- DI/DO 回环。
-- 串口 echo。
-- CANFD loopback。
-- 可配置超时、错误码、随机噪声。
-
-Mock 行为仍须走 HAL 接口和 Adapter 抽象，测试算法不得绕过 HAL。
-
----
-
-## 12. 验收标准
-
-- 算法层不包含厂家 SDK 头文件即可编译。
-- 更换厂家只新增或替换 Adapter，不改算法。
-- 所有硬件操作有超时、统一错误、日志和 `requestId`。
-- 输出操作先校验安全范围再下发。
-- 外部 Adapter 遵守 `HAL_ADAPTER_ABI_VERSION == 1`。
-- 无真实硬件时 Mock 能跑通当前范围基础流程。
+在代码达到目标前，文档和测试报告必须继续保留“未实现”标记，不得以 Mock echo、Simulator 或已存在的接口声明替代实现证据。

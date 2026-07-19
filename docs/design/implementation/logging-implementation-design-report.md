@@ -1,37 +1,22 @@
 # 日志模块实现设计报告
 
-> 范围：`src/logging` 当前实现。
-> 技术栈：Qt 5.15 / C++17。
-> 目标：说明独立日志模块如何缓存、分发、落盘，并如何接入 HAL 日志。
+> `[当前实现]` 本文只记录 `src/logging/` 已落地代码，不定义未来 Provider、网络、UI 或真实厂家日志能力。日志模型、来源和 HAL/Adapter 映射以 `../contracts/log-interface-protocol.md` 为主定义。
 
----
+## 1. 构建与范围
 
-## 1. 定位
+当前日志代码位于 `src/logging/`，命名空间为 `hwtest::logging`，使用 C++17 和 Qt Core。
 
-日志模块是五层架构旁路基础模块，命名空间为 `hwtest::logging`，构建产物为静态库 `hwtest_log`。
+| 目标 | 当前内容 | 直接依赖 |
+| --- | --- | --- |
+| `hwtest_log_types` | `LogEvent`、`LogLevel`、字符串转换和元类型注册 | Qt Core |
+| `hwtest_log` | `ILogService`、`LogService`、sink、formatter、HAL 日志桥接 | Qt Core、`hwtest_hal`、`hwtest_log_types` |
 
-当前职责：
+`hwtest_log_types` 是给 BIZ 等只交换 `LogEvent` 值的 HAL-free 边界；`hwtest_log` 才包含服务和 `hal_log_bridge`。本仓库当前没有 UI 订阅方。
 
-- 定义项目主日志模型 `LogEvent` 和辅助等级 `LogLevel`。
-- 提供 `ILogService`、`LogService` 和 `ILogSink`。
-- 维护有界 recent 缓存并按最小等级过滤。
-- 分发日志到 sink，并通过 `logAppended` 通知 UI 或其他展示层。
-- 提供 `JsonLineFileSink`，按 JSONL 持久化结构化日志。
-- 提供 `hal_log_bridge`，把 `hwtest::hal::HalLogEvent` 映射为 `LogEvent`。
-
-不做：
-
-- 不引入 UI、monitor UI、ANSI 颜色输出或全局 `LOG_INFO` 宏。
-- 不修改 `src/hal/include/hal/` 和 `hal_adapter_abi.h`。
-- 不负责 CSV 数据记录、测试报告生成或业务状态判定。
-
----
-
-## 2. 目录
+## 2. 当前文件结构
 
 ```text
 src/logging/
-  CMakeLists.txt
   include/logging/
     log_global.h
     log_types.h
@@ -48,45 +33,20 @@ src/logging/
     hal_log_bridge.cpp
 ```
 
-测试目录：
+当前测试目录为：
 
 ```text
 tests/log/
-  CMakeLists.txt
   log_service_test.cpp
   log_file_sink_test.cpp
   hal_log_bridge_test.cpp
 ```
 
----
+## 3. 类型与 `LogService`
 
-## 3. 公共类型
+`registerLogMetaTypes()` 注册 `LogLevel`、`LogEvent` 和 `QVector<LogEvent>`。`toString()` 输出大写等级；`logLevelFromString()` 大小写不敏感并兼容 `WARNING`，无法识别时使用调用方给定的默认等级。
 
-`LogEvent` 字段：
-
-```text
-timestampUs, level, source, category, message,
-requestId, durationMs, status, adapterCode, context
-```
-
-`LogLevel`：
-
-```text
-Trace, Debug, Info, Warn, Error, Fatal, Off
-```
-
-实现约定：
-
-- `registerLogMetaTypes()` 注册 `LogLevel`、`LogEvent` 和 `QVector<LogEvent>`。
-- `toString(LogLevel)` 输出大写等级字符串。
-- `logLevelFromString()` 支持大小写不敏感解析，并把 `WARNING` 兼容为 `Warn`。
-- `Off` 只参与过滤，不作为正常事件等级。
-
----
-
-## 4. `LogService`
-
-`LogService` 继承 `ILogService`，内部状态：
+`LogService` 的当前内部状态：
 
 ```text
 m_recent        最近日志缓存
@@ -96,52 +56,34 @@ m_minimumLevel  最小等级，默认 Trace
 m_mutex         保护内部状态
 ```
 
-`append()` 流程：
+`append()` 当前执行顺序：
 
 ```text
 接收 LogEvent
-  -> 空 timestampUs 补当前 UTC epoch 微秒
-  -> 空或可解析 level 规范化为大写等级
+  -> timestampUs <= 0 时补当前 UTC epoch 微秒
+  -> 规范化 level
   -> 按 minimumLevel 过滤
-  -> 写入有界 recent 缓存
-  -> 复制 sink 列表
+  -> 写入有界 recent 缓存并复制 sink 列表
   -> 解锁
-  -> sink->append(event)
+  -> 逐个 sink->append(event)
   -> emit logAppended(event)
 ```
 
-关键约束：
+实现不会在内部状态锁内调用 sink 或发射 `logAppended`。`recent(maxCount)` 返回追加顺序中最多 `maxCount` 条最近事件；`setRecentLimit(0)` 清空并禁用 recent 缓存。
 
-- sink 回调和 signal emit 不在内部状态锁内执行。
-- `recent(maxCount)` 返回按追加顺序排列的最近日志。
-- `setRecentLimit(0)` 清空并禁用 recent 缓存。
-- sink 生命周期由调用方管理；`LogService` 只保存非拥有指针。
+## 4. 格式化与文件 sink
 
----
+`LogFormatter` 当前提供：
 
-## 5. 格式化和文件 sink
+- `toJsonObject(LogEvent)`：构造 `QJsonObject`。
+- `toJsonLine(LogEvent)`：输出紧凑 JSON 并追加换行。
+- `toTextLine(LogEvent)`：输出人可读文本，当前不是主持久化格式。
 
-`LogFormatter` 提供：
+`JsonLineFileSink` 使用 `QFile` 追加写入。`append()` 在文件未打开时尝试打开，单次写入一行 JSON；`flush()` 显式刷新文件。文件 sink 不写 ANSI 颜色，也不直接写 stdout。
 
-- `toJsonObject(LogEvent)`：转换为 `QJsonObject`。
-- `toJsonLine(LogEvent)`：紧凑 JSON + 换行。
-- `toTextLine(LogEvent)`：人可读文本格式，当前不作为主持久化格式。
+## 5. HAL 日志桥接
 
-`JsonLineFileSink`：
-
-- 使用 `QFile` 追加写入。
-- 每条日志一行 JSON。
-- `append()` 在文件未打开时尝试自动打开。
-- `flush()` 显式刷新到文件。
-- 不写 ANSI 颜色，不直接写 stdout。
-
----
-
-## 6. HAL 桥接
-
-`hal_log_bridge` 位于日志模块内，是 HAL 和主日志模型之间的边界适配。
-
-接口：
+当前 `hal_log_bridge` 提供：
 
 ```cpp
 LogEvent fromHalLogEvent(const hwtest::hal::HalLogEvent& event);
@@ -151,34 +93,19 @@ QMetaObject::Connection connectHalLogs(hwtest::hal::IHalService* halService,
                                        Qt::ConnectionType type = Qt::AutoConnection);
 ```
 
-映射规则：
+`connectHalLogs()` 将 HAL 的 `logProduced(HalLogEvent)` 连接到 `ILogService::append()`，中间调用 `fromHalLogEvent()`。HAL 仍只生产 `HalLogEvent`，不依赖 `LogService`。字段来源、上下文覆盖和 Adapter 来源规则不在本报告重复，统一见 `../contracts/log-interface-protocol.md` 第 5 节。
 
-- `timestampUs`、`level`、`category`、`message` 直接复制。
-- `source` 为空时补 `hal`，否则保留原值，例如 `adapter`。
-- `requestId`、`durationMs`、`status`、`adapterCode` 写入顶层字段。
-- `deviceId`、`resourceId`、`operation` 写入 `context`。
-- `requestId`、`durationMs`、`status`、`adapterCode` 也镜像到 `context`。
-- 原始 `HalLogEvent.context` 先保留，同名标准字段以顶层字段覆盖。
+## 6. 当前验证
 
-HAL 仍只生产 `HalLogEvent`，不依赖 `LogService`。
+测试目标为 `hwtest_log_tests`，当前包含 7 个源级 `TEST*` 用例，覆盖：
 
----
+- `LogService` 的默认值规范化、过滤、recent 缓存、signal 和 sink 分发。
+- `JsonLineFileSink` 的 JSONL 结构、context 保留和 `flush()`。
+- `hal_log_bridge` 的字段映射和 signal 连接。
 
-## 7. 测试
-
-测试目标：`hwtest_log_tests`。
-
-覆盖点：
-
-- `LogService`：补齐默认值、过滤、recent 缓存、signal、sink 分发。
-- `JsonLineFileSink`：JSONL 结构、context 保留、flush。
-- `hal_log_bridge`：字段映射和 signal 连接。
-
-运行：
+运行示例：
 
 ```powershell
 cmake --build build_vs --config Debug --target hwtest_log_tests
-cmake --build build_vs --config Release --target hwtest_log_tests
 ctest --test-dir build_vs -C Debug --output-on-failure
-ctest --test-dir build_vs -C Release --output-on-failure
 ```

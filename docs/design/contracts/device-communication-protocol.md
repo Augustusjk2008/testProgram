@@ -1,407 +1,280 @@
-# 测试设备与被测件底层通讯协议设计
+# 测试设备与被测件通讯协议契约
 
-> 适用项目：多产品通用硬件测试软件（Qt 5.15 / C++17 / Windows）
-> 本文定位：测试软件运行过程中，测试设备与被测件之间的底层通讯协议定义、CSV 建模格式、字段布局和校验规则。
-> 采纳来源：`H:/WorkSpace/PythonWorkspace/openEulerEnvironment/docs/protocol_modeling_workbench_definition.md` 中的协议定义、CSV 存储格式、字段定义、字段类型、命名表达式、布局规则和校验规则。
-> 建议来源：同源文档中的 C++ 代码生成、Schema 生成和导出物规则只作为工程实现建议，不构成本项目当前接口强制面。
+> 适用项目：多产品通用硬件测试软件（Qt 5.15 兼容、Qt 6 Core/Network/SerialPort fallback / C++17 / Windows）
+> 本文定位：产品协议资产、当前 MB_DDF CSV 解析规则、帧编解码和算法运行期语义。
+> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/src/system_status_executor.cpp`。
+> 状态标记：**当前**表示已实现或已由用户确认的资产基线，**目标**表示已确认但尚未实现。
+
+原始建模参考来自 `H:/WorkSpace/PythonWorkspace/openEulerEnvironment/docs/protocol_modeling_workbench_definition.md`。该外部绝对路径只作来源追溯，不是本仓库可复现的发布输入；本项目当前实现与该参考不一致时，以本节明确列出的“当前规则”为准。
 
 ---
 
-## 1. 边界与关系
+## 1. 分层边界
 
-本文定义的“底层通讯协议”用于描述测试设备与被测件之间传输的原始帧结构。协议帧可承载在串口、CANFD 或后续新增总线之上，但协议字段语义独立于具体硬件厂家 SDK。
+本文中的产品协议是测试设备与 DUT 之间的帧语义，不是 HAL 传输协议。
 
-在五层架构中的位置：
+当前代码依赖和测试替身路径：
 
 ```text
-核心测试算法层
-  -> 根据协议 CSV 构造命令帧、解析响应帧、执行字段级校验
-  -> IHalService / ISerialBus / ICanFdBus
-  -> HAL 负责总线资源、超时、错误映射和原始字节收发
-  -> Adapter
-  -> 测试设备
-  -> 被测件
+BIZ -> IAlgorithmExecutor -> hwtest_algorithm_mbddf -> IByteTransport
+                                                   -> SystemStatusSimulator（当前成功测试）
+                                                   -> HalControlTransport -> hwtest_hal
+                                                   -> HalSerialTransport -> hwtest_hal
 ```
 
-职责边界：
+统一生产路径如下；当前 `SYSTEM_STATUS` 控制通道已按该边界落地，通用 Provider 架构仍未完成：
 
-- 协议 CSV 定义帧结构、字段类型、字节布局、位布局和有效字段。
-- 核心测试算法层负责选择协议、填充业务字段、检查响应字段和判定测试结果。
-- HAL 负责串口、CANFD 等传输通道的资源映射、参数归一化、超时、重试、日志和错误映射。
-- Adapter 只封装厂家库或系统 API，不解释本协议字段业务含义。
-- 协议解析失败、帧长度不匹配、字段值不符合协议约束时，应在调用链中记录为协议类错误；进入 HAL 错误面时映射为 `HalStatusCode::ProtocolError`。
+```text
+BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据）
+    -> HAL（逻辑资源、连接、原始 I/O、deadline、传输错误和物理安全态）
+    -> providerId 路由
+         -> Qt 标准 API Provider
+         -> Vendor Adapter Provider
+         -> Mock Provider
+```
 
-与现有事实源关系：
+明确禁止：
 
-| 文档 | 关系 |
-| --- | --- |
-| `overview/five-layer-architecture.md` | 定义协议所在层级和跨层依赖 |
-| `contracts/business-scheduling-layer.md` | 定义 `ProtocolProfile`、`ExchangeAction`、`IFrameBuilder` 和 `IFrameParser` |
-| `contracts/hal-interface-protocol.md` | 定义原始字节或 CANFD 帧如何通过 HAL 发送和接收 |
-| `contracts/device-communication-protocol.md` | 定义测试设备与被测件之间的协议帧建模规则 |
-| `testing/testing-specification.md` | 定义协议契约测试和集成测试边界 |
+- BIZ 解释 CSV 字段、构造产品帧或直接调用 HAL；
+- HAL 解释产品帧头、长度、CRC、命令、序号、字段和值；
+- Adapter 执行测试流程或判定；
+- 将产品解析错误映射为 `HalStatusCode::ProtocolError`。
 
----
-
-## 2. 协议资产模型
-
-一个协议等价于一个可保存、可审查、可生成辅助代码的帧结构定义。
-
-| 定义项 | 规则 |
-| --- | --- |
-| 协议资产文件 | 一个 `.csv` 文件描述一个帧结构 |
-| 协议资产目录 | 由产品配置或工程配置指定，保存协议 CSV 和可选生成物 |
-| 协议配置入口 | 产品配置中的 `ProtocolProfile` 仅引用协议 CSV；算法层读取并执行该引用 |
-| 协议文件名 | 只允许普通文件名，不允许携带路径 |
-| 帧名 | CSV 文件名去掉 `.csv` 后得到的名称 |
-| 字段列表 | CSV 行顺序排列的一组字段定义 |
-| 原始布局 | 由字段行顺序、字段类型、长度和位字段分组推导 |
-| 有效字段 | 由 `is_valid` 决定是否参与运行期打包、解析和字段 Schema |
-
-运行期约定：
-
-- 每个命令帧、响应帧、事件帧应分别建模为独立 CSV。
-- 产品测试配置引用协议资产时，应使用稳定的协议文件名或帧名，不使用 CSV 的显示序号作为字段 ID。
-- 测试算法不得在代码中手写与 CSV 冲突的字节偏移和位偏移。
-- 协议 CSV 是字段布局的事实源；辅助 C++ 类型、Schema 或文档导出物均应由 CSV 派生或人工保持一致。
+产品协议错误进入算法/BIZ 结果面，例如 `ErrorCode::ProtocolParseError`；HAL 的 `ProtocolError` 只保留给 Provider 或驱动可独立识别的传输层错误。分层总览见 [五层架构](../overview/five-layer-architecture.md)，HAL 原始 I/O 语义见 [HAL 接口协议](hal-interface-protocol.md)。
 
 ---
 
-## 3. CSV 存储格式
+## 2. 当前实现范围
 
-协议 CSV 使用 UTF-8 with BOM 读写，列定义固定为：
+当前仓库已经存在 `hwtest_algorithm_mbddf`，不是纯设计占位：
+
+| 实现 | 当前能力 |
+| --- | --- |
+| `ProtocolCatalog` | 从目录加载并索引严格 MB_DDF CSV 定义 |
+| `encodePayload()` / `decodePayload()` | 按定义编解码 B4 至产品 payload 末尾 |
+| `encodeFrame()` / `decodeFrame()` | 处理 `55 AA + LEN + payload + CRC16/XMODEM` |
+| `SystemStatusAlgorithmExecutor` | 执行 `mbddf.system_status` 单步算法 |
+| `SystemStatusSimulator` | 协议级成功、超时、坏 CRC 和无效响应模拟 |
+| `HalControlTransport` | 经 `IControlChannel` 发送原始字节，并累积短读、搜索同步字、按长度分帧及保留剩余帧 |
+| `HalSerialTransport` | 将算法字节事务桥接到现有 `ISerialBus` |
+
+当前有两类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”。后者证明控制通道和标准 UDP Provider 集成，但不证明真实 DUT、真实网口或真实串口。`HalSerialTransport` 作为旧兼容桥接保留。
+
+---
+
+## 3. 资产身份与基线
+
+当前 `ProtocolCatalog` 按“一份 CSV 对应一个 `MessageDefinition`”加载。文件名必须以 `_request.csv` 或 `_response.csv` 结尾，去掉 `.csv` 后得到定义名；同方向下 `type_group + sub_type` 不得重复。
+
+用户已确认 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容为 MB_DDF 协议 CSV 基线。消息名称、字段和当前清单以该目录现状为准；加载器、测试和本文必须随该目录的受控变更同步更新。
+
+该目录尚未形成仓库内可复现快照。交付或冻结版本时至少应记录：
+
+- `baselineId` 和来源版本或哈希；
+- CSV 文件名与内容哈希；
+- 逻辑定义 ID、方向和命令键；
+- 请求/响应配对关系；
+- 测试步骤到定义的显式映射；
+- 该基线通过的校验与测试记录。
+
+### 3.1 已确认基线与测试对齐
+
+截至 2026-07-19，该目录有 32 个 CSV，包含 `system_status_request.csv` 与 `system_status_response.csv`，不包含 `ad_read_response.csv`。
+
+因此：
+
+- `ProtocolCatalog` 按一文件一定义加载，当前期望为 32 个定义；
+- `SYSTEM_STATUS` 所需两份 CSV 当前存在；
+- 原测试源码中的 36 项断言和 `ad_read_response` 引用是相对批准基线的陈旧预期，现已按当前定义修正；
+- 后续修改该目录时，必须同步协议测试和本节清单；测试结果应记录基线路径、观测时间和实际清单。
+
+基线已批准不等于 manifest、内容哈希或不可变快照已经实现，也不等于 HAL 产品集成或真实硬件验收已经完成。
+
+---
+
+## 4. 当前 CSV 语法
+
+当前解析器采用严格输入，不等同于通用 CSV 工作台设计：
+
+- 编码必须是有效 UTF-8，UTF-8 BOM 可有可无；
+- 表头必须逐项等于下列 8 列，额外列或缺列都会失败；
+- 每个数据行必须正好 8 列；
+- 空文件、只有表头、空行、未闭合引号和非法引号位置都会失败；
+- 支持双引号字段和 `""` 转义；字段读取后会 trim；
+- `index` 只接受 `B1` 或 `B1-4` 形式；
+- `length` 必须是正整数；
+- `name_cn`、`name_en` 均不能为空，`name_en` 在单文件内不得重复；
+- `is_valid` 当前只接受 `0` 或 `1`，不接受 `true/yes/是` 等文本。
+
+固定表头：
 
 ```text
 index,length,type,name_cn,name_en,lsb,default,is_valid
 ```
 
-| CSV 列 | 字段属性 | 说明 |
-| --- | --- | --- |
-| `index` | `FieldSpec.index` 或字节序显示 | 保存时可写入自动计算的字节序，例如 `B1`、`B1-4`；加载时若无法解析为数字，则按行号生成逻辑序号 |
-| `length` | `FieldSpec.length` | 普通字段表示字节数，`BIT` 表示位数，`RESERVED` 表示预留字节数 |
-| `type` | `FieldSpec.field_type` | 字段类型，必须在支持类型列表中 |
-| `name_cn` | `FieldSpec.name_cn` | 中文说明，用于界面、导出文档、注释和展示 Schema |
-| `name_en` | `FieldSpec.name_en` | 英文建模名，用于运行期字段访问、数组、结构数组和位字段分组 |
-| `lsb` | `FieldSpec.lsb` | 定标系数，主要用于 `U8F/S8F/U16F/S16F/U32F/S32F` |
-| `default` | `FieldSpec.default` | 默认值字符串，运行期或生成代码可按整数或浮点解析 |
-| `is_valid` | `FieldSpec.is_valid` | 是否参与运行期解析、打包和 Schema；`BIT` 字段强制视为有效 |
-
-读取规则：
-
-- 空行忽略。
-- 额外列忽略。
-- 列缺失按无效协议处理，保存、导入或运行前校验必须失败。
-- `is_valid` 支持 `1/true/yes/y/是` 和 `0/false/no/n/否` 等布尔文本。
-- `RESERVED` 字段保存时应清空 `lsb` 和 `default`。
+| 列 | 当前语义 |
+| --- | --- |
+| `index` | 1 基物理帧字节位置，必须与 `length` 一致 |
+| `length` | 普通字段字节数；`BIT` 为位宽 |
+| `type` | 第 5 节列出的当前支持类型 |
+| `name_cn` | 非空中文说明 |
+| `name_en` | 非空且文件内唯一的运行期访问名 |
+| `lsb` | 可选的有限正数，编码时除以 `lsb`，解码时乘以 `lsb` |
+| `default` | 可选有限数；协议公共字段和 `CONST` 有更严格规则 |
+| `is_valid` | `1` 可由调用方赋值，`0` 只能使用默认值；受保护公共字段不可覆盖 |
 
 ---
 
-## 4. 字段定义
+## 5. 当前字段类型
 
-字段是协议的最小建模单元，对应如下结构：
+| CSV 类型 | 当前 C++ 类型 | 字节数 | 编解码语义 |
+| --- | --- | --- | --- |
+| `BIT` | `FieldType::Bit` | 1 个承载字节中的 1..8 位 | 无符号，可应用 `lsb`；同一字节的连续 BIT 必须正好覆盖 8 位 |
+| `CONST` | `FieldType::Const` | 1..8 | 无符号常量，解码时必须匹配默认值 |
+| `F32` | `FieldType::F32` | 4 | IEEE 754，小端位模式，可应用 `lsb` |
+| `RESERVED` | `FieldType::Reserved` | 由 `length` 指定 | 必须为零，解码发现非零即失败 |
+| `S16` | `FieldType::S16` | 2 | 小端有符号整数，可应用 `lsb` |
+| `S16F` | `FieldType::S16F` | 2 | 小端有符号定标整数 |
+| `S32F` | `FieldType::S32F` | 4 | 小端有符号定标整数 |
+| `U8` | `FieldType::U8` | 1 | 无符号整数，可应用 `lsb` |
+| `U16` | `FieldType::U16` | 2 | 小端无符号整数，可应用 `lsb` |
+| `U32` | `FieldType::U32` | 4 | 小端无符号整数，可应用 `lsb` |
 
-```text
-FieldSpec(
-    index: int,
-    length: int,
-    field_type: str,
-    name_cn: str,
-    name_en: str,
-    lsb: Optional[float],
-    default: Optional[str],
-    is_valid: bool,
-)
-```
-
-| 属性 | 必填 | 定义 |
-| --- | --- | --- |
-| `index` | 是 | 逻辑行序号。界面或 CSV 中显示的 `B1`、`B1-4` 不应被业务当作稳定字段 ID |
-| `length` | 是 | 字段长度。普通定长类型可填 `0` 表示使用类型默认长度；`BIT` 和 `RESERVED` 必须大于 `0` |
-| `field_type` | 是 | 类型编码，例如 `U16`、`F32`、`BIT`、`RESERVED` |
-| `name_cn` | 否 | 中文说明，优先用于文档和 Schema 展示；为空时回退到 `name_en` |
-| `name_en` | 是 | 英文字段名或表达式，必须满足本文命名规则 |
-| `lsb` | 否 | 定标系数。定标整数类型填写后必须为正数；为空时按 `1.0` 处理 |
-| `default` | 否 | 默认值。能解析为整数或浮点数时可用于帧默认构造或命令初值 |
-| `is_valid` | 是 | 有效字段参与运行期帧大小、打包、解析和 Schema；无效普通字段只作为建模备注保留 |
+通用建模参考中的 `ANY`、`S8`、`U8F`、`S8F`、`U16F`、`U32F`、`S32`、`F64`、结构数组和通用位容器目前不是已实现能力。新增类型必须同步扩展 `FieldType`、解析、编解码、校验、测试和本文，不得仅修改 CSV。
 
 ---
 
-## 5. 字段类型
+## 6. MB_DDF 帧与布局约束
 
-| 类型 | 名称 | 长度 | 运行期值类型 | 说明 |
-| --- | --- | --- | --- | --- |
-| `CONST` | 定值字节 | 1 字节 | `UInt8` | 可配置默认值；运行期建议校验接收值是否等于期望常量 |
-| `ANY` | 不定字节 | 1 字节 | `UInt8` | 字节占位，不做固定值约束 |
-| `U8` | 无符号 1 字节 | 1 字节 | `UInt8` | 无符号整数 |
-| `S8` | 有符号 1 字节 | 1 字节 | `Int8` | 有符号整数 |
-| `U16` | 无符号 2 字节 | 2 字节 | `UInt16` | 小端读写 |
-| `S16` | 有符号 2 字节 | 2 字节 | `Int16` | 小端读写 |
-| `U32` | 无符号 4 字节 | 4 字节 | `UInt32` | 小端读写 |
-| `S32` | 有符号 4 字节 | 4 字节 | `Int32` | 小端读写 |
-| `U8F` | 无符号 1 字节定标 | 1 字节 | `Float64` | 原始无符号整数乘以 `lsb` 得到物理量 |
-| `S8F` | 有符号 1 字节定标 | 1 字节 | `Float64` | 原始有符号整数乘以 `lsb` 得到物理量 |
-| `U16F` | 无符号 2 字节定标 | 2 字节 | `Float64` | 小端读写，带定标 |
-| `S16F` | 有符号 2 字节定标 | 2 字节 | `Float64` | 小端读写，带定标 |
-| `U32F` | 无符号 4 字节定标 | 4 字节 | `Float64` | 小端读写，带定标 |
-| `S32F` | 有符号 4 字节定标 | 4 字节 | `Float64` | 小端读写，带定标 |
-| `F32` | 单精度浮点 | 4 字节 | `Float32` | 以 IEEE 754 原始位模式小端读写 |
-| `F64` | 双精度浮点 | 8 字节 | `Float64` | 以 IEEE 754 原始位模式小端读写 |
-| `BIT` | 位字段 | `length` 位 | 位字段 | 连续 `BIT` 行打包到 8/16/32 位容器 |
-| `RESERVED` | 预留字节 | `length` 字节 | 无业务值 | 原始帧占位，不进入业务字段 Schema |
+当前解析器不是任意帧格式引擎，而是带固定公共字段的 MB_DDF 解析器。
 
-所有多字节整数和浮点字段默认按小端序读写。若某个外部设备必须使用其他字节序，应在协议资产层新增显式字段约束，并同步更新本文和相关解析实现。
+每份定义的前七个字段必须依次为：
 
----
+| 位置 | `name_en` | 类型 | 当前约束 |
+| --- | --- | --- | --- |
+| `B1` | `sync[0]` | `CONST` | 默认字面量 `0x55` |
+| `B2` | `sync[1]` | `CONST` | 默认字面量 `0xAA` |
+| `B3` | `len` | `U8` | 默认值只能是 48 或 123 |
+| `B4` | `version` | `CONST` | 默认字面量 `0x11` |
+| `B5` | `type_group` | `U8` | 必须有 8 位无符号默认值 |
+| `B6` | `sub_type` | `U8` | 必须有 8 位无符号默认值 |
+| `B7-8` | `seq` | `U16` | 由执行器写入，调用方不能覆盖 |
 
-## 6. 英文名表达式
+布局规则：
 
-`name_en` 是运行期字段访问、辅助代码生成和 Schema 生成的关键标识。
+- 字段必须从 B1 开始连续覆盖，不能有空洞或重叠；
+- 普通字段的 `index` 跨度必须等于 `length`；
+- 同一字节的连续 `BIT` 字段按低位到高位排列，累计必须正好 8 位；
+- `len` 表示从 B4 开始的产品 payload 长度，当前只允许 48 或 123；
+- 最后一个字段必须名为 `crc`、类型为 `U16`，位于完整帧末尾；
+- 完整物理帧为 `55 AA + LEN + payload + CRC_LO CRC_HI`；
+- CRC 使用 CRC-16/XMODEM，对 `LEN + payload` 计算，并以小端顺序附加；
+- 编解码前会再次验证定义，防止调用方传入被篡改的 `MessageDefinition`。
 
-| 形式 | 示例 | 含义 |
-| --- | --- | --- |
-| 标量字段 | `temperature` | 普通字段 |
-| 位字段分组 | `flags.ready` | `BIT` 字段使用点号前缀作为位组名，点号后为位域名 |
-| 无分组位字段 | `ready` | `BIT` 字段未写分组时自动归入 `bitGroupN` |
-| 标量数组 | `data[0]`、`data[1]` | 显式数组字段 |
-| 结构数组 | `points[0].x`、`points[0].y` | 结构数组字段 |
-
-命名约束：
-
-- 普通标识符必须匹配 `^[A-Za-z_][A-Za-z0-9_]*$`。
-- 数组下标必须是从 `0` 开始的非负整数。
-- 数组下标必须连续，不允许缺口。
-- 结构数组字段名必须是合法标识符。
-- 非数组字段最多允许一个点号。
-- 非 `BIT` 字段中的点号不表示嵌套结构，运行期访问名应归一化为下划线。
-- 归一化后的字段名不得重复。
-- 位字段组名、数组基名、预留字段名和普通标量名不得在顶层发生类别冲突。
-
-建模要求：
-
-- 数组必须使用显式下标，例如 `data[0]`、`data[1]`，不得依赖连续同名字段推断数组。
-- 位字段应使用稳定分组前缀，例如 `status.ready`、`status.mode`。
-- `name_en` 一旦进入产品测试配置或报告字段，应视为兼容字段，重命名需同步迁移配置和报告解析。
+`encodePayload()` / `decodePayload()` 只处理 B4 至 payload 末尾，不包含 B1-B3 和尾部 CRC；`encodeFrame()` / `decodeFrame()` 负责物理信封。
 
 ---
 
-## 7. 布局规则
+## 7. `SYSTEM_STATUS` 配置与执行
 
-### 7.1 字节布局
-
-协议按字段行顺序计算原始字节序：
-
-- 普通定长类型使用类型默认字节数。
-- 普通字段 `length=0` 时使用类型默认字节数。
-- `RESERVED` 使用 `length` 字节。
-- 连续 `BIT` 字段先组成位字段组，再按容器大小占用 1、2 或 4 字节。
-- 字节序可显示为 `B1`、`B1-4` 等 1 基位置。
-
-### 7.2 位字段布局
-
-连续的 `BIT` 行组成一个位字段 run：
-
-- 位组名优先取第一行 `name_en` 的点号前缀，例如 `flags.ready` 得到 `flags`。
-- 没有点号前缀时自动生成 `bitGroup1`、`bitGroup2`。
-- 每个 `BIT` 字段的 `length` 表示位数。
-- 单个 `BIT` 字段有效位数最大为 32。超过 32 位应产生警告，实际布局按 32 位处理。
-- 位容器按总位数选择 8、16 或 32 位。
-- 超过 32 位的连续位字段应拆成多个位组。
-- 位偏移在实现中使用 0 基；导出文档可使用 1 基展示。
-
-位容器未填满时，剩余位应视为预留位。运行期解析不得把未定义位解释为业务字段。
-
-### 7.3 有效字段布局
-
-`is_valid` 影响运行期解析，不影响原始字节序展示：
-
-- 有效普通字段参与帧大小、打包、解析和 Schema。
-- 无效普通字段不参与运行期解析链路。
-- `BIT` 字段在加载和校验时强制设置为有效。
-- 有效 `RESERVED` 占用帧大小，但不产生业务值。
-- 无效 `RESERVED` 不占用运行期帧大小，也不产生业务值。
-
----
-
-## 8. 校验规则
-
-保存 CSV、导入协议、运行测试、生成辅助代码和导出文档前都必须执行字段校验。
-
-错误会阻断操作：
-
-- 字段类型不在支持列表中。
-- `name_en` 不是合法标识符表达式。
-- 归一化后的字段名重复。
-- 顶层成员名在标量、数组、位组、预留字段之间发生类别冲突。
-- `RESERVED.length <= 0`。
-- `BIT.length <= 0`。
-- 定标整数类型的 `lsb` 存在且小于等于 `0`。
-- 定长类型的 `length` 不是 `0` 且不等于类型固定长度。
-- 数组下标重复。
-- 数组混用标量元素和结构体字段。
-- 数组下标不从 `0` 开始、不连续或顺序不正确。
-- 结构数组的某个字段没有覆盖所有数组下标。
-- 运行期接收帧长度小于协议要求的有效帧大小。
-
-警告不阻断操作，但必须进入日志或校验报告：
-
-- `BIT.length > 32`，后续布局和解析按 32 位截断处理。
-- `CONST` 字段缺少默认值。
-- 有效字段缺少 `name_cn`，展示时将回退到 `name_en`。
-
----
-
-## 9. 运行期处理流程
-
-### 9.1 命令帧打包
-
-```text
-测试步骤参数
-  -> 选择协议 CSV
-  -> 校验 FieldSpec
-  -> 根据 default 生成初始字段值
-  -> 写入测试步骤字段值
-  -> 按字段顺序和小端规则打包 QByteArray
-  -> 通过 HAL 串口或 CANFD 接口发送
-```
-
-要求：
-
-- 打包前必须确认协议 CSV 已通过校验。
-- 定标字段写入物理量时，应按 `raw = value / lsb` 编码，并检查原始整数范围。
-- `RESERVED` 字节默认填 `0`，除非协议资产显式定义其他填充值。
-- `CONST` 字段发送时使用默认值。
-
-### 9.2 响应帧解析
-
-```text
-HAL 接收 QByteArray / CanFdFrame
-  -> 按协议 CSV 校验帧长度
-  -> 按字段顺序和小端规则解析
-  -> 应用 lsb 得到物理量
-  -> 生成字段 Schema 或键值结果
-  -> 测试算法执行字段级判定
-```
-
-要求：
-
-- 响应帧长度不足必须视为协议错误。
-- 响应帧长度超出协议要求时，默认只解析协议定义长度；是否允许尾部扩展由具体协议资产或产品配置声明。
-- 接收 `CONST` 字段时建议校验其值与默认值一致；不一致时记录协议错误。
-- 未定义位、无效字段和预留字段不得进入测试结果判定。
-
-### 9.3 日志与追踪
-
-协议运行期日志应复用业务层生成的 `requestId`，并至少记录：
-
-- 协议名或帧名。
-- 传输资源 ID，例如 `SERIAL_A`、`CANFD_A`。
-- 操作类型，例如 `pack`、`send`、`receive`、`unpack`、`validate`。
-- 帧长度。
-- 校验状态和错误字段名。
-
-原始帧日志应控制体积和敏感性。默认记录摘要、长度和十六进制截断片段；完整原始帧只在调试开关启用时记录。
-
----
-
-## 10. `ProtocolProfile` 接入
-
-产品配置可用 `ProtocolProfile` 引用协议资产，并用 `ExchangeAction` 携带逻辑动作描述。BIZ 只解析、保存和透传这些中性配置；算法层负责选择协议资产、解释动作并绑定 HAL 逻辑资源：
+当前 `SystemStatusAlgorithmExecutor` 只支持 `algorithmId = "mbddf.system_status"`。BIZ 将 `TestConfig.executionConfig` 原样传给 `prepare()`；执行器实际收到的 map 形状为：
 
 ```json
 {
-  "protocolProfiles": [
-    {
-      "id": "read_status_request",
-      "busType": "SERIAL",
-      "payloadEncoding": "hex",
-      "frameFormat": {
-        "protocolCsv": "read_status_request.csv"
-      },
-      "timing": {
-        "timeoutMs": 1000
-      },
-      "responseRules": {},
-      "fieldMapping": {}
-    },
-    {
-      "id": "read_status_response",
-      "busType": "SERIAL",
-      "payloadEncoding": "hex",
-      "frameFormat": {
-        "protocolCsv": "read_status_response.csv"
-      },
-      "timing": {
-        "timeoutMs": 1000
-      },
-      "responseRules": {},
-      "fieldMapping": {}
-    }
-  ],
-  "exchange": {
-    "stimulus": {
-      "source": "HalSerial",
-      "busType": "SERIAL",
-      "channelId": "SERIAL_A",
-      "operation": "send",
-      "protocolProfileId": "read_status_request"
-    },
-    "acquisition": {
-      "source": "HalSerial",
-      "busType": "SERIAL",
-      "channelId": "SERIAL_A",
-      "operation": "receive",
-      "protocolProfileId": "read_status_response"
-    }
-  }
+  "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+  "protocol": {
+    "requestProfileId": "system_status_request",
+    "responseProfileId": "system_status_response"
+  },
+  "transport": {
+    "openTimeoutMs": 1000,
+    "readChunkBytes": 260
+  },
+  "initialSequence": 4660
 }
 ```
 
-约定：
+当前语义：
 
-- `frameFormat.protocolCsv` 指向协议资产目录下的 CSV 文件。
-- `ExchangeAction.channelId` 使用 HAL 逻辑资源 ID。
-- `ProtocolProfile.busType` 与 `ExchangeAction.busType` 必须一致。
-- 同一测试步骤可以引用一个命令协议和一个响应协议。
-- 协议资产目录、产品配置和报告字段应一起纳入版本管理或发布包。
+- `protocolAssetRoot` 可由 `${ENV}` 展开；缺失时回退环境变量 `MB_DDF_PROTOCOL_CSV_DIR`；
+- 请求/响应 ID 直接作为 `ProtocolCatalog` 定义名查找，缺省为两份 `system_status_*` 定义；
+- `transport.openTimeoutMs` 和 `readChunkBytes` 必须为正整数；
+- 串口部署参数由 HAL 资源 `properties` 提供，并按 MB_DDF 当前基线配置为 614400、8E1、无流控；旧 `executionConfig.serial` 仍只作兼容校验输入；
+- `initialSequence` 必须是 16 位整数；每次执行后递增；
+- 响应必须匹配配置的响应命令，并回显请求序号；
+- CRC、命令或序号失败由算法返回 `ProtocolParseError`，传输超时返回 `BusTimeout`。
 
----
+算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。
 
-## 11. C++ 与代码生成建议
+当前 `ProtocolProfile` 列表由 BIZ 保存和透传，但 `SystemStatusAlgorithmExecutor` 没有把它与 `executionConfig.protocol.*ProfileId`、CSV 命令键或 HAL 资源做交叉校验。该绑定仍是未实现项，不能仅凭两个同名 Profile 宣称映射已建立。
 
-以下内容来自源规范中的 C++ 和代码生成部分，在本项目中作为建议项：
+目标映射应显式包含：
 
-- 可以从协议 CSV 生成 `<帧名>_protocol.h`，文件名示例为 `read_status_response_protocol.h`。
-- 生成物可以包含帧结构体、默认值构造函数、`FRAME_SIZE`、小端读写辅助函数、定标编码/解码函数、`packFrame()`、`unpackFrame()` 和 `buildSchema()`。
-- 生成代码建议放入独立命名空间，例如 `hwtest::protocol` 或项目明确的协议命名空间。
-- 生成物不得成为 HAL 公共头的一部分，避免把产品协议字段扩散到 HAL 兼容面。
-- 生成物应由 CSV 再生成，不建议手工长期维护。
-- 若生成物参与构建，应将生成输入、生成工具版本和输出路径写入构建或发布记录。
+```text
+operationId
+  -> requestProfileId / responseProfileId
+  -> command key
+  -> sequence rule / CRC rule / deadline
+  -> HAL logical ResourceId
+```
 
-当前强制要求仍是 CSV 协议资产和运行期校验规则。是否采用 C++ 代码生成，由后续协议运行库或产品项目实现决定。
-
----
-
-## 12. 测试要求
-
-协议相关测试属于契约测试和集成测试：
-
-- CSV 读取：UTF-8 with BOM、空行、额外列、布尔文本、缺列失败。
-- 字段校验：类型、长度、`lsb`、命名表达式、重复字段、数组连续性、位字段分组。
-- 布局计算：普通字段、定标字段、浮点字段、`BIT` run、`RESERVED`、有效和无效字段。
-- 打包解析：小端整数、IEEE 754 浮点、定标编码解码、默认值、`CONST` 校验。
-- 传输集成：算法层通过 HAL Mock Adapter 完成串口 echo、CANFD loopback 或产品协议样例；BIZ 单测只使用 `FakeAlgorithmExecutor`。
-- 错误路径：帧长度不足、字段非法、协议 CSV 无效、传输超时和协议错误日志。
-
-真实硬件协议测试必须单独标记，不进入默认 CI。
+`channelId` 是算法可见的 HAL 逻辑资源。`providerId`、物理端点、SDK、扫描结果以及 Qt/Vendor/Mock 路由只属于 HAL 部署配置，禁止进入协议 CSV。
 
 ---
 
-## 13. 验收标准
+## 8. 流式收发规则
 
-- 每个底层通讯帧都有对应 CSV 协议资产。
-- CSV 列、字段类型、命名、布局和校验规则符合本文。
-- 多字节字段按小端序处理，除非设计文档显式扩展字节序规则。
-- 测试算法不手写与 CSV 冲突的字节偏移。
-- HAL 不解释协议字段业务含义，只负责传输和统一错误面。
-- 协议解析错误能被定位到协议名、字段名、资源 ID 和 `requestId`。
-- C++ 生成物和文档导出物只作为 CSV 的派生产物，不反向覆盖 CSV 事实源。
+串口和未来 TCP 是字节流，一次 HAL `read` 与一个产品帧不构成一一对应关系。算法传输实现必须在同一 deadline 内：
+
+1. 发送完整请求字节；
+2. 累积零个、一个或多个原始字节块；
+3. 根据同步字、长度和上限识别候选帧；
+4. 完成 CRC、命令、方向、序号和响应配对；
+5. 保留剩余字节供后续帧处理。
+
+单次 HAL 读取返回短字节块不是协议错误。只有算法在 deadline 内仍无法形成合法候选帧时，才产生超时或产品协议诊断。
+
+当前 `HalControlTransport` 已实现同步字搜索、长度分帧、短读累积、前导噪声丢弃和剩余帧保留，并以一次事务总预算驱动 HAL 读写。CRC、方向、命令和序号仍由 `SystemStatusAlgorithmExecutor`/协议 codec 校验。旧 `HalSerialTransport` 仍是一次 `transactSerial()` 的兼容骨架，不作为当前产品路径。
+
+CAN/CANFD 的帧边界由总线提供，但 payload 内的 MB_DDF 字段、CRC、命令、序号及响应关系仍由算法解释。
+
+---
+
+## 9. 日志与追踪
+
+协议日志与 HAL 日志分开归属：
+
+| 日志 | 应记录 |
+| --- | --- |
+| 算法/协议 | 定义名、命令键、序号、候选帧长度、CRC、字段诊断、判定输入 |
+| HAL | `ResourceId`、连接、原始读写、deadline、耗时、安全态和归一传输错误 |
+
+两侧复用同一 `requestId`。原始帧默认只记录长度、摘要和受限十六进制片段；完整原始帧需显式调试开关，并遵循数据敏感性要求。结构化字段主定义见 [日志接口协议](log-interface-protocol.md)。
+
+---
+
+## 10. 派生物与扩展
+
+可以从已批准 CSV 基线生成 C++ 辅助类型、Schema 或协议说明，但这些生成物：
+
+- 只属于算法/协议模块，不得进入 HAL 公共头；
+- 必须记录输入基线、生成工具版本和输出哈希；
+- 不得反向覆盖 CSV 或掩盖测试预期相对批准基线的偏差；
+- 在未接入构建和验证前只能标记为扩展点。
+
+若要把当前 MB_DDF 解析器扩展为通用协议工作台，应另行评审可变帧头、字节序、字段表达式、数组、条件字段和版本迁移，不在当前契约中预先冻结未使用的抽象。
+
+---
+
+## 11. 测试与验收
+
+最低验证边界：
+
+- CSV：UTF-8/BOM、精确表头、列数、空行、引号、文件名和重复命令；
+- 定义：公共字段、48/123 长度、连续布局、BIT 8 位覆盖和尾部 CRC；
+- 编解码：常量、保留字节、定标、符号扩展、F32、小端和 CRC16/XMODEM；
+- `SYSTEM_STATUS`：golden request、成功响应、坏 CRC、错误命令、序号不匹配和超时；
+- 纯协议单测可直连 Simulator；产品模拟和算法集成必须经过 HAL，并标明是 HAL Mock 或标准 Provider 隔离模拟目标；
+- 真实硬件协议测试单独标记，不进入默认 CI。
+
+当前验收限制：批准基线仍是仓库外依赖，尚无 manifest/hash 可复现快照；控制通道 Mock Provider、真实串口和真实 DUT 闭环未实现。Qt UDP 本机模拟目标和流式分帧已有自动化证据。完整证据等级和执行命令统一见 [测试规范](../testing/testing-specification.md)。

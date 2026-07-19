@@ -174,6 +174,7 @@ ResourceBinding ResourceMapper::parseResourceBinding(const QString& resourceId,
     binding.direction = readString(resourceMap, QStringLiteral("direction"), QStringLiteral("bidirectional"));
     binding.physicalIndex = readInt(resourceMap, QStringLiteral("physicalIndex"), 0);
     binding.properties = resourceMap.value(QStringLiteral("properties")).toMap();
+    binding.providerId = readString(resourceMap, QStringLiteral("providerId"));
 
     if (!deviceLookup.contains(binding.deviceId) && !deviceLookup.isEmpty()) {
         binding.deviceId = deviceLookup.constBegin().key();

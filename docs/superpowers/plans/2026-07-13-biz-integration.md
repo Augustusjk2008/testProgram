@@ -1,5 +1,7 @@
 # Strict Business Layer Integration Implementation Plan
 
+> 历史记录（已完成，非现行事实源）：本计划记录 BIZ 严格分层与集成落地；当前模块边界、接口语义、测试清单和验证准入以 [BIZ 契约](../../design/contracts/business-scheduling-layer.md) 和 [测试规范](../../design/testing/testing-specification.md) 为准。
+
 > **Execution note:** This plan should be executable either inline in the current session or by a delegated worker. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将附件中的业务能力按严格五层边界迁入 `hwtest_biz`，确保业务目标不包含 HAL 类型、头文件、链接或调用。

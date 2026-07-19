@@ -2,11 +2,13 @@
 
 #include "hal/i_analog_io.h"
 #include "hal/i_canfd_bus.h"
+#include "hal/i_control_channel.h"
 #include "hal/i_digital_io.h"
 #include "hal/i_hal_device.h"
 #include "hal/i_serial_bus.h"
 
 #include "hardware_adapter.h"
+#include "control_channel_manager.h"
 #include "resource_mapper.h"
 #include "safety_guard.h"
 
@@ -18,7 +20,8 @@ class HalDevice final : public IHalDevice,
                         public IAnalogIo,
                         public IDigitalIo,
                         public ISerialBus,
-                        public ICanFdBus {
+                        public ICanFdBus,
+                        public IControlChannel {
 public:
     using LogCallback = std::function<void(const HalLogEvent& event)>;
 
@@ -38,6 +41,7 @@ public:
     IDigitalIo* digitalIo() override;
     ISerialBus* serialBus() override;
     ICanFdBus* canFdBus() override;
+    IControlChannel* controlChannel() override;
 
     HalStatus close(const OperationOptions& options = {});
     HalStatus reset(const OperationOptions& options = {});
@@ -88,6 +92,17 @@ public:
                                      const OperationOptions& options) override;
     HalResult<SerialTransactionResult> transactSerial(const ResourceId& port,
                                                       const SerialTransaction& transaction) override;
+
+    HalStatus openControl(const ResourceId& resourceId,
+                          const OperationOptions& options) override;
+    HalStatus closeControl(const ResourceId& resourceId,
+                           const OperationOptions& options) override;
+    HalStatus writeControl(const ResourceId& resourceId,
+                           const QByteArray& data,
+                           const OperationOptions& options) override;
+    HalResult<QByteArray> readControl(const ResourceId& resourceId,
+                                      int maxBytes,
+                                      const OperationOptions& options) override;
 
     HalStatus openCan(const ResourceId& bus,
                       const CanFdConfig& config,
@@ -158,6 +173,7 @@ private:
     QHash<ResourceId, AnalogRange> m_analogOutputRanges;
     QHash<ResourceId, SerialConfig> m_openSerialPorts;
     QHash<ResourceId, CanFdConfig> m_openCanBuses;
+    ControlChannelManager m_controlChannels;
     bool m_open = true;
     SafetyGuard m_safetyGuard;
     LogCallback m_logCallback;

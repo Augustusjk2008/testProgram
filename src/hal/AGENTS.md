@@ -2,7 +2,7 @@
 
 ## Scope
 - Applies to `src/hal/` and all nested files.
-- Keep the module UI-free; it is a core Qt library only.
+- Keep the module UI-free; it uses Qt Core plus private Network/SerialPort providers.
 
 ## Architecture
 - Treat `docs/design/overview/five-layer-architecture.md` and `docs/design/contracts/hal-interface-protocol.md` as the source of truth.
@@ -21,5 +21,5 @@
 - Keep factory, service, device, and backend seams explicit so future adapters can be swapped in cleanly.
 
 ## Build
-- The HAL module must continue to build as a standalone Qt Core library.
+- Keep `hwtest_hal` independently linkable as a Qt Core/Network/SerialPort library target under a host/root build. The current subtree has no standalone CMake bootstrap; do not claim `cmake -S src/hal` support unless it is implemented and tested.
 - Preserve the mock backend path so the module remains usable without vendor hardware.

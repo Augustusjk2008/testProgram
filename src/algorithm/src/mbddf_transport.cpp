@@ -1,8 +1,10 @@
 #include <algorithm/mbddf_transport.h>
 
+#include <hal/i_control_channel.h>
 #include <hal/i_hal_device.h>
 #include <hal/i_serial_bus.h>
 
+#include <QElapsedTimer>
 #include <QMutexLocker>
 
 namespace hwtest::algorithm::mbddf {
@@ -57,6 +59,16 @@ bool parseSerialConfig(const QVariantMap& options,
     }
     *config = defaultSerialConfig();
     return true;
+}
+
+QString statusMessage(const hwtest::hal::HalStatus& status, const QString& fallback)
+{
+    return status.error.message.isEmpty() ? fallback : status.error.message;
+}
+
+int remainingMs(const QElapsedTimer& timer, int timeoutMs)
+{
+    return qMax(0, timeoutMs - static_cast<int>(timer.elapsed()));
 }
 
 } // namespace
@@ -229,6 +241,179 @@ int SystemStatusSimulator::transactionCount() const noexcept
 QByteArray SystemStatusSimulator::lastRequest() const
 {
     return m_lastRequest;
+}
+
+HalControlTransport::HalControlTransport(hwtest::hal::IHalDevice* device,
+                                         hwtest::hal::ResourceId resourceId)
+    : m_device(device)
+    , m_resourceId(std::move(resourceId))
+{
+}
+
+bool HalControlTransport::configure(const QVariantMap& options, QString* error)
+{
+    if (m_open) {
+        if (error != nullptr) {
+            *error = QStringLiteral("HAL control transport must be closed before reconfiguration");
+        }
+        return false;
+    }
+
+    bool openTimeoutOk = true;
+    bool readChunkOk = true;
+    const int openTimeoutMs = options.contains(QStringLiteral("openTimeoutMs"))
+        ? options.value(QStringLiteral("openTimeoutMs")).toInt(&openTimeoutOk)
+        : m_openTimeoutMs;
+    const int readChunkBytes = options.contains(QStringLiteral("readChunkBytes"))
+        ? options.value(QStringLiteral("readChunkBytes")).toInt(&readChunkOk)
+        : m_readChunkBytes;
+    if (!openTimeoutOk || openTimeoutMs <= 0 || !readChunkOk || readChunkBytes <= 0) {
+        if (error != nullptr) {
+            *error = QStringLiteral("control openTimeoutMs and readChunkBytes must be positive integers");
+        }
+        return false;
+    }
+
+    m_openTimeoutMs = openTimeoutMs;
+    m_readChunkBytes = readChunkBytes;
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
+}
+
+bool HalControlTransport::open(QString* error)
+{
+    if (m_open) {
+        if (error != nullptr) {
+            error->clear();
+        }
+        return true;
+    }
+    if (m_device == nullptr || m_device->controlChannel() == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("HAL control channel is unavailable");
+        }
+        return false;
+    }
+
+    hwtest::hal::OperationOptions options;
+    options.timeoutMs = m_openTimeoutMs;
+    const hwtest::hal::HalStatus status =
+        m_device->controlChannel()->openControl(m_resourceId, options);
+    if (!status.ok()) {
+        if (error != nullptr) {
+            *error = statusMessage(status, QStringLiteral("Unable to open HAL control channel"));
+        }
+        return false;
+    }
+
+    m_receiveBuffer.clear();
+    m_open = true;
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
+}
+
+bool HalControlTransport::takeBufferedFrame(QByteArray* frame)
+{
+    if (frame == nullptr) {
+        return false;
+    }
+
+    static const QByteArray sync = QByteArray::fromHex("55AA");
+    const int syncIndex = m_receiveBuffer.indexOf(sync);
+    if (syncIndex < 0) {
+        const bool keepPossibleSync = !m_receiveBuffer.isEmpty() &&
+            static_cast<quint8>(m_receiveBuffer.back()) == 0x55u;
+        const char trailing = keepPossibleSync ? m_receiveBuffer.back() : '\0';
+        m_receiveBuffer.clear();
+        if (keepPossibleSync) {
+            m_receiveBuffer.append(trailing);
+        }
+        return false;
+    }
+    if (syncIndex > 0) {
+        m_receiveBuffer.remove(0, syncIndex);
+    }
+    if (m_receiveBuffer.size() < 3) {
+        return false;
+    }
+
+    const int payloadBytes = static_cast<quint8>(m_receiveBuffer.at(2));
+    const int frameBytes = 2 + 1 + payloadBytes + 2;
+    if (m_receiveBuffer.size() < frameBytes) {
+        return false;
+    }
+
+    *frame = m_receiveBuffer.left(frameBytes);
+    m_receiveBuffer.remove(0, frameBytes);
+    return true;
+}
+
+TransportResult HalControlTransport::transact(const QByteArray& frame, int timeoutMs)
+{
+    if (!m_open || m_device == nullptr || m_device->controlChannel() == nullptr) {
+        return failed(QStringLiteral("HAL control transport is not open"));
+    }
+    if (timeoutMs <= 0) {
+        return failed(QStringLiteral("HAL control transaction deadline is invalid"),
+                      TransportResult::Error::Timeout);
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+
+    hwtest::hal::OperationOptions options;
+    options.timeoutMs = remainingMs(timer, timeoutMs);
+    const hwtest::hal::HalStatus writeStatus =
+        m_device->controlChannel()->writeControl(m_resourceId, frame, options);
+    if (!writeStatus.ok()) {
+        const auto errorCode = writeStatus.code == hwtest::hal::HalStatusCode::Timeout
+            ? TransportResult::Error::Timeout
+            : TransportResult::Error::Io;
+        return failed(statusMessage(writeStatus, QStringLiteral("HAL control write failed")),
+                      errorCode);
+    }
+
+    QByteArray completeFrame;
+    while (!takeBufferedFrame(&completeFrame)) {
+        const int remaining = remainingMs(timer, timeoutMs);
+        if (remaining <= 0) {
+            return failed(QStringLiteral("HAL control read timed out"),
+                          TransportResult::Error::Timeout);
+        }
+
+        options.timeoutMs = remaining;
+        const hwtest::hal::HalResult<QByteArray> readResult =
+            m_device->controlChannel()->readControl(m_resourceId, m_readChunkBytes, options);
+        if (!readResult.ok()) {
+            const auto errorCode = readResult.status.code == hwtest::hal::HalStatusCode::Timeout
+                ? TransportResult::Error::Timeout
+                : TransportResult::Error::Io;
+            return failed(statusMessage(readResult.status,
+                                        QStringLiteral("HAL control read failed")),
+                          errorCode);
+        }
+        m_receiveBuffer.append(readResult.value);
+    }
+
+    TransportResult result;
+    result.ok = true;
+    result.frame = completeFrame;
+    return result;
+}
+
+void HalControlTransport::close()
+{
+    if (m_open && m_device != nullptr && m_device->controlChannel() != nullptr) {
+        hwtest::hal::OperationOptions options;
+        options.timeoutMs = m_openTimeoutMs;
+        m_device->controlChannel()->closeControl(m_resourceId, options);
+    }
+    m_receiveBuffer.clear();
+    m_open = false;
 }
 
 HalSerialTransport::HalSerialTransport(hwtest::hal::IHalDevice* device,

@@ -99,6 +99,30 @@ private:
     QByteArray m_lastRequest;
 };
 
+// Product control bridge. The selected HAL resource decides whether the
+// underlying Provider is Qt SerialPort or Qt UDP; this layer only assembles
+// MB_DDF physical frames from raw byte chunks.
+class HalControlTransport final : public IByteTransport {
+public:
+    HalControlTransport(hwtest::hal::IHalDevice* device,
+                        hwtest::hal::ResourceId resourceId);
+
+    bool configure(const QVariantMap& options, QString* error) override;
+    bool open(QString* error) override;
+    TransportResult transact(const QByteArray& frame, int timeoutMs) override;
+    void close() override;
+
+private:
+    bool takeBufferedFrame(QByteArray* frame);
+
+    hwtest::hal::IHalDevice* m_device = nullptr;
+    hwtest::hal::ResourceId m_resourceId;
+    QByteArray m_receiveBuffer;
+    int m_openTimeoutMs = 1000;
+    int m_readChunkBytes = 260;
+    bool m_open = false;
+};
+
 // Optional real-device bridge. It only exposes a byte transaction to the
 // algorithm layer; device discovery and ownership remain outside this class.
 // The two-argument constructor uses the fixed MB_DDF 614400/8E1 settings.

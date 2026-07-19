@@ -1,688 +1,124 @@
 # HAL 实现设计报告
 
-> 范围：`src/hal` 当前实现。
-> 技术栈：Qt 5.15 / C++17。
-> 目标：不读源码也能理解 HAL 当前怎么工作、怎么扩展、边界在哪。
+> 快照日期：2026-07-19
+> 本文定位：记录 `src/hal/` 的当前代码结构、真实调用路径、已知限制和向目标 Provider 架构的迁移顺序。
+> 稳定接口与目标语义见 [HAL 层接口协议](../contracts/hal-interface-protocol.md)；测试规则见 [测试规范](../testing/testing-specification.md)。
+> 本报告不重复公共头声明、稳定错误码、日志字段映射或全局测试命令。
 
 ---
 
-## 1. 定位
+## 1. 结论
 
-HAL 是五层架构中的第 4 层，位于核心测试算法层和硬件 Adapter 层之间。
+当前 HAL 已实现资源映射、基础安全校验、会话、既有硬件接口和控制通道。控制资源可按配置选择 Qt 串口或 UDP；其他资源仍使用兼容 Mock 后端：
 
 ```text
-算法层
-  -> IHalService / IHalDevice / IAnalogIo / IDigitalIo / ISerialBus / ICanFdBus
-  -> HAL 实现
-  -> HardwareAdapter
-  -> MockAdapter 或未来厂家 Adapter
+控制：HalDevice -> ControlChannelManager -> qt.serial / qt.udp -> Qt 标准 API
+其他：HalService -> CAbiAdapter -> MockAdapter -> 内存状态
 ```
 
-当前架构：
+已确认的目标是：
+
+```text
+目标：HalService -> providerId Router
+                   -> Mock Provider
+                   -> Vendor Adapter Provider -> C ABI -> 厂家库/驱动
+                   -> Qt Serial/TCP/UDP Provider -> Qt 标准 API
+```
+
+当前只在 `module = "control"` 的资源上实现局部 `providerId` 路由。没有通用 Router、控制通道 Mock Provider、TCP、真实厂家 DLL 调用或真实硬件证据；也没有定义 `INetworkBus`。
+
+---
+
+## 2. 构建与目录
+
+`src/hal/CMakeLists.txt` 生成 `hwtest_hal`。公共头位于 `src/hal/include/hal/`，内部实现位于 `src/hal/src/`；模块公开链接 Qt Core，私有使用 Qt Network/SerialPort，并依赖根工程注入三个 Qt 目标。当前没有可直接执行 `cmake -S src/hal` 的独立自举入口。
+
+内部文件职责：
+
+| 文件/类 | 当前作用 |
+| --- | --- |
+| `hal_factory.cpp` | 创建和销毁 `IHalService` |
+| `HalService` | 初始化、资源表、后端、设备会话和服务日志 |
+| `HalDevice` | 会话内资源校验、I/O 转发和安全关闭 |
+| `ControlChannelManager` | 解析控制资源 `providerId`，持有单个已打开 Qt Provider 并补齐错误上下文 |
+| `QtSerialControlProvider` | 按资源属性持有 `QSerialPort`，执行打开、总预算写入、短读和关闭 |
+| `QtUdpControlProvider` | 按资源属性持有 `QUdpSocket`，执行绑定、远端来源过滤、数据报读写、大小校验和关闭 |
+| `ResourceMapper` | 从配置构造设备、资源、能力和 safe state |
+| `SafetyGuard` | 模拟量、数字量、串口和 CAN 基础参数校验 |
+| `HardwareAdapter` | HAL 内部 C++ 后端抽象 |
+| `CAbiAdapter` | 当前兼容 seam；实际全部转发给 `MockAdapter` |
+| `AdapterLoader` | 可加载 DLL 并解析 ABI v1 入口，但未接入主链 |
+| `MockAdapter` | 内存设备、回环和 echo 后端 |
+| `HalErrorMapper` | C ABI 状态到 `HalStatusCode` 的当前映射 |
+
+---
+
+## 3. 当前对象关系
 
 ```mermaid
 flowchart LR
-  Caller["算法层调用方"]
-
-  subgraph PublicApi["公共 HAL 接口"]
-    Factory["hal_factory"]
-    ServiceApi["IHalService"]
-    DeviceApi["IHalDevice"]
-    IoApi["IAnalogIo / IDigitalIo / ISerialBus / ICanFdBus"]
-    Types["hal_types"]
-  end
-
-  subgraph HalCore["HAL 实现"]
-    Service["HalService\n初始化 / 会话 / 日志"]
-    Device["HalDevice\n资源校验 / 安全校验 / IO 分发"]
-    Mapper["ResourceMapper\n配置 -> 设备 / 资源 / 能力"]
-    Safety["SafetyGuard\n输出边界"]
-    ErrorMap["HalErrorMapper\nAdapter code -> HalStatus"]
-  end
-
-  subgraph Backend["后端适配"]
-    Adapter["HardwareAdapter"]
-    CAbi["CAbiAdapter\n当前委托 MockAdapter"]
-    Loader["AdapterLoader\nDLL + ABI 校验"]
-    Mock["MockAdapter\n无硬件回环"]
-    Abi["hal_adapter_abi.h\n未来厂家 DLL 函数表"]
-  end
-
-  Caller --> Factory --> ServiceApi --> Service
-  Caller --> DeviceApi --> Device
-  Caller --> IoApi --> Device
-  Service --> Mapper
-  Service --> Adapter
-  Service --> Device
-  Device --> Mapper
-  Device --> Safety
-  Device --> ErrorMap
-  Device --> Adapter
-  Adapter --> CAbi --> Mock
-  Loader -. "未来接入" .-> CAbi
-  CAbi -. "未来调用" .-> Abi
+  Factory["createHalService"] --> Service["HalService"]
+  Service --> Mapper["ResourceMapper"]
+  Service --> Backend["HardwareAdapter"]
+  Backend --> CAbi["CAbiAdapter"]
+  CAbi --> Mock["MockAdapter"]
+  Service --> Device["HalDevice per session"]
+  Device --> Guard["SafetyGuard"]
+  Device --> Backend
+  Device --> Control["ControlChannelManager"]
+  Control --> Serial["qt.serial / QSerialPort"]
+  Control --> Udp["qt.udp / QUdpSocket"]
+  Mock --> State["in-memory device/session state"]
 ```
 
-HAL 当前负责：
-
-- 用 Qt/C++ 接口向上提供设备、AD/DA、DI/DO、串口、CANFD 能力。
-- 将逻辑资源 ID 映射为设备、模块、方向、物理通道。
-- 校验资源存在性、模块类型、方向、安全范围。
-- 管理设备会话和安全关闭。
-- 统一返回 `HalStatus` / `HalResult<T>`。
-- 产生 `HalLogEvent`，保留 `requestId`、操作名、设备、资源、耗时、状态。
-- 提供 C ABI Adapter 函数表定义和 DLL 加载器骨架。
-- 默认用 Mock 后端支撑无硬件开发和测试。
+`HardwareAdapter` 已隔离 `HalService` / `HalDevice` 与具体后端，但当前它只是单后端抽象，不是按 `providerId` 分派的 Router。
 
 ---
 
-## 2. 目录
+## 4. `HalService` 当前流程
 
-```text
-src/hal/
-  CMakeLists.txt
-  include/hal/
-    hal_global.h
-    hal_types.h
-    hal_adapter_abi.h
-    hal_factory.h
-    i_hal_service.h
-    i_hal_device.h
-    i_analog_io.h
-    i_digital_io.h
-    i_serial_bus.h
-    i_canfd_bus.h
-  src/
-    hal_factory.cpp
-    hal_types.cpp
-    hal_error_mapper.*
-    resource_mapper.*
-    safety_guard.*
-    hardware_adapter.h
-    mock_adapter.*
-    c_abi_adapter.*
-    adapter_loader.*
-    hal_service.*
-    hal_device.*
-```
-
-公共兼容面在 `include/hal/`。内部实现、Mock 后端、加载器都在 `src/`。
-
----
-
-## 3. 构建产物
-
-`src/hal/CMakeLists.txt` 构建静态库：
-
-```text
-target: hwtest_hal
-type: STATIC
-depends: Qt Core
-standard: C++17
-namespace: hwtest::hal
-```
-
-库导出宏由 `hal_global.h` 定义。当前构建定义 `HWTEST_HAL_STATIC`，因此公共符号导出宏为空。
-
----
-
-## 4. 公共类型
-
-主文件：`include/hal/hal_types.h`。
-
-核心 ID：
-
-```text
-DeviceId   = QString
-AdapterId  = QString
-ResourceId = QString
-RequestId  = QString
-SessionId  = QString
-```
-
-统一状态：
-
-- `HalStatusCode`：统一错误码。
-- `HalError`：错误详情，包含 operation、message、adapterCode、deviceId、resourceId、detail。
-- `HalStatus`：只表示成功或失败。
-- `HalResult<T>`：状态加返回值。
-
-调用选项：
-
-- `OperationOptions.timeoutMs` 默认 1000。
-- `retryCount`、`retryIntervalMs` 预留重试语义。
-- `requestId` 贯穿日志链路。
-- `tags` 用于附加业务上下文。
-
-设备和能力：
-
-- `DeviceDescriptor` 描述设备 ID、厂商、型号、序列号、位置、固件、属性。
-- `ChannelDescriptor` 描述逻辑资源、模块、方向、物理索引、属性。
-- `DeviceCapabilities` 包含设备、通道列表、模块列表、限制。
-
-IO 数据：
-
-- 模拟量：`AnalogRange`、`AnalogSample`、`AnalogReadOptions`、`AnalogWriteOptions`。
-- 数字量：`DigitalLevel`、`DigitalSample`、`DigitalWriteOptions`。
-- 串口：`SerialConfig`、`SerialTransaction`、`SerialTransactionResult`。
-- CANFD：`CanFdConfig`、`CanFdFrame`、`CanFdFilter`。
-
-`hal_types.cpp` 注册 Qt 元类型，并提供枚举转字符串函数。
-
----
-
-## 5. 对上接口
-
-### 5.1 `IHalService`
-
-主文件：`i_hal_service.h`。
-
-职责：
-
-- 初始化和关闭 HAL。
-- 扫描设备。
-- 查询能力。
-- 打开/关闭/复位/健康检查设备。
-- 通过 `SessionId` 取得 `IHalDevice*`。
-- 通过 Qt signals 输出 `deviceChanged`、`hardwareEvent`、`logProduced`、`logMessage`。
-
-典型调用：
-
-```text
-createHalService()
-  -> initialize(halConfig)
-  -> scanDevices()
-  -> openDevice(deviceId)
-  -> device(sessionId)
-  -> IHalDevice 子接口执行 IO
-  -> closeDevice(sessionId)
-  -> shutdown()
-```
-
-### 5.2 `IHalDevice`
-
-主文件：`i_hal_device.h`。
-
-职责：
-
-- 返回设备描述和能力。
-- 暴露 4 类 IO 子接口：
-  - `IAnalogIo`
-  - `IDigitalIo`
-  - `ISerialBus`
-  - `ICanFdBus`
-
-### 5.3 IO 子接口
-
-`IAnalogIo`：
-
-- `configureAd`、`readAd`、`readAdBatch`
-- `configureDa`、`writeDa`、`writeDaBatch`
-
-`IDigitalIo`：
-
-- `readDi`、`readDiBatch`
-- `writeDo`、`writeDoBatch`
-- `waitEdge`
-
-`ISerialBus`：
-
-- `openSerial`、`closeSerial`、`flushSerial`
-- `writeSerial`、`readSerial`
-- `transactSerial`
-
-`ICanFdBus`：
-
-- `openCan`、`closeCan`
-- `setCanFilters`
-- `sendCan`、`receiveCan`、`receiveCanBatch`
-
-对上只暴露逻辑资源 ID，不暴露物理通道和厂家句柄。
-
----
-
-## 6. 工厂
-
-主文件：`hal_factory.cpp`。
-
-```text
-createHalService(parent) -> new HalService(parent)
-destroyHalService(ptr)   -> delete ptr
-```
-
-这是外部模块获取 HAL 服务的入口。
-
----
-
-## 7. `HalService`
-
-主文件：`hal_service.*`。
-
-### 7.1 内部状态
-
-```text
-m_config       当前 HAL 配置
-m_mapper       ResourceMapper
-m_backend      HardwareAdapter 实例
-m_sessions     SessionId -> {HalDevice, DeviceDescriptor}
-m_initialized  初始化标志
-```
-
-### 7.2 初始化
-
-当前流程：
+### 4.1 初始化
 
 ```text
 initialize(halConfig)
   -> shutdown() 清理旧状态
-  -> 保存 m_config
-  -> m_mapper.load(halConfig)
+  -> ResourceMapper.load(halConfig)
   -> createBackend(halConfig)
-  -> backend.initialize(halConfig)
+  -> 固定创建 CAbiAdapter
+  -> CAbiAdapter.initialize()
+  -> MockAdapter.initialize()
   -> m_initialized = true
-  -> emit "HAL initialized" 日志
 ```
 
-```mermaid
-flowchart TD
-  Start["IHalService::initialize(halConfig)"] --> Shutdown["shutdown()\n关闭旧 session / 清后端 / 清配置"]
-  Shutdown --> SaveConfig["保存 m_config"]
-  SaveConfig --> LoadMapper["ResourceMapper::load(halConfig)"]
-  LoadMapper --> MapperOk{"配置解析成功?"}
-  MapperOk -- "否" --> InitFail["返回错误状态"]
-  MapperOk -- "是" --> CreateBackend["createBackend(halConfig)"]
-  CreateBackend --> CAbi["创建 CAbiAdapter"]
-  CAbi --> MockInit["CAbiAdapter::initialize()\n委托 MockAdapter::initialize()"]
-  MockInit --> BackendOk{"后端初始化成功?"}
-  BackendOk -- "否" --> BackendFail["返回后端错误"]
-  BackendOk -- "是" --> MarkReady["m_initialized = true"]
-  MarkReady --> Log["emitLog(HAL initialized)"]
-  Log --> Ok["返回 Ok"]
-```
+`createBackend()` 当前忽略配置并总是返回 `CAbiAdapter`。`CAbiAdapter` 又持有一个 `MockAdapter` 并逐方法转发，因此 `adapterId`、库路径或设备类型不会改变实际后端。
 
-当前 `createBackend()` 总是创建 `CAbiAdapter`。`CAbiAdapter` 当前又委托给 `MockAdapter`，所以默认路径实际是 Mock 后端。
+### 4.2 扫描与能力
 
-源码中有 `hasLibraryPath()` 和 `adapterConfig()` 辅助函数，但当前未接入 `createBackend()`，外部 DLL 加载尚未成为默认运行路径。
+`scanDevices()` 返回 `ResourceMapper::devices()`；`queryCapabilities()` 返回 `ResourceMapper::capabilities()`。两者不调用 `HardwareAdapter::enumerateDevices()` 或 `queryCapabilities()`，所以当前“发现结果”是配置推导值，不是物理设备证据。
 
-### 7.3 扫描和能力
+### 4.3 打开与会话
 
-`scanDevices()`：
+`openDevice()`：
 
-- 未初始化返回 `NotInitialized`。
-- 已初始化返回 `ResourceMapper::devices()`。
+1. 检查初始化状态和配置中的设备描述；
+2. 调后端创建 `SessionId`；
+3. 取该设备的资源绑定和安全态；
+4. 创建 `HalDevice` 并存入 `m_sessions`；
+5. 发出设备状态和操作日志。
 
-`queryCapabilities(deviceId)`：
+`device(sessionId)` 返回内部 `HalDevice*`；调用方不得让该指针超过服务或会话生命周期。`closeDevice()` 先调用 `HalDevice::close()`，随后从会话表删除。
 
-- 未初始化返回 `NotInitialized`。
-- 设备不存在返回 `NotFound`。
-- 设备存在返回 `ResourceMapper::capabilities(deviceId)`。
+### 4.4 关闭
 
-当前扫描和能力来自配置映射，不直接调用后端枚举结果。
+`shutdown()` 遍历会话调用 `HalDevice::close()`，清空会话，再关闭和释放后端。方法是幂等的，析构也会调用它。
 
-### 7.4 打开设备
-
-流程：
-
-```text
-openDevice(deviceId, options)
-  -> 校验已初始化
-  -> 校验 backend 存在
-  -> 查 ResourceMapper 里的 DeviceDescriptor
-  -> backend.openDevice(deviceId, m_config, options)
-  -> 创建 HalDevice
-       backend = m_backend.get()
-       sessionId = backend 返回值
-       descriptor = mapper descriptor
-       capabilities = mapper capabilities
-       bindings = mapper.bindingsForDevice(deviceId)
-       safeState = mapper.safeState()
-       logCallback = 转发到 HalService::emitLogEvent
-  -> m_sessions[sessionId] = SessionEntry
-  -> emit deviceChanged(opened)
-  -> emit openDevice 操作日志
-```
-
-```mermaid
-flowchart TD
-  Start["openDevice(deviceId, options)"] --> Ready{"m_initialized?"}
-  Ready -- "否" --> NotInit["NotInitialized + 操作日志"]
-  Ready -- "是" --> Backend{"m_backend 存在?"}
-  Backend -- "否" --> InternalErr["InternalError + 操作日志"]
-  Backend -- "是" --> FindDevice["ResourceMapper::device(deviceId)"]
-  FindDevice --> Found{"设备存在?"}
-  Found -- "否" --> Missing["NotFound + 操作日志"]
-  Found -- "是" --> BackendOpen["HardwareAdapter::openDevice(deviceId, config, options)"]
-  BackendOpen --> OpenOk{"后端返回 SessionId?"}
-  OpenOk -- "否" --> OpenFail["返回后端错误 + 操作日志"]
-  OpenOk -- "是" --> BuildDevice["创建 HalDevice\n注入 descriptor / capabilities / bindings / safeState / logCallback"]
-  BuildDevice --> SaveSession["m_sessions[sessionId] = SessionEntry"]
-  SaveSession --> EmitSignal["emit deviceChanged(opened)"]
-  EmitSignal --> Log["emitOperationLog(openDevice, Ok)"]
-  Log --> Result["返回 HalResult<SessionId>"]
-```
-
-### 7.5 会话操作
-
-`closeDevice(sessionId)`：
-
-- 找不到 session 返回 `NotFound` 并记录日志。
-- 找到后调用 `HalDevice::close()`。
-- 从 `m_sessions` 删除。
-- 发 `deviceChanged(closed)`。
-
-`resetDevice(sessionId)`：
-
-- 找不到返回 `NotFound`。
-- 找到后调用 `HalDevice::reset()`。
-- 成功时发 `deviceChanged(reset)`。
-
-`healthCheck(sessionId)`：
-
-- 找不到返回 `NotFound`。
-- 找到后调用 `HalDevice::healthCheck()`。
-
-`device(sessionId)`：
-
-- 找不到返回 `HalResult<IHalDevice*>` + `NotFound`。
-- 找到返回内部 `HalDevice*`。
-
-### 7.6 关闭
-
-`shutdown()`：
-
-```text
-遍历所有 session
-  -> device->close()
-清空 m_sessions
-backend->shutdown()
-reset backend
-m_initialized = false
-m_config.clear()
-```
-
-关闭是幂等的；析构函数会调用 `shutdown()`。
-
-### 7.7 日志
-
-`HalService` 有两类日志工具：
-
-- `emitLog()`：用于普通服务日志。
-- `emitOperationLog()`：用于带耗时、状态、session、tags 的操作日志。
-
-`emitLogEvent()` 会归一化字段：
-
-- timestampUs 为空时补当前时间。
-- source 为空时补 `hal`。
-- requestId、durationMs、status、adapterCode、deviceId、resourceId、operation 同步写入 context。
-- 同时发 `logProduced` 和兼容信号 `logMessage`。
+当前实现会尝试安全收尾，但未汇总并返回所有关闭错误；真实物理安全效果也尚无厂家后端或硬件测试证明。
 
 ---
 
-## 8. `HalDevice`
+## 5. 当前配置与资源模型
 
-主文件：`hal_device.*`。
-
-`HalDevice` 同时实现：
-
-```text
-IHalDevice
-IAnalogIo
-IDigitalIo
-ISerialBus
-ICanFdBus
-```
-
-### 8.1 内部状态
-
-```text
-m_backend                   HardwareAdapter*
-m_sessionId                 后端会话
-m_descriptor                设备描述
-m_capabilities              能力
-m_safeState                 安全状态
-m_bindingsByResourceId      ResourceId -> ResourceBinding
-m_resourceIdByPhysicalIndex physicalIndex -> ResourceId
-m_analogInputRanges         AD 配置缓存
-m_analogOutputRanges        DA 配置缓存
-m_openSerialPorts           串口配置缓存
-m_openCanBuses              CAN 配置缓存
-m_open                      会话是否打开
-m_safetyGuard               安全校验
-m_logCallback               日志回调
-```
-
-构造时接收设备资源绑定列表，并建立资源索引。
-
-### 8.2 资源校验
-
-核心函数是 `bindingFor(resourceId, module, expectedDirection, status)`。
-
-校验顺序：
-
-```text
-会话是否 open
-  -> 否：InvalidState
-资源是否存在
-  -> 否：NotFound
-模块是否匹配
-  -> 否：NotSupported
-方向是否兼容
-  -> 否：InvalidState
-返回 ResourceBinding
-```
-
-方向规则：
-
-- expected 为空或 `any`：允许。
-- actual 等于 expected：允许。
-- actual 为 `bidirectional`：允许读写双向接口。
-
-模块比较会 trim + lower。
-
-通用 IO 执行逻辑：
-
-```mermaid
-flowchart TD
-  Call["上层调用 IO(resourceId, options)"] --> CheckOpen{"HalDevice open?"}
-  CheckOpen -- "否" --> InvalidState["InvalidState"]
-  CheckOpen -- "是" --> Binding["查 m_bindingsByResourceId[resourceId]"]
-  Binding --> Exists{"资源存在?"}
-  Exists -- "否" --> NotFound["NotFound"]
-  Exists -- "是" --> Module{"module 匹配接口类型?"}
-  Module -- "否" --> NotSupported["NotSupported"]
-  Module -- "是" --> Direction{"direction 匹配读写方向?"}
-  Direction -- "否" --> BadDirection["InvalidState"]
-  Direction -- "是" --> SafetyNeeded{"输出类操作?"}
-  SafetyNeeded -- "否" --> BackendCall["转换 physicalIndex\n调用 HardwareAdapter"]
-  SafetyNeeded -- "是" --> Safety["SafetyGuard 校验\n模拟量量程 / 数字电平 / CAN payload"]
-  Safety --> SafeOk{"通过?"}
-  SafeOk -- "否" --> SafetyErr["InvalidArgument 或 SafetyLimitExceeded"]
-  SafeOk -- "是" --> BackendCall
-  BackendCall --> BackendOk{"后端返回 Ok?"}
-  BackendOk -- "否" --> ErrorMap["返回后端错误 / 记录日志"]
-  BackendOk -- "是" --> Normalize["读操作改写 channel=resourceId\n补 metadata.resourceId"]
-  Normalize --> Log["emitOperationLog"]
-  Log --> Ok["返回 HalResult / HalStatus"]
-```
-
-### 8.3 模拟量
-
-`configureAd()` / `configureDa()`：
-
-- 校验资源模块和方向。
-- 缓存量程。
-- 调 `backend.configureAnalog(sessionId, physicalIndex, range, output, options)`。
-- 记录操作日志。
-
-`readAd()`：
-
-- 校验 input analog。
-- 调 `backend.readAnalog()`。
-- 将返回 sample 的 `channel` 改写为逻辑资源 ID。
-- metadata 写入 `resourceId`。
-- 记录日志。
-
-`writeDa()`：
-
-- 校验 output analog。
-- 若调用未传有效 range，则用资源属性 `safeMinValue` / `safeMaxValue`，否则默认 0..5V。
-- 通过 `SafetyGuard::validateAnalogWrite()` 做安全范围检查和钳位。
-- 调 `backend.writeAnalog()`。
-- 记录日志。
-
-批量方法逐个调用单点方法，遇到第一处错误立即返回。
-
-### 8.4 数字量
-
-`readDi()`：
-
-- 校验 input digital。
-- 调 `backend.readDigital()`。
-- 将 sample.channel 改为逻辑资源 ID。
-- metadata 写入 `resourceId`。
-
-`writeDo()`：
-
-- 校验 output digital。
-- `SafetyGuard` 禁止写 input、禁止写 `DigitalLevel::Unknown`。
-- 调 `backend.writeDigital()`。
-
-`waitEdge()`：
-
-- 校验 input digital。
-- 调 `backend.waitDigitalEdge()`。
-- 成功后改写 channel。
-
-批量方法逐个调用单点方法，遇错返回。
-
-### 8.5 串口
-
-`openSerial()`：
-
-- 校验 serial + bidirectional。
-- 缓存 `SerialConfig`。
-- 调 `backend.openSerial()`。
-
-`closeSerial()`：
-
-- 校验资源。
-- 删除缓存。
-- 调 `backend.closeSerial()`。
-
-`flushSerial()`：
-
-- 校验资源。
-- 调 `backend.flushSerial()`。
-- 当前不发操作日志。
-
-`writeSerial()` / `readSerial()`：
-
-- 校验资源。
-- 调后端读写。
-- 记录日志。
-
-`transactSerial()`：
-
-```text
-writeSerial(transaction.tx)
-  -> readSerial(transaction.readMaxBytes)
-  -> 返回 rx、txTimestampUs、rxTimestampUs、metadata.resourceId
-```
-
-当前没有在 HAL 层校验 `expectedPrefix`、`readMinBytes`、`terminator`。
-
-### 8.6 CANFD
-
-`openCan()` / `closeCan()`：
-
-- 校验 canfd + bidirectional。
-- 缓存或删除 `CanFdConfig`。
-- 调后端。
-
-`setCanFilters()`：
-
-- 校验资源。
-- 调 `backend.setCanFilters()`。
-- 当前不发操作日志。
-
-`sendCan()`：
-
-- 校验资源。
-- `SafetyGuard` 检查 payload 长度：CAN FD 最大 64，普通 CAN 最大 8。
-- 调 `backend.sendCan()`。
-- 记录日志。
-
-`receiveCan()`：
-
-- 校验资源。
-- 调 `backend.receiveCan()`。
-- 记录日志。
-
-`receiveCanBatch()`：
-
-- 校验资源。
-- 调 `backend.receiveCanBatch()`。
-- 当前不发操作日志。
-
-### 8.7 关闭和安全状态
-
-`close()` 流程：
-
-```text
-若 m_open == false
-  -> 返回 Ok
-applySafeState()
-backend.closeDevice(sessionId)
-m_open = false
-记录 closeDevice 日志
-```
-
-`applySafeState()` 遍历 `m_safeState`：
-
-- analog output：写安全电压。
-- digital output：把 `"high"/"1"/"true"` 转 High，把 `"low"/"0"/"false"` 转 Low，否则 Unknown。
-- serial：关闭串口。
-- canfd：关闭 CAN。
-- 忽略不存在资源。
-- 保留第一个后端错误并返回。
-
-`reset()` 和 `healthCheck()` 会校验 open 状态和 backend 是否存在，再调用后端。
-
-安全关闭流程：
-
-```mermaid
-flowchart TD
-  Start["closeDevice(sessionId)"] --> FindSession{"m_sessions 存在?"}
-  FindSession -- "否" --> Missing["NotFound + 操作日志"]
-  FindSession -- "是" --> DeviceClose["HalDevice::close(options)"]
-  DeviceClose --> IsOpen{"m_open?"}
-  IsOpen -- "否" --> AlreadyClosed["返回 Ok"]
-  IsOpen -- "是" --> SafeLoop["遍历 safeState"]
-  SafeLoop --> SafeKind{"资源类型"}
-  SafeKind -- "analog output" --> WriteAnalog["writeDa(安全值)"]
-  SafeKind -- "digital output" --> WriteDigital["writeDo(安全电平)"]
-  SafeKind -- "serial" --> CloseSerial["closeSerial(resourceId)"]
-  SafeKind -- "canfd" --> CloseCan["closeCan(resourceId)"]
-  WriteAnalog --> BackendClose
-  WriteDigital --> BackendClose
-  CloseSerial --> BackendClose
-  CloseCan --> BackendClose
-  BackendClose["HardwareAdapter::closeDevice(sessionId)"] --> CloseOk{"后端关闭成功?"}
-  CloseOk -- "否" --> CloseFail["返回后端错误"]
-  CloseOk -- "是" --> MarkClosed["m_open = false"]
-  MarkClosed --> RemoveSession["HalService 删除 session"]
-  RemoveSession --> Signal["emit deviceChanged(closed)"]
-  Signal --> Log["emitOperationLog(closeDevice)"]
-  Log --> Ok["返回 Ok"]
-```
-
----
-
-## 9. 资源映射
-
-主文件：`resource_mapper.*`。
-
-配置入口是 `QVariantMap halConfig`，当前读取结构：
+`ResourceMapper` 当前读取：
 
 ```text
 hardware.devices[]
@@ -690,423 +126,204 @@ hardware.resources{}
 safeState{}
 ```
 
-设备字段：
+设备字段包含 `alias`、`adapterId`、厂商/型号/序列号等描述；资源字段包含逻辑 ID、设备 alias、模块、方向、`physicalIndex` 和属性。资源表只负责 `ResourceId -> 物理资源描述`，不解释 CSV 或产品协议。
 
-- `alias` -> `DeviceDescriptor.deviceId`
-- `adapterId`
-- `vendor`
-- `model`
-- `serialNumber`
-- `location`
-- `firmwareVersion`
-- `properties`
-- `match` 会写入 `properties["match"]`
+为了无配置开发，当前有宽松回退：
 
-资源字段：
+- 无设备时创建 `mock_device_0`；
+- 无资源时创建 AD、DA、DI、DO、串口和 CANFD 六个默认资源；
+- 未知设备引用可能绑定到第一个设备；
+- 缺少 `adapterId` 时回退 `mock.adapter.v1`；
+- 能力和部分限制值从资源配置推导或固定填入。
 
-- key -> `ResourceBinding.resourceId`
-- `device`
-- `adapterId`
-- `module`
-- `direction`，默认 `bidirectional`
-- `physicalIndex`，默认 0
-- `properties`
+这些行为适合 Mock 开发，不适合生产部署。目标 Provider 路由落地后，生产配置应显式提供 `providerId` 和设备 match；缺失或匹配不唯一必须失败，不得静默选择 Mock 或首个设备。
 
-容错行为：
+当前配置示意：
 
-- 没有设备时创建默认设备 `mock_device_0`。
-- 没有资源时创建默认 6 个资源：
-  - `AD_MAIN_0`
-  - `DA_MAIN_0`
-  - `DI_POWER_OK`
-  - `DO_POWER_EN`
-  - `SERIAL_A`
-  - `CANFD_A`
-- 资源引用不存在设备但设备表非空时，绑定到首个设备。
-- `adapterId` 为空时回退 `mock.adapter.v1`。
+```json
+{
+  "hardware": {
+    "devices": [
+      {"alias": "main_daq", "adapterId": "mock.adapter.v1"}
+    ],
+    "resources": {
+      "SERIAL_A": {
+        "device": "main_daq",
+        "module": "serial",
+        "direction": "bidirectional",
+        "physicalIndex": 0
+      }
+    }
+  },
+  "safeState": {
+    "SERIAL_A": {"action": "close"}
+  }
+}
+```
 
-能力生成：
-
-- 每个资源转为一个 `ChannelDescriptor`。
-- `supportedModules` 来自资源模块去重。
-- 固定写入限制：
-  - `analog.maxSampleRateHz = 100000`
-  - `canfd.maxPayloadBytes = 64`
+该示例是当前兼容形状，不是目标 `providerId` 配置；目标骨架只在 HAL 契约中定义。
 
 ---
 
-## 10. 安全校验
+## 6. `HalDevice` 当前行为
 
-主文件：`safety_guard.*`。
+`HalDevice` 同时实现 `IHalDevice`、`IAnalogIo`、`IDigitalIo`、`ISerialBus` 和 `ICanFdBus`。每次操作先检查：
 
-当前规则：
+```text
+会话已打开
+  -> ResourceId 存在
+  -> module 匹配
+  -> direction 匹配或为 bidirectional
+  -> 输出类操作通过 SafetyGuard
+  -> 转换为 physicalIndex 后调用 HardwareAdapter
+```
 
-- 模拟量写：
-  - 低于最小或高于最大时，若 `safeClamp=true`，钳位到边界并通过。
-  - 若 `safeClamp=false`，返回 `SafetyLimitExceeded`。
-- 数字量写：
-  - 禁止写 input 资源，返回 `InvalidState`。
-  - 禁止写 `Unknown`，返回 `InvalidArgument`。
-- 串口配置：
-  - baudRate 必须 > 0。
-  - dataBits 必须在 5..8。
-- CAN 帧：
-  - `frame.fd=true` 时 payload 最大 64。
-  - `frame.fd=false` 时 payload 最大 8。
+### 6.1 模拟量和数字量
 
-`SafetyGuard` 构造可接收 `ResourceMapper*`，当前实现未使用 mapper。
+- AD/DA 配置会缓存量程；读结果的通道会改写回逻辑 `ResourceId`。
+- DA 写入使用显式量程或资源安全属性，支持拒绝越界或 `safeClamp` 钳位。
+- DO 禁止写 input 和 `Unknown`；DI/DO 批量方法当前逐项调用，首错即停。
+- `waitEdge()` 只转发后端；Mock 当前立即返回目标电平，不模拟真实等待。
+
+### 6.2 串口
+
+`openSerial()` 缓存配置并调用后端；`writeSerial()` / `readSerial()` 执行原始字节操作。
+
+当前 `transactSerial()`：
+
+```text
+backend.writeSerial(tx, transaction.op)
+  -> backend.readSerial(readMaxBytes, transaction.op)
+  -> 返回 rx 和时间戳
+```
+
+已确认限制：
+
+- 写和读分别使用同一个 `timeoutMs`，不是共享总 deadline；
+- 不累积多次读取；
+- 不保证完整产品帧；
+- `expectedPrefix`、`readMinBytes`、`terminator` 未参与判定；
+- Mock metadata 中保留 `expectedPrefix` 仅是兼容遗留，不代表校验。
+
+这些限制符合“HAL 不解析产品协议”的边界，但流式累积必须由算法传输实现补齐。
+
+### 6.3 CAN/CANFD
+
+HAL 校验普通 CAN payload 不超过 8 字节、CANFD 不超过 64 字节，并转发过滤、发送和接收。当前批量接收和部分辅助操作缺少完整操作日志；payload 产品语义不属于 HAL。
+
+### 6.4 安全关闭
+
+`HalDevice::close()` 先执行 `applySafeState()`，再关闭后端会话。当前支持：
+
+- analog output 写安全值；
+- digital output 写安全电平；
+- serial 关闭端口；
+- canfd 关闭总线。
+
+实现保留第一个后端错误并继续处理后续资源。不存在的安全资源会被忽略。此机制目前只在 Mock 路径验证，尚未形成真实硬件安全证据。
 
 ---
 
-## 11. 错误映射
+## 7. 后端、Loader 与 ABI
 
-主文件：`hal_error_mapper.*`。
+### 7.1 `HardwareAdapter`
 
-`mapAdapterStatus()` 把 C ABI 状态码转成 `HalStatusCode`：
+`HardwareAdapter` 覆盖设备生命周期、模拟/数字 I/O、串口和 CAN/CANFD，是当前 HAL 私有后端接口。公共 HAL 头不暴露它。
 
-- invalid argument -> `InvalidArgument`
-- not found -> `NotFound`
-- not supported -> `NotSupported`
-- busy -> `Busy`
-- timeout -> `Timeout`
-- io error -> `IoError`
-- protocol error -> `ProtocolError`
-- device disconnected -> `DeviceDisconnected`
-- buffer too small -> `BufferTooSmall`
-- internal error -> `InternalError`
-- 未知值 -> `AdapterError`
+目标实现可在该边界上演化 Provider Router，但需要先明确单设备多 Provider、连接所有权和 capability 合并规则；不能简单把 `HardwareAdapter` 改名后宣称路由已完成。
 
-`makeError()` 构造 `HalStatus` 并同步填充顶层 code 和嵌套 error。
+### 7.2 `CAbiAdapter`
 
-`fromAdapterStatus()` 复制 Adapter message，vendorCode 以字符串形式写入 `adapterCode`。
+名称容易造成误解：当前 `CAbiAdapter` 没有加载 DLL，也没有调用 `HalAdapterApiV1`。它的所有方法直接委托成员 `MockAdapter`。
+
+因此当前事实是：
+
+```text
+createBackend() -> CAbiAdapter -> MockAdapter
+```
+
+目标中，C ABI 应只位于 Vendor Adapter Provider 内。Qt Provider 和 Mock Provider 不应绕经 Vendor C ABI。
+
+### 7.3 `AdapterLoader` 与 ABI v1
+
+`AdapterLoader` 已实现：
+
+- 使用 `QLibrary` 加载指定 DLL；
+- 解析 `hal_adapter_get_api_v1`；
+- 校验 ABI 版本和 `structSize`；
+- 保存函数表并在析构时卸载。
+
+但它未接入 `HalService::createBackend()` 或 `CAbiAdapter`，所以 Loader 单测只能证明加载器本身，不能证明真实 Adapter 调用链。
+
+`hal_adapter_abi.h` 当前为 ABI v1。兼容规则和状态边界见 HAL 契约，不在本报告重复。
 
 ---
 
-## 12. 后端抽象
+## 8. `MockAdapter` 当前能力
 
-主文件：`hardware_adapter.h`。
+`MockAdapter` 使用内存表维护设备、会话和 I/O 状态：
 
-`HardwareAdapter` 是 HAL 到后端的 C++ 抽象，方法覆盖：
+| 类型 | 当前模拟 |
+| --- | --- |
+| 模拟量 | 输出记录、同物理通道回环、可选随机噪声 |
+| 数字量 | 输出记录、同物理通道回环 |
+| 串口 | 写入 buffer，读取 echo；空 buffer 可返回 `mock-serial` |
+| CAN/CANFD | 发送帧入队，接收出队 |
+| 会话 | 初始化、打开、关闭、复位、健康检查 |
 
-- adapter 信息。
-- initialize / shutdown。
-- enumerate / capabilities。
-- open / close / reset / healthCheck。
-- analog configure / read / write / batch。
-- digital read / write / wait edge / batch。
-- serial open / close / flush / read / write / transaction。
-- CAN open / close / filters / send / receive / batch。
+当前 Mock 不模拟真实时间、并发、设备断开、可编排错误注入或产品协议设备行为。串口 echo 与 `SystemStatusSimulator` 是两个不同层次：前者验证原始 HAL I/O，后者验证产品协议但绕过 HAL。
 
-`HalService` 和 `HalDevice` 只依赖 `HardwareAdapter`，不直接依赖 `MockAdapter`。
-
----
-
-## 13. `CAbiAdapter`
-
-主文件：`c_abi_adapter.*`。
-
-当前 `CAbiAdapter` 是兼容 seam，不是真正 C ABI 桥接实现。所有方法直接委托给内部 `MockAdapter`。
-
-设计含义：
-
-- `HalService` 默认创建 `CAbiAdapter`。
-- 因为 `CAbiAdapter` 委托 `MockAdapter`，当前系统无需厂家 DLL 也可工作。
-- 未来可在此类中接入 `AdapterLoader` 和 `HalAdapterApiV1` 函数表。
-
-当前 Mock 路径和未来外部 Adapter 路径：
-
-```mermaid
-flowchart LR
-  Service["HalService::createBackend"] --> CAbi["CAbiAdapter"]
-
-  subgraph Current["当前实际路径"]
-    CAbi --> Mock["MockAdapter"]
-    Mock --> State["内存设备状态"]
-    State --> Analog["analog output/input loopback"]
-    State --> Digital["digital output/input loopback"]
-    State --> Serial["serial echo buffer"]
-    State --> Can["CAN loopback queue"]
-  end
-
-  subgraph Future["未来外部 Adapter 路径"]
-    CAbi -. "接入" .-> Loader["AdapterLoader"]
-    Loader -. "QLibrary::load" .-> Library["厂家 Adapter DLL"]
-    Library -. "resolve" .-> Entry["hal_adapter_get_api_v1"]
-    Entry -. "fill" .-> Api["HalAdapterApiV1"]
-    Api -. "call" .-> Vendor["厂家 SDK / 硬件"]
-  end
-
-  Loader -. "校验" .-> AbiCheck["ABI version == 1\nstructSize >= HalAdapterApiV1"]
-  Api -. "状态码" .-> ErrorMap["HalErrorMapper"]
-```
+目标产品模拟应把设备行为放到 HAL Mock Provider 后方，使算法仍通过 HAL 资源和生命周期完成测试。
 
 ---
 
-## 14. `AdapterLoader`
+## 9. 算法层与应用接入现状
 
-主文件：`adapter_loader.*`。
+`src/algorithm` 已实现当前产品路径 `HalControlTransport`：构造时接收 `IHalDevice*` 和逻辑 `ResourceId`，通过 `IControlChannel` 打开、原始读写和关闭；它在算法层完成 MB_DDF 同步字搜索、短读累积、长度分帧和剩余帧保留。旧 `HalSerialTransport` 继续作为 `ISerialBus` 兼容桥接。
 
-职责：加载外部 Adapter DLL，并解析 C ABI 函数表入口。
+当前限制：
 
-流程：
+- 传输对象不创建或拥有 `IHalService` / 设备会话，`hwtest_pc_runner` 负责按配置建立和收尾会话；
+- `SystemStatusAlgorithmExecutor` 每次 BIZ 重试都独立打开/关闭控制资源，并保持同一请求序号；
+- `configs/mbddf_pc_hal.json` 同时定义串口和 UDP 资源，`control.resourceId` 是 PC 每次运行前的唯一选择点；
+- 当前只有 `mbddf.system_status`，图形 UI 和运行期热切换未实现。
 
-```text
-load(libraryPath, hostApi, outApi)
-  -> unload() 清理旧库
-  -> 校验 libraryPath 和 outApi
-  -> QLibrary(libraryPath).load()
-  -> resolve("hal_adapter_get_api_v1")
-  -> 调 symbol(&hostApi, &api)
-  -> 校验 api.abiVersion == HAL_ADAPTER_ABI_VERSION
-  -> 校验 api.structSize >= sizeof(HalAdapterApiV1)
-  -> 保存 api 和 libraryPath
-  -> *outApi = api
-```
-
-失败路径：
-
-- 空路径或空 outApi：`Invalid adapter library path or output pointer`
-- DLL 加载失败：保存 `QLibrary::errorString()`
-- 缺入口符号：`Missing symbol hal_adapter_get_api_v1`
-- 入口返回非 0：`hal_adapter_get_api_v1 returned failure`
-- ABI 不匹配：`Adapter ABI version mismatch`
-
-析构时自动 `unload()`。
-
-当前限制：`AdapterLoader` 尚未接入 `HalService::createBackend()`。
+Qt UDP 本机模拟目标闭环已经打通；真实 Windows 串口、现场网络端点和 DUT 闭环尚无证据。
 
 ---
 
-## 15. C ABI
+## 10. 错误与日志现状
 
-主文件：`hal_adapter_abi.h`。
+`HalErrorMapper` 当前把 Vendor ABI 风格状态码直接映射为 `HalStatusCode`。其中 `protocol error -> ProtocolError` 只是现有兼容映射，不能用于产品帧 CRC、字段、命令或序号错误；来源不明时目标实现应使用 `AdapterError` 并保留原始诊断。
 
-当前 ABI 版本：
-
-```text
-HAL_ADAPTER_ABI_VERSION = 1
-```
-
-外部 DLL 必须导出：
-
-```text
-hal_adapter_get_api_v1(host, outApi)
-```
-
-函数表 `HalAdapterApiV1` 包含：
-
-- getInfo
-- initialize / shutdown / enumerateDevices
-- openDevice / closeDevice / resetDevice / getCapabilities
-- analogConfigure / analogRead / analogWrite
-- digitalRead / digitalWrite / digitalWaitEdge
-- serialOpen / serialClose / serialWrite / serialRead
-- canOpen / canClose / canSetFilters / canSend / canReceive
-
-C ABI 使用 POD、C 字符串、opaque handle、调用方分配缓冲区。扩展时应追加字段，并用 `structSize` 判断兼容。
+`HalService` 和 `HalDevice` 会产生 `HalLogEvent`，但 `flushSerial()`、`setCanFilters()`、`receiveCanBatch()` 等路径尚未完全覆盖。HAL 到日志服务的桥接在 `src/logging/`，字段唯一语义见 [日志接口协议](../contracts/log-interface-protocol.md)。
 
 ---
 
-## 16. `MockAdapter`
+## 11. 与目标契约的差距
 
-主文件：`mock_adapter.*`。
-
-`MockAdapter` 是当前实际开发后端，支持无真实硬件运行。
-
-### 16.1 状态模型
-
-设备状态 `DeviceState`：
-
-- `descriptor`
-- `capabilities`
-- 模拟输入量程
-- 模拟输出量程
-- 模拟输出值
-- 数字输入值
-- 数字输出值
-- 串口配置
-- 串口 buffer
-- CAN 配置
-- CAN 接收队列
-
-会话状态 `SessionState`：
-
-- `sessionId`
-- `deviceId`
-- `openOptions`
-
-内部索引：
-
-- `m_devices`
-- `m_deviceStateById`
-- `m_sessionsById`
-- `m_sessionCounter`
-- `m_initialized`
-
-### 16.2 初始化
-
-```text
-initialize(config)
-  -> 清空设备和 session
-  -> m_initialized = true
-  -> adapterId = config["adapterId"] 或 mock.adapter.v1
-  -> ResourceMapper.load(config)
-  -> 为每个 descriptor 创建 DeviceState
-  -> ensureDefaultState()
-```
-
-`ensureDefaultState()` 根据能力填初始状态：
-
-- analog input 默认值来自 `mock.analogDefaults[index]`，否则 0。
-- analog output 默认量程 0..5V。
-- digital input 默认值来自 `mock.digitalDefaults[index]`，否则 Low。
-
-### 16.3 行为
-
-设备：
-
-- 未初始化时 `enumerateDevices()` 返回 `NotInitialized`。
-- 打开设备会生成 `deviceId_session_N`。
-- close/reset/healthCheck 需要有效 session。
-- reset 会重建默认状态。
-
-模拟量：
-
-- `writeAnalog()` 记录输出值。
-- `readAnalog()` 默认启用 `mock.analogLoopback`，若同物理通道写过输出，则读回输出值。
-- 可通过 `mock.analogNoiseAmplitude` 添加随机噪声。
-
-数字量：
-
-- `writeDigital()` 记录输出电平。
-- `readDigital()` 默认启用 `mock.digitalLoopback`，读回同物理通道输出。
-- `waitDigitalEdge()` 当前直接返回目标电平，不真实等待边沿。
-
-串口：
-
-- `openSerial()` 记录配置。
-- `writeSerial()` 追加到 buffer。
-- `readSerial()` 默认 `mock.serialEcho=true`；buffer 为空时填 `mock-serial`。
-- `flushSerial()` 当前等价于 closeSerial，会移除配置和 buffer。
-- `transactSerial()` 写后读，metadata 记录 expectedPrefix。
-
-CANFD：
-
-- `openCan()` 创建接收队列。
-- `sendCan()` 默认 `mock.canLoopback=true`，发送帧入接收队列。
-- `receiveCan()` 队列空返回 `Timeout`。
-- `receiveCanBatch()` 读到上限或队列空；一帧都没读到时返回 `Timeout`。
+| 差距 | 当前风险 | 目标动作 |
+| --- | --- | --- |
+| Router 只覆盖控制资源 | 其他资源仍无法显式选择 Qt/Vendor/Mock | 扩展统一 Provider 生命周期和配置校验 |
+| Mock 静默默认 | 生产误连 Mock 或首设备 | 生产模式缺配置即失败 |
+| Qt Provider 证据不完整 | 串口和现场 UDP 行为未知 | 隔离串口联调并确认现场 UDP 端点；TCP 另行评审 |
+| Vendor 调用链缺失 | ABI/Loader 与运行时脱节 | 在 Vendor Provider 内接入 ABI v1 |
+| 扫描来自配置 | 无法证明物理设备身份 | Provider 扫描并按 match 唯一绑定 |
+| deadline 非端到端 | write/read 累计超时 | 单调时钟计算剩余预算 |
+| 旧 `HalSerialTransport` 无流式缓冲 | 误用旧路径会受短读影响 | 产品路径固定使用 `HalControlTransport`，后续评估删除旧桥接 |
+| 产品 Mock 绕过 HAL | 无法验证资源和安全链 | 算法经 HAL Mock Provider 闭环 |
+| 安全态只在 Mock 证明 | 真实硬件风险未知 | 厂家/Qt Provider 契约和硬件验收 |
 
 ---
 
-## 17. 主流程
+## 12. 建议迁移顺序
 
-### 17.1 初始化到打开
+1. 在已实现的控制资源路由上补齐连接取消和更完整的 Provider 日志证据。
+2. 用虚拟或隔离真实串口验证 614400/8E1、短读、拆包、超时和拔插收尾。
+3. 确认 PC 到 DUT 的实际 UDP 地址/端口；不得复用板端网口自环测试事实作推断。
+4. 把当前 `MockAdapter` 迁为直接的 Mock Provider，并补 SYSTEM_STATUS 控制通道闭环。
+5. 把 `AdapterLoader + HalAdapterApiV1` 接入 Vendor Adapter Provider，保留 ABI v1 兼容测试。
+6. 统一全 HAL deadline、连接取消、日志覆盖和异常安全收尾；TCP 在实际用例明确后另行评审。
+7. 完成隔离真实 DUT 验收，再扩充更多 MB_DDF 测试项和图形 UI。
 
-```text
-调用 createHalService()
-  -> 得到 HalService
-initialize(halConfig)
-  -> ResourceMapper 建设备/资源/安全态
-  -> CAbiAdapter 初始化
-  -> MockAdapter 初始化
-scanDevices()
-  -> 返回 mapper 里的设备
-openDevice("main_daq")
-  -> 后端创建 session
-  -> HalService 创建 HalDevice
-  -> HalDevice 缓存资源绑定和 safeState
-```
-
-### 17.2 AD/DA 回环
-
-```text
-analog.writeDa("DA_MAIN_0", 2.75)
-  -> HalDevice 查 DA_MAIN_0: analog/output/physicalIndex=0
-  -> 安全量程校验
-  -> backend.writeAnalog(session, 0, 2.75)
-  -> MockAdapter 保存 analogOutputValues[0] = 2.75
-
-analog.readAd("AD_MAIN_0")
-  -> HalDevice 查 AD_MAIN_0: analog/input/physicalIndex=0
-  -> backend.readAnalog(session, 0)
-  -> MockAdapter loopback 读到 2.75
-  -> HalDevice 把 sample.channel 改成 AD_MAIN_0
-```
-
-### 17.3 DI/DO 回环
-
-```text
-digital.writeDo("DO_POWER_EN", High)
-  -> 写 physicalIndex=0
-digital.readDi("DI_POWER_OK")
-  -> 读 physicalIndex=0
-  -> MockAdapter digitalLoopback 返回 High
-```
-
-### 17.4 串口 echo
-
-```text
-openSerial("SERIAL_A")
-writeSerial("SERIAL_A", "ping")
-readSerial("SERIAL_A", 8)
-  -> 返回 "ping"
-```
-
-### 17.5 CAN loopback
-
-```text
-openCan("CANFD_A")
-sendCan("CANFD_A", frame)
-  -> MockAdapter 入队
-receiveCan("CANFD_A")
-  -> 出队同一帧
-```
-
-### 17.6 安全关闭
-
-```text
-closeDevice(session)
-  -> HalDevice.close()
-  -> applySafeState()
-       DA_MAIN_0 -> 写 0.0
-       DO_POWER_EN -> 写 Low
-       SERIAL_A -> closeSerial
-       CANFD_A -> closeCan
-  -> backend.closeDevice(session)
-  -> m_open = false
-```
-
----
-
-## 18. 当前限制
-
-- `AdapterLoader` 已实现，但未接入 `HalService::createBackend()`。
-- `CAbiAdapter` 当前只是 Mock 转发，不是真正 ABI 桥接。
-- `hasLibraryPath()`、`adapterConfig()` 当前未使用。
-- `scanDevices()` 和 `queryCapabilities()` 来源是 `ResourceMapper`，不是 Adapter 枚举结果。
-- 串口 `expectedPrefix`、`readMinBytes`、`terminator` 未在 HAL 层判定。
-- `SafetyGuard` 未使用构造传入的 `ResourceMapper*`。
-- 部分方法不产生日志，例如 `flushSerial()`、`setCanFilters()`、`receiveCanBatch()`。
-- Mock 不模拟真实时间等待、设备断开、错误注入、硬件并发。
-- 批量 IO 多为逐个调用，未做后端原生批量优化。
-
----
-
-## 19. 扩展建议
-
-新增真实 Adapter 时：
-
-1. 实现外部 DLL 的 `hal_adapter_get_api_v1()`。
-2. 填充 `HalAdapterApiV1` 函数表。
-3. 在 `CAbiAdapter` 中接入 `AdapterLoader`。
-4. 将 C ABI POD 数据转换为 `hal_types.h` 类型。
-5. 补 ABI 版本、缺函数、缓冲区不足、错误映射测试。
-
-新增资源类型时：
-
-1. 扩展公共接口或类型。
-2. 扩展 `ResourceMapper`。
-3. 扩展 `SafetyGuard`。
-4. 扩展 `HardwareAdapter` 和 Mock。
-5. 同步 `../contracts/hal-interface-protocol.md` 和测试。
+每一步都应先更新 HAL 契约和测试边界，再修改实现；目标能力在通过相应测试前继续标记“未实现”。

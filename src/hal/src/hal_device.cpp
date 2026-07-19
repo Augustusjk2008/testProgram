@@ -23,6 +23,9 @@ static QVariantMap contextForBinding(const ResourceBinding& binding,
     context.insert(QStringLiteral("direction"), binding.direction);
     context.insert(QStringLiteral("operation"), operation);
     context.insert(QStringLiteral("physicalIndex"), binding.physicalIndex);
+    if (!binding.providerId.isEmpty()) {
+        context.insert(QStringLiteral("providerId"), binding.providerId);
+    }
     return context;
 }
 
@@ -107,6 +110,11 @@ ICanFdBus* HalDevice::canFdBus()
     return static_cast<ICanFdBus*>(this);
 }
 
+IControlChannel* HalDevice::controlChannel()
+{
+    return static_cast<IControlChannel*>(this);
+}
+
 HalStatus HalDevice::close(const OperationOptions& options)
 {
     QElapsedTimer timer;
@@ -117,6 +125,7 @@ HalStatus HalDevice::close(const OperationOptions& options)
         emitOperationLog(operation, options, timer.elapsed(), status);
         return status;
     }
+    const HalStatus controlStatus = m_controlChannels.closeAll(options);
     const HalStatus safeStatus = applySafeState();
     if (m_backend != nullptr) {
         const HalStatus backendStatus = m_backend->closeDevice(m_sessionId, options);
@@ -126,7 +135,9 @@ HalStatus HalDevice::close(const OperationOptions& options)
         }
     }
     m_open = false;
-    const HalStatus status = safeStatus.ok() ? HalStatus{} : safeStatus;
+    const HalStatus status = !controlStatus.ok()
+        ? controlStatus
+        : (safeStatus.ok() ? HalStatus{} : safeStatus);
     emitOperationLog(operation, options, timer.elapsed(), status);
     return status;
 }
@@ -928,6 +939,90 @@ HalResult<SerialTransactionResult> HalDevice::transactSerial(const ResourceId& p
     result.value.rxTimestampUs = nowUs();
     result.value.metadata.insert(QStringLiteral("resourceId"), port);
     emitOperationLog(operation, transaction.op, timer.elapsed(), result.status, binding);
+    return result;
+}
+
+HalStatus HalDevice::openControl(const ResourceId& resourceId,
+                                 const OperationOptions& options)
+{
+    QElapsedTimer timer;
+    timer.start();
+    const QString operation = QStringLiteral("control.openControl");
+    HalStatus status;
+    const ResourceBinding* binding = bindingFor(resourceId,
+                                                QStringLiteral("control"),
+                                                QStringLiteral("bidirectional"),
+                                                &status);
+    if (binding == nullptr) {
+        emitOperationLog(operation, options, timer.elapsed(), status);
+        return status;
+    }
+    status = m_controlChannels.open(*binding, options);
+    emitOperationLog(operation, options, timer.elapsed(), status, binding);
+    return status;
+}
+
+HalStatus HalDevice::closeControl(const ResourceId& resourceId,
+                                  const OperationOptions& options)
+{
+    QElapsedTimer timer;
+    timer.start();
+    const QString operation = QStringLiteral("control.closeControl");
+    HalStatus status;
+    const ResourceBinding* binding = bindingFor(resourceId,
+                                                QStringLiteral("control"),
+                                                QStringLiteral("bidirectional"),
+                                                &status);
+    if (binding == nullptr) {
+        emitOperationLog(operation, options, timer.elapsed(), status);
+        return status;
+    }
+    status = m_controlChannels.close(*binding, options);
+    emitOperationLog(operation, options, timer.elapsed(), status, binding);
+    return status;
+}
+
+HalStatus HalDevice::writeControl(const ResourceId& resourceId,
+                                  const QByteArray& data,
+                                  const OperationOptions& options)
+{
+    QElapsedTimer timer;
+    timer.start();
+    const QString operation = QStringLiteral("control.writeControl");
+    HalStatus status;
+    const ResourceBinding* binding = bindingFor(resourceId,
+                                                QStringLiteral("control"),
+                                                QStringLiteral("bidirectional"),
+                                                &status);
+    if (binding == nullptr) {
+        emitOperationLog(operation, options, timer.elapsed(), status);
+        return status;
+    }
+    status = m_controlChannels.write(*binding, data, options);
+    emitOperationLog(operation, options, timer.elapsed(), status, binding);
+    return status;
+}
+
+HalResult<QByteArray> HalDevice::readControl(const ResourceId& resourceId,
+                                             int maxBytes,
+                                             const OperationOptions& options)
+{
+    QElapsedTimer timer;
+    timer.start();
+    const QString operation = QStringLiteral("control.readControl");
+    HalResult<QByteArray> result;
+    HalStatus status;
+    const ResourceBinding* binding = bindingFor(resourceId,
+                                                QStringLiteral("control"),
+                                                QStringLiteral("bidirectional"),
+                                                &status);
+    if (binding == nullptr) {
+        result.status = status;
+        emitOperationLog(operation, options, timer.elapsed(), result.status);
+        return result;
+    }
+    result = m_controlChannels.read(*binding, maxBytes, options);
+    emitOperationLog(operation, options, timer.elapsed(), result.status, binding);
     return result;
 }
 
