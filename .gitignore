@@ -46,6 +46,7 @@ ui_*.h
 *.stackdump
 *.tmp
 *.temp
+logs/
 Thumbs.db
 Desktop.ini
 

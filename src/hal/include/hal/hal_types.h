@@ -190,6 +190,14 @@ struct SerialConfig {
     QVariantMap vendorOptions;
 };
 
+struct SerialPortDescriptor {
+    QString portName;
+    QString description;
+    QString manufacturer;
+    QString serialNumber;
+    QString systemLocation;
+};
+
 struct SerialTransaction {
     QByteArray tx;
     QByteArray expectedPrefix;
@@ -262,12 +270,14 @@ Q_DECLARE_METATYPE(hwtest::hal::SerialParity)
 Q_DECLARE_METATYPE(hwtest::hal::SerialStopBits)
 Q_DECLARE_METATYPE(hwtest::hal::SerialFlowControl)
 Q_DECLARE_METATYPE(hwtest::hal::SerialConfig)
+Q_DECLARE_METATYPE(hwtest::hal::SerialPortDescriptor)
 Q_DECLARE_METATYPE(hwtest::hal::SerialTransaction)
 Q_DECLARE_METATYPE(hwtest::hal::SerialTransactionResult)
 Q_DECLARE_METATYPE(hwtest::hal::CanFdConfig)
 Q_DECLARE_METATYPE(hwtest::hal::CanFdFrame)
 Q_DECLARE_METATYPE(hwtest::hal::CanFdFilter)
 Q_DECLARE_METATYPE(QVector<hwtest::hal::DeviceDescriptor>)
+Q_DECLARE_METATYPE(QVector<hwtest::hal::SerialPortDescriptor>)
 Q_DECLARE_METATYPE(QVector<hwtest::hal::AnalogSample>)
 Q_DECLARE_METATYPE(QVector<hwtest::hal::DigitalSample>)
 Q_DECLARE_METATYPE(QVector<hwtest::hal::CanFdFrame>)

@@ -96,6 +96,19 @@ ActionResult halFailure(const hwtest::hal::HalStatus& status, const QString& fal
                    status.error.message.isEmpty() ? fallback : status.error.message);
 }
 
+QString serialPortNameFor(const QVariantMap& halConfig, const QString& resourceId)
+{
+    const QVariantMap resource = halConfig.value(QStringLiteral("hardware")).toMap()
+                                     .value(QStringLiteral("resources")).toMap()
+                                     .value(resourceId).toMap();
+    if (resource.value(QStringLiteral("providerId")).toString().trimmed() !=
+        QStringLiteral("qt.serial")) {
+        return {};
+    }
+    return resource.value(QStringLiteral("properties")).toMap()
+        .value(QStringLiteral("portName")).toString().trimmed();
+}
+
 } // namespace
 
 class TestApplicationController::Impl {
@@ -128,6 +141,8 @@ TestApplicationController::TestApplicationController(QObject* parent)
     , m_impl(std::make_unique<Impl>())
 {
     qRegisterMetaType<ApplicationSnapshot>();
+    qRegisterMetaType<SerialPortInfo>();
+    qRegisterMetaType<QVector<SerialPortInfo>>();
 }
 
 TestApplicationController::~TestApplicationController()
@@ -219,6 +234,7 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     m_impl->snapshot.phase = QStringLiteral("configured");
     m_impl->snapshot.controlResourceId = selected->resourceId;
     m_impl->snapshot.providerId = selected->providerId;
+    m_impl->snapshot.serialPortName = serialPortNameFor(halConfig, selected->resourceId);
     emit snapshotChanged(m_impl->snapshot);
     return {};
 }
@@ -232,6 +248,29 @@ QVector<ControlResource> TestApplicationController::availableControls() const
         return {};
     }
     return m_impl->controls;
+}
+
+QVector<SerialPortInfo> TestApplicationController::availableSerialPorts() const
+{
+    Q_ASSERT_X(onAffinityThread(this),
+               "TestApplicationController::availableSerialPorts",
+               "must run on the controller affinity thread");
+    if (!onAffinityThread(this)) {
+        return {};
+    }
+
+    QVector<SerialPortInfo> result;
+    const QVector<hwtest::hal::SerialPortDescriptor> ports =
+        hwtest::hal::availableSerialPorts();
+    result.reserve(ports.size());
+    for (const hwtest::hal::SerialPortDescriptor& port : ports) {
+        result.push_back(SerialPortInfo{port.portName,
+                                        port.description,
+                                        port.manufacturer,
+                                        port.serialNumber,
+                                        port.systemLocation});
+    }
+    return result;
 }
 
 ActionResult TestApplicationController::selectControl(const QString& resourceId)
@@ -258,6 +297,45 @@ ActionResult TestApplicationController::selectControl(const QString& resourceId)
     m_impl->halConfig.insert(QStringLiteral("control"), control);
     m_impl->snapshot.controlResourceId = selected->resourceId;
     m_impl->snapshot.providerId = selected->providerId;
+    m_impl->snapshot.serialPortName = serialPortNameFor(m_impl->halConfig,
+                                                        selected->resourceId);
+    emit snapshotChanged(m_impl->snapshot);
+    return {};
+}
+
+ActionResult TestApplicationController::selectSerialPort(const QString& portName)
+{
+    if (!onAffinityThread(this)) {
+        return affinityFailure();
+    }
+    if (m_impl->snapshot.phase != QStringLiteral("configured")) {
+        return failure(QStringLiteral("invalid_state"),
+                       QStringLiteral("Serial port can only be selected while configured and disconnected"));
+    }
+
+    const QString normalized = portName.trimmed();
+    if (normalized.isEmpty()) {
+        return failure(QStringLiteral("serial_port_required"),
+                       QStringLiteral("Serial port name must not be empty"));
+    }
+
+    QVariantMap hardware = m_impl->halConfig.value(QStringLiteral("hardware")).toMap();
+    QVariantMap resources = hardware.value(QStringLiteral("resources")).toMap();
+    const QString resourceId = m_impl->snapshot.controlResourceId;
+    QVariantMap resource = resources.value(resourceId).toMap();
+    if (resource.value(QStringLiteral("providerId")).toString().trimmed() !=
+        QStringLiteral("qt.serial")) {
+        return failure(QStringLiteral("control_not_serial"),
+                       QStringLiteral("The selected control resource is not a serial provider"));
+    }
+
+    QVariantMap properties = resource.value(QStringLiteral("properties")).toMap();
+    properties.insert(QStringLiteral("portName"), normalized);
+    resource.insert(QStringLiteral("properties"), properties);
+    resources.insert(resourceId, resource);
+    hardware.insert(QStringLiteral("resources"), resources);
+    m_impl->halConfig.insert(QStringLiteral("hardware"), hardware);
+    m_impl->snapshot.serialPortName = normalized;
     emit snapshotChanged(m_impl->snapshot);
     return {};
 }
@@ -634,6 +712,7 @@ ActionResult TestApplicationController::shutdown()
     const bool configured = !m_impl->testConfigPath.isEmpty() && !m_impl->halConfigPath.isEmpty();
     const QString selectedResource = m_impl->snapshot.controlResourceId;
     const QString selectedProvider = m_impl->snapshot.providerId;
+    const QString selectedSerialPort = m_impl->snapshot.serialPortName;
 
     if (m_impl->runner) {
         const hwtest::biz::Status status = m_impl->runner->shutdown();
@@ -674,11 +753,13 @@ ActionResult TestApplicationController::shutdown()
         m_impl->snapshot.message = firstFailure.message;
         m_impl->snapshot.controlResourceId = selectedResource;
         m_impl->snapshot.providerId = selectedProvider;
+        m_impl->snapshot.serialPortName = selectedSerialPort;
     } else if (configured) {
         m_impl->latchedShutdownFailure = {};
         m_impl->snapshot.phase = QStringLiteral("configured");
         m_impl->snapshot.controlResourceId = selectedResource;
         m_impl->snapshot.providerId = selectedProvider;
+        m_impl->snapshot.serialPortName = selectedSerialPort;
     }
     emit snapshotChanged(m_impl->snapshot);
     return firstFailure;

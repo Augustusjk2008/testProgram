@@ -196,6 +196,46 @@ TEST(TestApplicationControllerTest, RejectsAnUnknownControlResource)
     EXPECT_EQ(controller.snapshot().controlResourceId, QStringLiteral("CONTROL_SERIAL"));
 }
 
+TEST(TestApplicationControllerTest, SelectsSerialPortInMemoryBeforePreparation)
+{
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(QStringLiteral(HWTEST_APP_TEST_CONFIG),
+                                                QStringLiteral(HWTEST_APP_HAL_CONFIG)).ok);
+    EXPECT_EQ(controller.snapshot().serialPortName, QStringLiteral("COM_CHANGE_ME"));
+
+    const ActionResult selected = controller.selectSerialPort(QStringLiteral("  COM42  "));
+
+    ASSERT_TRUE(selected.ok) << selected.message.toStdString();
+    EXPECT_EQ(controller.snapshot().serialPortName, QStringLiteral("COM42"));
+
+    ASSERT_TRUE(controller.selectControl(QStringLiteral("CONTROL_NETWORK")).ok);
+    EXPECT_TRUE(controller.snapshot().serialPortName.isEmpty());
+    const ActionResult rejectedForUdp = controller.selectSerialPort(QStringLiteral("COM43"));
+    EXPECT_FALSE(rejectedForUdp.ok);
+    EXPECT_EQ(rejectedForUdp.code, QStringLiteral("control_not_serial"));
+
+    ASSERT_TRUE(controller.selectControl(QStringLiteral("CONTROL_SERIAL")).ok);
+    EXPECT_EQ(controller.snapshot().serialPortName, QStringLiteral("COM42"));
+    ASSERT_TRUE(controller.prepare().ok);
+    const ActionResult rejectedAfterPrepare = controller.selectSerialPort(QStringLiteral("COM43"));
+    EXPECT_FALSE(rejectedAfterPrepare.ok);
+    EXPECT_EQ(rejectedAfterPrepare.code, QStringLiteral("invalid_state"));
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, RejectsAnEmptySerialPortName)
+{
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(QStringLiteral(HWTEST_APP_TEST_CONFIG),
+                                                QStringLiteral(HWTEST_APP_HAL_CONFIG)).ok);
+
+    const ActionResult selected = controller.selectSerialPort(QStringLiteral("   "));
+
+    EXPECT_FALSE(selected.ok);
+    EXPECT_EQ(selected.code, QStringLiteral("serial_port_required"));
+    EXPECT_EQ(controller.snapshot().serialPortName, QStringLiteral("COM_CHANGE_ME"));
+}
+
 TEST(TestApplicationControllerTest, RunsSystemStatusThroughTheSelectedUdpControlResource)
 {
     ensureQtApplication();

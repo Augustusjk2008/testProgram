@@ -53,9 +53,23 @@ add_test(NAME HwtestTuiHelp
     COMMAND $<TARGET_FILE:hwtest_tui> --help
 )
 set_tests_properties(HwtestTuiHelp PROPERTIES
-    PASS_REGULAR_EXPRESSION "Usage:.*hwtest_tui"
+    PASS_REGULAR_EXPRESSION "serial-port"
     TIMEOUT 5
 )
+
+if(WIN32)
+    add_test(NAME HwtestScriptHelp
+        COMMAND powershell
+            -NoProfile
+            -ExecutionPolicy Bypass
+            -File "${PROJECT_SOURCE_DIR}/hwtest.ps1"
+            help
+    )
+    set_tests_properties(HwtestScriptHelp PROPERTIES
+        PASS_REGULAR_EXPRESSION "hwtest.ps1 <action>"
+        TIMEOUT 5
+    )
+endif()
 
 add_test(NAME HwtestTuiScriptedSession
     COMMAND ${CMAKE_COMMAND}

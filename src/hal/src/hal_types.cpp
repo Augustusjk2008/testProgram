@@ -26,12 +26,14 @@ void registerHalMetaTypes()
     qRegisterMetaType<SerialStopBits>("hwtest::hal::SerialStopBits");
     qRegisterMetaType<SerialFlowControl>("hwtest::hal::SerialFlowControl");
     qRegisterMetaType<SerialConfig>("hwtest::hal::SerialConfig");
+    qRegisterMetaType<SerialPortDescriptor>("hwtest::hal::SerialPortDescriptor");
     qRegisterMetaType<SerialTransaction>("hwtest::hal::SerialTransaction");
     qRegisterMetaType<SerialTransactionResult>("hwtest::hal::SerialTransactionResult");
     qRegisterMetaType<CanFdConfig>("hwtest::hal::CanFdConfig");
     qRegisterMetaType<CanFdFrame>("hwtest::hal::CanFdFrame");
     qRegisterMetaType<CanFdFilter>("hwtest::hal::CanFdFilter");
     qRegisterMetaType<QVector<DeviceDescriptor>>("QVector<hwtest::hal::DeviceDescriptor>");
+    qRegisterMetaType<QVector<SerialPortDescriptor>>("QVector<hwtest::hal::SerialPortDescriptor>");
     qRegisterMetaType<QVector<AnalogSample>>("QVector<hwtest::hal::AnalogSample>");
     qRegisterMetaType<QVector<DigitalSample>>("QVector<hwtest::hal::DigitalSample>");
     qRegisterMetaType<QVector<CanFdFrame>>("QVector<hwtest::hal::CanFdFrame>");

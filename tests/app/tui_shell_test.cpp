@@ -14,9 +14,13 @@ TEST(TuiShellTest, ParsesTheStagedWorkflowCommands)
     EXPECT_EQ(load.arguments.at(0), QStringLiteral("test config.json"));
     EXPECT_EQ(load.arguments.at(1), QStringLiteral("hal config.json"));
     EXPECT_EQ(parseTuiCommand(QStringLiteral("controls")).type, TuiCommandType::Controls);
+    EXPECT_EQ(parseTuiCommand(QStringLiteral("ports")).type, TuiCommandType::Ports);
     const TuiCommand use = parseTuiCommand(QStringLiteral("use CONTROL_NETWORK"));
     ASSERT_EQ(use.arguments.size(), 1);
     EXPECT_EQ(use.arguments.first(), QStringLiteral("CONTROL_NETWORK"));
+    const TuiCommand port = parseTuiCommand(QStringLiteral("port COM42"));
+    ASSERT_EQ(port.arguments.size(), 1);
+    EXPECT_EQ(port.arguments.first(), QStringLiteral("COM42"));
     EXPECT_EQ(parseTuiCommand(QStringLiteral("prepare")).type, TuiCommandType::Prepare);
     EXPECT_EQ(parseTuiCommand(QStringLiteral("run")).type, TuiCommandType::Run);
     EXPECT_EQ(parseTuiCommand(QStringLiteral("pause")).type, TuiCommandType::Pause);
@@ -35,6 +39,7 @@ TEST(TuiShellTest, RejectsUnknownMalformedAndOutOfRangeCommands)
     EXPECT_EQ(parseTuiCommand(QStringLiteral("fire")).type, TuiCommandType::Invalid);
     EXPECT_FALSE(parseTuiCommand(QStringLiteral("fire")).error.isEmpty());
     EXPECT_EQ(parseTuiCommand(QStringLiteral("use")).type, TuiCommandType::Invalid);
+    EXPECT_EQ(parseTuiCommand(QStringLiteral("port")).type, TuiCommandType::Invalid);
     EXPECT_EQ(parseTuiCommand(QStringLiteral("wait 0")).type, TuiCommandType::Invalid);
     EXPECT_EQ(parseTuiCommand(QStringLiteral("load \"unterminated")).type,
               TuiCommandType::Invalid);
@@ -57,9 +62,18 @@ TEST(TuiShellTest, LoadsListsSelectsAndShowsConfigurationThroughTheController)
     EXPECT_TRUE(controls.lines.at(0).contains(QStringLiteral("qt.udp")));
     EXPECT_TRUE(controls.lines.at(1).contains(QStringLiteral("CONTROL_SERIAL")));
 
+    const TuiReply ports = shell.execute(QStringLiteral("ports"));
+    EXPECT_FALSE(ports.lines.isEmpty());
+
+    EXPECT_TRUE(shell.execute(QStringLiteral("port COM42"))
+                    .lines.first().startsWith(QStringLiteral("ok port")));
+    TuiReply status = shell.execute(QStringLiteral("status"));
+    ASSERT_EQ(status.lines.size(), 1);
+    EXPECT_TRUE(status.lines.first().contains(QStringLiteral("serial=COM42")));
+
     EXPECT_TRUE(shell.execute(QStringLiteral("use CONTROL_NETWORK"))
                     .lines.first().startsWith(QStringLiteral("ok use")));
-    const TuiReply status = shell.execute(QStringLiteral("status"));
+    status = shell.execute(QStringLiteral("status"));
     ASSERT_EQ(status.lines.size(), 1);
     EXPECT_TRUE(status.lines.first().contains(QStringLiteral("phase=configured")));
     EXPECT_TRUE(status.lines.first().contains(QStringLiteral("control=CONTROL_NETWORK")));
@@ -74,6 +88,26 @@ TEST(TuiShellTest, LoadsListsSelectsAndShowsConfigurationThroughTheController)
     EXPECT_EQ(quit.exitCode, 0);
     ASSERT_EQ(quit.lines.size(), 1);
     EXPECT_EQ(quit.lines.first(), QStringLiteral("ok quit"));
+}
+
+TEST(TuiShellTest, AppliesCommandLineControlAndSerialDefaultsWhenLoading)
+{
+    TestApplicationController controller;
+    TuiShell shell(&controller,
+                   QStringLiteral(HWTEST_APP_TEST_CONFIG),
+                   QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                   QStringLiteral("CONTROL_SERIAL"),
+                   QStringLiteral("COM43"));
+
+    const TuiReply loaded = shell.execute(QStringLiteral("load"));
+
+    ASSERT_EQ(loaded.lines.size(), 1);
+    EXPECT_EQ(loaded.lines.first(), QStringLiteral("ok load"));
+    const TuiReply status = shell.execute(QStringLiteral("status"));
+    ASSERT_EQ(status.lines.size(), 1);
+    EXPECT_TRUE(status.lines.first().contains(QStringLiteral("control=CONTROL_SERIAL")));
+    EXPECT_TRUE(status.lines.first().contains(QStringLiteral("serial=COM43")));
+    EXPECT_TRUE(shell.execute(QStringLiteral("quit")).quit);
 }
 
 } // namespace

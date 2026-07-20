@@ -76,8 +76,18 @@ int main(int argc, char* argv[])
         QStringList{QStringLiteral("H"), QStringLiteral("hal-config")},
         QStringLiteral("HAL deployment configuration JSON"),
         QStringLiteral("path"));
+    const QCommandLineOption controlOption(
+        QStringList{QStringLiteral("c"), QStringLiteral("control")},
+        QStringLiteral("Control ResourceId override"),
+        QStringLiteral("resource-id"));
+    const QCommandLineOption serialPortOption(
+        QStringList{QStringLiteral("p"), QStringLiteral("serial-port")},
+        QStringLiteral("Serial port override without changing the HAL JSON"),
+        QStringLiteral("port-name"));
     parser.addOption(testConfigOption);
     parser.addOption(halConfigOption);
+    parser.addOption(controlOption);
+    parser.addOption(serialPortOption);
     const QStringList arguments = application.arguments();
     if (arguments.contains(QStringLiteral("-?")) ||
         arguments.contains(QStringLiteral("-h")) ||
@@ -109,6 +119,18 @@ int main(int argc, char* argv[])
         controller.loadConfigurations(testConfigPath, halConfigPath);
     if (!action.ok) {
         return failAfterShutdown(&controller, QStringLiteral("configuration"), action);
+    }
+    if (parser.isSet(controlOption)) {
+        action = controller.selectControl(parser.value(controlOption));
+        if (!action.ok) {
+            return failAfterShutdown(&controller, QStringLiteral("control"), action);
+        }
+    }
+    if (parser.isSet(serialPortOption)) {
+        action = controller.selectSerialPort(parser.value(serialPortOption));
+        if (!action.ok) {
+            return failAfterShutdown(&controller, QStringLiteral("serial_port"), action);
+        }
     }
 
     action = controller.prepare();

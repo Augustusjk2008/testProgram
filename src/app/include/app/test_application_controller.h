@@ -20,11 +20,20 @@ struct ControlResource {
     QString providerId;
 };
 
+struct SerialPortInfo {
+    QString portName;
+    QString description;
+    QString manufacturer;
+    QString serialNumber;
+    QString systemLocation;
+};
+
 struct ApplicationSnapshot {
     QString phase = QStringLiteral("empty");
     QString testState = QStringLiteral("Uninitialized");
     QString controlResourceId;
     QString providerId;
+    QString serialPortName;
     QString taskId;
     QString stepId;
     QString testItemId;
@@ -51,7 +60,9 @@ public:
     ActionResult loadConfigurations(const QString& testConfigPath,
                                     const QString& halConfigPath);
     QVector<ControlResource> availableControls() const;
+    QVector<SerialPortInfo> availableSerialPorts() const;
     ActionResult selectControl(const QString& resourceId);
+    ActionResult selectSerialPort(const QString& portName);
     ActionResult prepare();
     ActionResult start();
     ActionResult pause();
@@ -72,3 +83,5 @@ private:
 } // namespace hwtest::app
 
 Q_DECLARE_METATYPE(hwtest::app::ApplicationSnapshot)
+Q_DECLARE_METATYPE(hwtest::app::SerialPortInfo)
+Q_DECLARE_METATYPE(QVector<hwtest::app::SerialPortInfo>)

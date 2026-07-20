@@ -12,7 +12,9 @@ enum class TuiCommandType {
     Help,
     Load,
     Controls,
+    Ports,
     Use,
+    Port,
     Prepare,
     Run,
     Pause,
@@ -43,7 +45,9 @@ class TuiShell {
 public:
     TuiShell(TestApplicationController* controller,
              QString defaultTestConfigPath,
-             QString defaultHalConfigPath);
+             QString defaultHalConfigPath,
+             QString defaultControlResource = {},
+             QString defaultSerialPort = {});
 
     TuiReply execute(const QString& line);
     static QStringList helpLines();
@@ -55,6 +59,8 @@ private:
     TestApplicationController* m_controller = nullptr;
     QString m_defaultTestConfigPath;
     QString m_defaultHalConfigPath;
+    QString m_defaultControlResource;
+    QString m_defaultSerialPort;
 };
 
 } // namespace hwtest::app

@@ -93,8 +93,9 @@ BIZ 编排 TestPlan / TestContext / executionConfig
 ## 6. 当前落地范围
 
 - `src/algorithm/` 已有 `hwtest_algorithm_mbddf`、协议目录加载、payload/物理帧编解码、流式 `HalControlTransport`、`SystemStatusAlgorithmExecutor` 和 `SYSTEM_STATUS` 测试配置。
-- `src/app/` 的 `hwtest_app_core` 提供 `TestApplicationController`；`hwtest_pc_runner` 复用它执行一次测试，`hwtest_tui` 复用它完成分步操作。TUI 的 `use <ResourceId>` 只修改内存中的 `control.resourceId`，PC 可在串口和 UDP 间选择，DUT 端无需切换模式。
+- `src/app/` 的 `hwtest_app_core` 提供 `TestApplicationController`；`hwtest_pc_runner` 复用它执行一次测试，`hwtest_tui` 复用它完成分步操作。TUI 的 `use <ResourceId>` 只修改内存中的 `control.resourceId`，`ports` 经应用 DTO 列出宿主串口，`port <port-name>` 只覆盖本次会话中的串口资源属性；PC 可在串口和 UDP 间选择，DUT 端无需切换模式。
 - 根 CMake 构建 HAL、日志、BIZ、算法、共享应用核心、runner 和 TUI，并查找同一 Qt 主版本的 Core、Network、SerialPort。
+- 根 `hwtest.ps1` 是 Windows 单命令入口，负责配置、构建、测试、启动 TUI/runner 和列出串口；它不复制测试流程或绕过 `hwtest_app_core`。
 - 当前测试目标、源码清单和统计口径以 `../testing/testing-specification.md` 为主定义，不以源级数量代替通过结果。
 - `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容是已批准的 MB_DDF 协议 CSV 基线。它仍是仓库外依赖，当前清单与可复现性限制见 `../contracts/device-communication-protocol.md`。
 
@@ -108,21 +109,20 @@ BIZ 编排 TestPlan / TestContext / executionConfig
 
 ## 8. 当前 TUI 操作
 
-从仓库根目录运行：
+从仓库根目录用一条命令配置、构建并启动：
 
 ```powershell
-$env:MB_DDF_PROTOCOL_CSV_DIR = "H:\Resources\RTLinux\Demos\MB_DDF_v2\docs\design\product_protocol_csv"
-.\build_vs\src\app\Debug\hwtest_tui.exe `
-  --test-config .\configs\mbddf_system_status.testcfg.json `
-  --hal-config .\configs\mbddf_pc_hal.json
+.\hwtest.ps1 tui
 ```
 
-当前闭环按以下命令分步执行：
+脚本默认从 `MB_DDF_PROTOCOL_CSV_DIR` 读取协议目录，未设置时使用当前已批准的 MB_DDF_v2 路径；也可通过 `-ProtocolCsvDir` 显式覆盖。当前板端基线只支持串口，建议先列出宿主端口，再分步选择：
 
 ```text
+ports
 load
 controls
-use CONTROL_NETWORK
+use CONTROL_SERIAL
+port COM7
 prepare
 run
 status                   # 可重复查看
@@ -132,6 +132,8 @@ disconnect
 quit
 ```
 
-`load` 只读取并校验配置，不打开硬件；`use` 只在断开状态切换 PC 端逻辑控制资源；`prepare` 才创建 HAL 会话、算法执行器和 BIZ 服务；`run` 当前只运行唯一启用的 `mbddf.system_status`。`pause`、`resume`、`stop [timeout-ms]` 也已接入 BIZ，成功停止后阶段为 `stopped`，可再次 `wait` 或 `run`；当前单项事务较短，暂停可能在到达检查点前已经结束。标准输入由独立线程读取，Qt 主事件循环持续处理 BIZ/HAL 的排队事件；交互模式在 `wait` 期间仍可接收 `status`/`stop`，管道模式则保持逐命令确认顺序。stdin/stdout 固定为 UTF-8，同一命令流可通过管道脚本执行。
+也可在启动时覆盖本次会话的端口：`.\hwtest.ps1 tui -Port COM7`；一次性运行使用 `.\hwtest.ps1 run -Port COM7`。端口覆盖不回写 HAL JSON；长期部署值仍由 `hardware.resources.<ResourceId>.properties.portName` 配置。`CONTROL_NETWORK`/`qt.udp` 保留用于现有本机模拟和后续板端网口扩展，但不能描述为已可与当前仅支持串口的 MB_DDF_v2 板端交互。
+
+`ports` 只枚举宿主串口，不打开设备；`load` 只读取并校验配置，不打开硬件；`use` 只在断开状态切换 PC 端逻辑控制资源；`port` 只在已加载且未连接时修改内存配置；`prepare` 才创建 HAL 会话、算法执行器和 BIZ 服务，并在 HAL 中尝试打开所选端口。`run` 当前只运行唯一启用的 `mbddf.system_status`。`pause`、`resume`、`stop [timeout-ms]` 也已接入 BIZ，成功停止后阶段为 `stopped`，可再次 `wait` 或 `run`；当前单项事务较短，暂停可能在到达检查点前已经结束。标准输入由独立线程读取，Qt 主事件循环持续处理 BIZ/HAL 的排队事件；交互模式在 `wait` 期间仍可接收 `status`/`stop`，管道模式则保持逐命令确认顺序。stdin/stdout 固定为 UTF-8，同一命令流可通过管道脚本执行。
 
 `quit` 和 EOF 都会执行有序收尾；收尾失败会锁存在 `shutdown_failed` 快照中，TUI 以非零码退出。但现有 BIZ/算法停止仍是协作式的，`shutdown()` 最终会等待 worker；它不是进程级硬截止，强制杀进程也不能作为物理 safe state 已完成的证据。真实硬件使用前必须另行补进程监护和隔离安全验收。

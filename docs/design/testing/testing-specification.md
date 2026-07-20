@@ -8,18 +8,18 @@
 
 ## 1. 当前清单与统计口径
 
-根 CMake 在 BUILD_TESTING 为真时加入 tests/；tests/CMakeLists.txt 当前加入 HAL、日志、BIZ、算法和应用五组。五个目标均用 gtest_discover_tests 在构建后发现 CTest 条目；应用组另直接注册 runner/TUI 的两个 `--help`、一个 TUI stdin 会话和一个 runner 异步错误进程测试。
+根 CMake 在 BUILD_TESTING 为真时加入 tests/；tests/CMakeLists.txt 当前加入 HAL、日志、BIZ、算法和应用五组。五个目标均用 gtest_discover_tests 在构建后发现 CTest 条目；应用组另直接注册 runner/TUI 的两个 `--help`、根脚本 `help`、一个 TUI stdin 会话和一个 runner 异步错误进程测试。
 
 | 目录 | 测试目标 | 测试源文件 | 源级 GoogleTest 定义 | 当前范围 |
 | --- | --- | ---: | ---: | --- |
-| tests/hal/ | hwtest_hal_tests | 9 | 30 | HAL 接口、资源、安全、Mock、Loader、Qt 控制 Provider |
+| tests/hal/ | hwtest_hal_tests | 9 | 31 | HAL 接口、资源、安全、Mock、Loader、宿主串口枚举、Qt 控制 Provider |
 | tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
 | tests/biz/ | hwtest_biz_tests | 6 | 35 | 配置、计划、调度、报告和架构边界 |
 | tests/algorithm/ | hwtest_algorithm_tests | 2 | 20 | MB_DDF CSV、流式控制传输和 SYSTEM_STATUS |
-| tests/app/ | hwtest_app_tests | 2 | 12 | 共享控制器、TUI 命令、线程/代次隔离、停止/错误终态及经 HAL/Qt UDP 的分步闭环 |
-| 合计 | 5 个目标 | 22 | 104 | 当前源级测试清单 |
+| tests/app/ | hwtest_app_tests | 2 | 15 | 共享控制器、控制口/串口选择、TUI 命令、线程/代次隔离、停止/错误终态及经 HAL/Qt UDP 的分步闭环 |
+| 合计 | 5 个目标 | 22 | 108 | 当前源级测试清单 |
 
-104 是当前测试源码中的 GoogleTest 定义数。完整构建后的预期 CTest 清单为 108 条：104 条动态发现的 GoogleTest 加 4 条应用入口/脚本进程测试。CTest 条数必须先完整构建对应配置，再用 ctest -N 确认；只有实际执行 ctest 并报告零失败，才能表述为通过。
+108 是当前测试源码中的 GoogleTest 定义数。完整构建后的预期 CTest 清单为 113 条：108 条动态发现的 GoogleTest 加 5 条应用入口/脚本进程测试。CTest 条数必须先完整构建对应配置，再用 ctest -N 确认；只有实际执行 ctest 并报告零失败，才能表述为通过。
 
 测试源文件使用 *_test.cpp 命名。两个 HAL DLL fixture 仅服务 AdapterLoaderTest，不计入 22 个测试源文件。
 
@@ -27,11 +27,11 @@
 
 | 目标 | 当前已覆盖的行为 | 证据边界 |
 | --- | --- | --- |
-| HAL | 错误映射、资源映射、安全校验、会话、Mock AD/DA、DI/DO、串口 echo、CANFD loopback、AdapterLoader fixture、控制资源路由、Qt UDP 回环和 timeout | Qt UDP 仅是本机 Provider 证据；没有真实串口、真实网口或厂家 SDK 证据 |
+| HAL | 错误映射、资源映射、安全校验、会话、Mock AD/DA、DI/DO、宿主串口枚举、串口 echo、CANFD loopback、AdapterLoader fixture、控制资源路由、Qt UDP 回环和 timeout | 串口枚举不打开设备；Qt UDP 仅是本机 Provider 证据；没有真实串口、真实网口或厂家 SDK 证据 |
 | 日志 | LogService、JsonLineFileSink、HalLogEvent 到 LogEvent 桥接 | 不覆盖 UI 或真实设备日志链 |
 | BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象 |
 | 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器及 Qt UDP 成功/超时/坏 CRC 路径 | 当前只实现 mbddf.system_status；本机 UDP 模拟目标不等同于真实板端通讯 |
-| 应用/TUI | 配置门禁、控制资源选择、线程亲和、运行代次隔离、等待中收尾、排队状态/进度/结果投影、异步准备失败、`stop -> wait` 终态、runner/TUI 帮助入口、stdin 脚本和 runner 错误 JSON，以及经 BIZ/算法/HAL/Qt UDP 到协议模拟目标的分步成功链 | 模拟目标按响应 CSV 生成与请求不同且带非零遥测值的响应；仍不证明 Qt GUI、Web UI、真实串口、真实网口或真实 DUT |
+| 应用/TUI | 配置门禁、控制资源与会话串口选择、线程亲和、运行代次隔离、等待中收尾、排队状态/进度/结果投影、异步准备失败、`stop -> wait` 终态、runner/TUI/根脚本帮助入口、stdin 脚本和 runner 错误 JSON，以及经 BIZ/算法/HAL/Qt UDP 到协议模拟目标的分步成功链 | 串口选择测试只证明配置覆盖，不证明端口可打开；模拟目标仍不证明 Qt GUI、Web UI、真实串口、真实网口或真实 DUT |
 
 下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
 
@@ -82,7 +82,14 @@ SYSTEM_STATUS 当前同时有 Simulator golden 链和“BIZ -> 算法 -> HalCont
 
 ## 6. 构建与验证
 
-以下是唯一的通用构建和 CTest 命令。完整构建是动态发现五个测试目标的前提。
+根目录脚本是 Windows 下的推荐入口；它检查协议资产，使用 Visual Studio 2022 x64，并在 `test` 动作中启用完整测试。首次测试会把固定版本和哈希校验后的 GoogleTest 源码放入已忽略的 `tmp/deps/` 缓存：
+
+    .\hwtest.ps1 build
+    .\hwtest.ps1 test
+    .\hwtest.ps1 test -Configuration Release
+    .\hwtest.ps1 test -TestRegex "^(HalTypesTest|TuiShellTest)\."
+
+以下是脚本对应的底层通用命令。完整构建是动态发现五个测试目标的前提。
 
     cmake -S . -B build_vs -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
     cmake --build build_vs --config Debug --parallel

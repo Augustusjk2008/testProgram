@@ -78,8 +78,18 @@ int main(int argc, char* argv[])
         QStringLiteral("Default HAL deployment configuration JSON used by 'load'"),
         QStringLiteral("path"),
         QStringLiteral("configs/mbddf_pc_hal.json"));
+    const QCommandLineOption controlOption(
+        QStringList{QStringLiteral("c"), QStringLiteral("control")},
+        QStringLiteral("Control ResourceId applied after 'load'"),
+        QStringLiteral("resource-id"));
+    const QCommandLineOption serialPortOption(
+        QStringList{QStringLiteral("p"), QStringLiteral("serial-port")},
+        QStringLiteral("Serial port applied after 'load' without changing the HAL JSON"),
+        QStringLiteral("port-name"));
     parser.addOption(testConfigOption);
     parser.addOption(halConfigOption);
+    parser.addOption(controlOption);
+    parser.addOption(serialPortOption);
     const QStringList arguments = application.arguments();
     if (arguments.contains(QStringLiteral("-?")) ||
         arguments.contains(QStringLiteral("-h")) ||
@@ -106,7 +116,11 @@ int main(int argc, char* argv[])
 #endif
 
     hwtest::app::TestApplicationController controller;
-    hwtest::app::TuiShell shell(&controller, testConfigPath, halConfigPath);
+    hwtest::app::TuiShell shell(&controller,
+                                testConfigPath,
+                                halConfigPath,
+                                parser.value(controlOption),
+                                parser.value(serialPortOption));
     InputGate gate;
     int processExitCode = 0;
 

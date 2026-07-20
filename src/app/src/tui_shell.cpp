@@ -86,10 +86,17 @@ TuiCommand parseTuiCommand(const QString& line)
         }
     } else if (name == QStringLiteral("controls")) {
         command.type = TuiCommandType::Controls;
+    } else if (name == QStringLiteral("ports")) {
+        command.type = TuiCommandType::Ports;
     } else if (name == QStringLiteral("use")) {
         command.type = TuiCommandType::Use;
         if (words.size() != 1) {
             return invalid(QStringLiteral("Usage: use <ResourceId>"));
+        }
+    } else if (name == QStringLiteral("port")) {
+        command.type = TuiCommandType::Port;
+        if (words.size() != 1) {
+            return invalid(QStringLiteral("Usage: port <port-name>"));
         }
     } else if (name == QStringLiteral("prepare")) {
         command.type = TuiCommandType::Prepare;
@@ -123,6 +130,7 @@ TuiCommand parseTuiCommand(const QString& line)
 
     const bool noArgumentsExpected = command.type == TuiCommandType::Help ||
         command.type == TuiCommandType::Controls ||
+        command.type == TuiCommandType::Ports ||
         command.type == TuiCommandType::Prepare ||
         command.type == TuiCommandType::Run ||
         command.type == TuiCommandType::Pause ||
@@ -139,10 +147,14 @@ TuiCommand parseTuiCommand(const QString& line)
 
 TuiShell::TuiShell(TestApplicationController* controller,
                    QString defaultTestConfigPath,
-                   QString defaultHalConfigPath)
+                   QString defaultHalConfigPath,
+                   QString defaultControlResource,
+                   QString defaultSerialPort)
     : m_controller(controller)
     , m_defaultTestConfigPath(std::move(defaultTestConfigPath))
     , m_defaultHalConfigPath(std::move(defaultHalConfigPath))
+    , m_defaultControlResource(std::move(defaultControlResource))
+    , m_defaultSerialPort(std::move(defaultSerialPort))
 {
 }
 
@@ -170,7 +182,13 @@ TuiReply TuiShell::execute(const QString& line)
         if (testPath.isEmpty() || halPath.isEmpty()) {
             return {{QStringLiteral("error load Test and HAL configuration paths are required")}, false};
         }
-        const ActionResult result = m_controller->loadConfigurations(testPath, halPath);
+        ActionResult result = m_controller->loadConfigurations(testPath, halPath);
+        if (result.ok && !m_defaultControlResource.trimmed().isEmpty()) {
+            result = m_controller->selectControl(m_defaultControlResource);
+        }
+        if (result.ok && !m_defaultSerialPort.trimmed().isEmpty()) {
+            result = m_controller->selectSerialPort(m_defaultSerialPort);
+        }
         if (result.ok) {
             m_defaultTestConfigPath = testPath;
             m_defaultHalConfigPath = halPath;
@@ -189,9 +207,27 @@ TuiReply TuiShell::execute(const QString& line)
         }
         return {lines, false};
     }
+    case TuiCommandType::Ports: {
+        QStringList lines;
+        for (const SerialPortInfo& port : m_controller->availableSerialPorts()) {
+            lines.push_back(QStringLiteral("port=%1 description=%2 manufacturer=%3 serial=%4 location=%5")
+                                .arg(singleLine(port.portName),
+                                     singleLine(port.description),
+                                     singleLine(port.manufacturer),
+                                     singleLine(port.serialNumber),
+                                     singleLine(port.systemLocation)));
+        }
+        if (lines.isEmpty()) {
+            lines.push_back(QStringLiteral("ports=none"));
+        }
+        return {lines, false};
+    }
     case TuiCommandType::Use:
         return actionReply(QStringLiteral("use"),
                            m_controller->selectControl(command.arguments.first()));
+    case TuiCommandType::Port:
+        return actionReply(QStringLiteral("port"),
+                           m_controller->selectSerialPort(command.arguments.first()));
     case TuiCommandType::Prepare:
         return actionReply(QStringLiteral("prepare"), m_controller->prepare());
     case TuiCommandType::Run:
@@ -253,7 +289,9 @@ QStringList TuiShell::helpLines()
     return {
         QStringLiteral("load [test-config hal-config]  validate configuration files"),
         QStringLiteral("controls                       list configured control resources"),
+        QStringLiteral("ports                          list Windows serial ports"),
         QStringLiteral("use <ResourceId>               select the PC control resource"),
+        QStringLiteral("port <port-name>               select the serial port for this session"),
         QStringLiteral("prepare                        initialize HAL, algorithm and BIZ"),
         QStringLiteral("run                            start SYSTEM_STATUS"),
         QStringLiteral("pause | resume                 control an active test"),
@@ -278,16 +316,17 @@ TuiReply TuiShell::actionReply(const QString& action, const ActionResult& result
 
 QString TuiShell::statusLine(const ApplicationSnapshot& snapshot)
 {
-    return QStringLiteral("phase=%1 state=%2 control=%3 provider=%4 progress=%5 task=%6 step=%7 error=%8 message=%9")
+    const QString status = QStringLiteral("phase=%1 state=%2 control=%3 provider=%4 serial=%5 progress=%6 task=%7 step=%8 error=%9")
         .arg(singleLine(snapshot.phase),
              singleLine(snapshot.testState),
              singleLine(snapshot.controlResourceId),
              singleLine(snapshot.providerId),
+             singleLine(snapshot.serialPortName),
              QString::number(snapshot.progress),
              singleLine(snapshot.taskId),
              singleLine(snapshot.progressStep),
-             singleLine(snapshot.errorCode),
-             singleLine(snapshot.message));
+             singleLine(snapshot.errorCode));
+    return status + QStringLiteral(" message=%1").arg(singleLine(snapshot.message));
 }
 
 } // namespace hwtest::app
