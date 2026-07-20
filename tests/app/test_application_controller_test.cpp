@@ -1,21 +1,17 @@
 #include <app/test_application_controller.h>
 #include <app/tui_shell.h>
 
-#include <algorithm/mbddf_protocol.h>
-#include <algorithm/mbddf_transport.h>
+#include "support/mbddf_udp_test_peer.h"
 
 #include <gtest/gtest.h>
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QEventLoop>
-#include <QFile>
 #include <QFileInfo>
-#include <QHostAddress>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QTemporaryDir>
 #include <QThread>
-#include <QUdpSocket>
+#include <QTimer>
 
 #include <thread>
 
@@ -57,78 +53,6 @@ QCoreApplication& ensureQtApplication()
     static char* argv[] = {argument, nullptr};
     static QCoreApplication application(argc, argv);
     return application;
-}
-
-QString udpHalConfig(QTemporaryDir* directory, quint16 peerPort)
-{
-    QFile source(QStringLiteral(HWTEST_APP_HAL_CONFIG));
-    EXPECT_TRUE(source.open(QIODevice::ReadOnly));
-    QJsonDocument document = QJsonDocument::fromJson(source.readAll());
-    EXPECT_TRUE(document.isObject());
-    QVariantMap root = document.object().toVariantMap();
-    root.remove(QStringLiteral("logging"));
-
-    QVariantMap control = root.value(QStringLiteral("control")).toMap();
-    control.insert(QStringLiteral("resourceId"), QStringLiteral("CONTROL_NETWORK"));
-    root.insert(QStringLiteral("control"), control);
-
-    QVariantMap hardware = root.value(QStringLiteral("hardware")).toMap();
-    QVariantMap resources = hardware.value(QStringLiteral("resources")).toMap();
-    QVariantMap network = resources.value(QStringLiteral("CONTROL_NETWORK")).toMap();
-    QVariantMap properties = network.value(QStringLiteral("properties")).toMap();
-    properties.insert(QStringLiteral("localAddress"), QStringLiteral("127.0.0.1"));
-    properties.insert(QStringLiteral("localPort"), 0);
-    properties.insert(QStringLiteral("remoteAddress"), QStringLiteral("127.0.0.1"));
-    properties.insert(QStringLiteral("remotePort"), static_cast<int>(peerPort));
-    network.insert(QStringLiteral("properties"), properties);
-    resources.insert(QStringLiteral("CONTROL_NETWORK"), network);
-    hardware.insert(QStringLiteral("resources"), resources);
-    root.insert(QStringLiteral("hardware"), hardware);
-
-    const QString path = directory->filePath(QStringLiteral("udp-hal.json"));
-    QFile output(path);
-    EXPECT_TRUE(output.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    EXPECT_GT(output.write(QJsonDocument(QJsonObject::fromVariantMap(root)).toJson()), 0);
-    output.close();
-    return path;
-}
-
-bool makeSystemStatusResponse(const QByteArray& request,
-                              QByteArray* response,
-                              QString* error)
-{
-    hwtest::algorithm::mbddf::ProtocolCatalog catalog;
-    if (!catalog.loadFromDirectory(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR"), error)) {
-        return false;
-    }
-
-    hwtest::algorithm::mbddf::SystemStatusSimulator simulator(&catalog);
-    simulator.setResponseValues({
-        {QStringLiteral("status"), 0},
-        {QStringLiteral("err_code"), 0},
-        {QStringLiteral("cpu_usage"), 12.5},
-        {QStringLiteral("mem_usage"), 25.0},
-        {QStringLiteral("power_on_sec"), 99u},
-    });
-    if (!simulator.open(error)) {
-        return false;
-    }
-    const hwtest::algorithm::mbddf::TransportResult result = simulator.transact(request, 1000);
-    simulator.close();
-    if (!result.ok) {
-        if (error != nullptr) {
-            *error = result.error;
-        }
-        return false;
-    }
-    *response = result.frame;
-    return true;
-}
-
-void expectSingleLine(const TuiReply& reply, const QString& expected)
-{
-    ASSERT_EQ(reply.lines.size(), 1);
-    EXPECT_EQ(reply.lines.first(), expected);
 }
 
 TEST(TestApplicationControllerTest, RejectsPreparationBeforeConfigurationsAreLoaded)
@@ -244,16 +168,23 @@ TEST(TestApplicationControllerTest, RunsSystemStatusThroughTheSelectedUdpControl
         GTEST_SKIP() << "MB_DDF protocol assets are not available";
     }
 
-    QUdpSocket peer;
-    ASSERT_TRUE(peer.bind(QHostAddress(QHostAddress::LocalHost), 0));
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
 
     TestApplicationController controller;
     ASSERT_EQ(controller.thread(), QThread::currentThread());
     ASSERT_EQ(QCoreApplication::instance()->thread(), QThread::currentThread());
     ASSERT_TRUE(controller.loadConfigurations(QStringLiteral(HWTEST_APP_TEST_CONFIG),
-                                                udpHalConfig(&directory, peer.localPort())).ok);
+                                                halConfigPath).ok);
     ASSERT_TRUE(controller.prepare().ok);
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
     EXPECT_EQ(controller.snapshot().testState, QStringLiteral("Idle"));
@@ -263,19 +194,8 @@ TEST(TestApplicationControllerTest, RunsSystemStatusThroughTheSelectedUdpControl
     ASSERT_TRUE(started.ok) << started.message.toStdString();
     EXPECT_FALSE(controller.snapshot().taskId.isEmpty());
 
-    ASSERT_TRUE(peer.waitForReadyRead(3000));
-    const qint64 size = peer.pendingDatagramSize();
-    ASSERT_GT(size, 0);
-    QByteArray frame(static_cast<int>(size), Qt::Uninitialized);
-    QHostAddress sender;
-    quint16 senderPort = 0;
-    ASSERT_EQ(peer.readDatagram(frame.data(), frame.size(), &sender, &senderPort), size);
-    QByteArray response;
-    QString responseError;
-    ASSERT_TRUE(makeSystemStatusResponse(frame, &response, &responseError))
-        << responseError.toStdString();
-    ASSERT_NE(response, frame);
-    ASSERT_EQ(peer.writeDatagram(response, sender, senderPort), response.size());
+    ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(&peerError)) << peerError.toStdString();
 
     const ActionResult waited = controller.waitForTerminal(3000);
     ASSERT_TRUE(waited.ok) << waited.message.toStdString()
@@ -307,99 +227,27 @@ TEST(TestApplicationControllerTest, RunsSystemStatusThroughTheSelectedUdpControl
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("configured"));
 }
 
-TEST(TuiShellTest, RunsTheStagedSystemStatusWorkflowThroughUdp)
-{
-    ensureQtApplication();
-    const QString assets = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
-    if (!QFileInfo(assets).isDir()) {
-        GTEST_SKIP() << "MB_DDF protocol assets are not available";
-    }
-
-    QUdpSocket peer;
-    ASSERT_TRUE(peer.bind(QHostAddress(QHostAddress::LocalHost), 0));
-    QTemporaryDir directory;
-    ASSERT_TRUE(directory.isValid());
-
-    TestApplicationController controller;
-    TuiShell shell(&controller,
-                   QStringLiteral(HWTEST_APP_TEST_CONFIG),
-                   udpHalConfig(&directory, peer.localPort()));
-
-    expectSingleLine(shell.execute(QStringLiteral("load")), QStringLiteral("ok load"));
-    expectSingleLine(shell.execute(QStringLiteral("prepare")), QStringLiteral("ok prepare"));
-    expectSingleLine(shell.execute(QStringLiteral("run")), QStringLiteral("ok run"));
-
-    ASSERT_TRUE(peer.waitForReadyRead(3000));
-    const qint64 size = peer.pendingDatagramSize();
-    ASSERT_GT(size, 0);
-    QByteArray frame(static_cast<int>(size), Qt::Uninitialized);
-    QHostAddress sender;
-    quint16 senderPort = 0;
-    ASSERT_EQ(peer.readDatagram(frame.data(), frame.size(), &sender, &senderPort), size);
-    QByteArray response;
-    QString responseError;
-    ASSERT_TRUE(makeSystemStatusResponse(frame, &response, &responseError))
-        << responseError.toStdString();
-    ASSERT_NE(response, frame);
-    ASSERT_EQ(peer.writeDatagram(response, sender, senderPort), response.size());
-
-    expectSingleLine(shell.execute(QStringLiteral("wait 3000")), QStringLiteral("ok wait"));
-    const TuiReply result = shell.execute(QStringLiteral("result"));
-    ASSERT_EQ(result.lines.size(), 3);
-    EXPECT_TRUE(result.lines.at(0).contains(QStringLiteral("step=SYSTEM_STATUS")));
-    EXPECT_TRUE(result.lines.at(0).contains(QStringLiteral("item=system_status")));
-    EXPECT_TRUE(result.lines.at(1).contains(QStringLiteral("verdict=Pass")));
-    EXPECT_TRUE(result.lines.at(2).startsWith(QStringLiteral("rawData={")));
-    expectSingleLine(shell.execute(QStringLiteral("disconnect")),
-                     QStringLiteral("ok disconnect"));
-}
-
-TEST(TuiShellTest, StopThenWaitConvergesToStoppedInsteadOfTimingOut)
-{
-    ensureQtApplication();
-    const QString assets = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
-    if (!QFileInfo(assets).isDir()) {
-        GTEST_SKIP() << "MB_DDF protocol assets are not available";
-    }
-
-    QUdpSocket peer;
-    ASSERT_TRUE(peer.bind(QHostAddress(QHostAddress::LocalHost), 0));
-    QTemporaryDir directory;
-    ASSERT_TRUE(directory.isValid());
-
-    TestApplicationController controller;
-    TuiShell shell(&controller,
-                   QStringLiteral(HWTEST_APP_TEST_CONFIG),
-                   udpHalConfig(&directory, peer.localPort()));
-    expectSingleLine(shell.execute(QStringLiteral("load")), QStringLiteral("ok load"));
-    expectSingleLine(shell.execute(QStringLiteral("prepare")), QStringLiteral("ok prepare"));
-    expectSingleLine(shell.execute(QStringLiteral("run")), QStringLiteral("ok run"));
-    ASSERT_TRUE(peer.waitForReadyRead(3000));
-
-    expectSingleLine(shell.execute(QStringLiteral("stop 3000")), QStringLiteral("ok stop"));
-    expectSingleLine(shell.execute(QStringLiteral("wait 3000")), QStringLiteral("ok wait"));
-    const TuiReply status = shell.execute(QStringLiteral("status"));
-    ASSERT_EQ(status.lines.size(), 1);
-    EXPECT_TRUE(status.lines.first().contains(QStringLiteral("phase=stopped")));
-    EXPECT_TRUE(status.lines.first().contains(QStringLiteral("state=Idle")));
-    expectSingleLine(shell.execute(QStringLiteral("disconnect")),
-                     QStringLiteral("ok disconnect"));
-}
-
 TEST(TestApplicationControllerTest, AsyncPreparationFailureIsReturnedByWaitWithoutFabricatingAResult)
 {
     ensureQtApplication();
     ScopedEnvironmentVariable invalidAssets(
         "MB_DDF_PROTOCOL_CSV_DIR",
         QByteArray("H:/definitely-missing-mbddf-assets"));
-    QUdpSocket peer;
-    ASSERT_TRUE(peer.bind(QHostAddress(QHostAddress::LocalHost), 0));
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
 
     TestApplicationController controller;
     ASSERT_TRUE(controller.loadConfigurations(QStringLiteral(HWTEST_APP_TEST_CONFIG),
-                                                udpHalConfig(&directory, peer.localPort())).ok);
+                                                halConfigPath).ok);
     ASSERT_TRUE(controller.prepare().ok);
     ASSERT_TRUE(controller.start().ok);
 
@@ -430,14 +278,21 @@ TEST(TestApplicationControllerTest, ShutdownDuringWaitInterruptsSafelyAndIgnores
         GTEST_SKIP() << "MB_DDF protocol assets are not available";
     }
 
-    QUdpSocket peer;
-    ASSERT_TRUE(peer.bind(QHostAddress(QHostAddress::LocalHost), 0));
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
 
     TestApplicationController controller;
     ASSERT_TRUE(controller.loadConfigurations(QStringLiteral(HWTEST_APP_TEST_CONFIG),
-                                                udpHalConfig(&directory, peer.localPort())).ok);
+                                                halConfigPath).ok);
     ASSERT_TRUE(controller.prepare().ok);
 
     bool shutdownTriggered = false;
@@ -462,6 +317,78 @@ TEST(TestApplicationControllerTest, ShutdownDuringWaitInterruptsSafelyAndIgnores
     QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("configured"));
     EXPECT_EQ(controller.snapshot().testState, QStringLiteral("Uninitialized"));
+}
+
+TEST(TestApplicationControllerTest, AsyncStopGuardsLifecycleAndCompletesOnAffinityThread)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(QStringLiteral(HWTEST_APP_TEST_CONFIG),
+                                                halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    ASSERT_TRUE(controller.start().ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    bool completed = false;
+    ActionResult completion;
+    QThread* completionThread = nullptr;
+    QObject::connect(&controller,
+                     &TestApplicationController::stopCompleted,
+                     &controller,
+                     [&](const ActionResult& result) {
+                         completed = true;
+                         completion = result;
+                         completionThread = QThread::currentThread();
+                         loop.quit();
+                     });
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+
+    QElapsedTimer callTimer;
+    callTimer.start();
+    const ActionResult requested = controller.stopAsync(5000);
+    EXPECT_LT(callTimer.elapsed(), 250);
+    ASSERT_TRUE(requested.ok) << requested.message.toStdString();
+    const ActionResult duplicate = controller.stopAsync(5000);
+    EXPECT_FALSE(duplicate.ok);
+    EXPECT_EQ(duplicate.code, QStringLiteral("stop_in_progress"));
+    const ActionResult pauseWhileStopping = controller.pause();
+    EXPECT_FALSE(pauseWhileStopping.ok);
+    EXPECT_EQ(pauseWhileStopping.code, QStringLiteral("stop_in_progress"));
+    const ActionResult duplicateSync = controller.stop(5000);
+    EXPECT_FALSE(duplicateSync.ok);
+    EXPECT_EQ(duplicateSync.code, QStringLiteral("stop_in_progress"));
+    const ActionResult prematureShutdown = controller.shutdown();
+    EXPECT_FALSE(prematureShutdown.ok);
+    EXPECT_EQ(prematureShutdown.code, QStringLiteral("stop_in_progress"));
+
+    timeout.start(5000);
+    loop.exec();
+    ASSERT_TRUE(completed);
+    EXPECT_TRUE(completion.ok) << completion.message.toStdString();
+    EXPECT_EQ(completionThread, controller.thread());
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("stopped"));
+    EXPECT_FALSE(controller.snapshot().hasResult);
+    EXPECT_TRUE(controller.snapshot().errorCode.isEmpty());
+    EXPECT_TRUE(controller.shutdown().ok);
 }
 
 } // namespace

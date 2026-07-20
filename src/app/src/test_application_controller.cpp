@@ -26,6 +26,8 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <exception>
+#include <thread>
 
 namespace hwtest::app {
 
@@ -132,14 +134,18 @@ public:
     hwtest::logging::LogService logService;
     std::unique_ptr<hwtest::logging::JsonLineFileSink> fileSink;
     ActionResult latchedShutdownFailure;
+    QString suppressedResultTaskId;
     quint64 generation = 0;
     bool waitInProgress = false;
+    bool asyncStopInProgress = false;
+    std::thread asyncStopThread;
 };
 
 TestApplicationController::TestApplicationController(QObject* parent)
     : QObject(parent)
     , m_impl(std::make_unique<Impl>())
 {
+    qRegisterMetaType<ActionResult>();
     qRegisterMetaType<ApplicationSnapshot>();
     qRegisterMetaType<SerialPortInfo>();
     qRegisterMetaType<QVector<SerialPortInfo>>();
@@ -148,6 +154,10 @@ TestApplicationController::TestApplicationController(QObject* parent)
 TestApplicationController::~TestApplicationController()
 {
     QObject::disconnect(this, nullptr, nullptr, nullptr);
+    if (m_impl->asyncStopThread.joinable()) {
+        m_impl->asyncStopThread.join();
+    }
+    m_impl->asyncStopInProgress = false;
     shutdown();
 }
 
@@ -231,6 +241,7 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     m_impl->controls = controls;
     m_impl->runTimeoutMs = timeoutMs;
     m_impl->snapshot = {};
+    m_impl->suppressedResultTaskId.clear();
     m_impl->snapshot.phase = QStringLiteral("configured");
     m_impl->snapshot.controlResourceId = selected->resourceId;
     m_impl->snapshot.providerId = selected->providerId;
@@ -493,7 +504,8 @@ ActionResult TestApplicationController::prepare()
                      this,
                      [this, generation](const hwtest::biz::TaskId& taskId,
                                         const hwtest::biz::TestResult& result) {
-                         if (generation != m_impl->generation) {
+                         if (generation != m_impl->generation ||
+                             taskId == m_impl->suppressedResultTaskId) {
                              return;
                          }
                          m_impl->snapshot.taskId = taskId;
@@ -515,7 +527,8 @@ ActionResult TestApplicationController::prepare()
                                         const hwtest::biz::TestItemId&,
                                         hwtest::biz::ErrorCode code,
                                         const QString& description) {
-                         if (generation != m_impl->generation) {
+                         if (generation != m_impl->generation ||
+                             taskId == m_impl->suppressedResultTaskId) {
                              return;
                          }
                          m_impl->snapshot.taskId = taskId;
@@ -568,6 +581,7 @@ ActionResult TestApplicationController::start()
     m_impl->snapshot.message.clear();
     m_impl->snapshot.attempts = 0;
     m_impl->snapshot.rawData.clear();
+    m_impl->suppressedResultTaskId.clear();
     const auto started = m_impl->runner->startTest();
     if (!started.ok()) {
         return bizFailure(started.status, QStringLiteral("Unable to start test"));
@@ -584,6 +598,10 @@ ActionResult TestApplicationController::pause()
     if (!onAffinityThread(this)) {
         return affinityFailure();
     }
+    if (m_impl->asyncStopInProgress) {
+        return failure(QStringLiteral("stop_in_progress"),
+                       QStringLiteral("An asynchronous stop is already active"));
+    }
     if (!m_impl->runner) {
         return failure(QStringLiteral("invalid_state"), QStringLiteral("Application is not prepared"));
     }
@@ -595,6 +613,10 @@ ActionResult TestApplicationController::resume()
 {
     if (!onAffinityThread(this)) {
         return affinityFailure();
+    }
+    if (m_impl->asyncStopInProgress) {
+        return failure(QStringLiteral("stop_in_progress"),
+                       QStringLiteral("An asynchronous stop is already active"));
     }
     if (!m_impl->runner) {
         return failure(QStringLiteral("invalid_state"), QStringLiteral("Application is not prepared"));
@@ -608,11 +630,84 @@ ActionResult TestApplicationController::stop(int timeoutMs)
     if (!onAffinityThread(this)) {
         return affinityFailure();
     }
+    if (m_impl->asyncStopInProgress) {
+        return failure(QStringLiteral("stop_in_progress"),
+                       QStringLiteral("An asynchronous stop is already active"));
+    }
     if (!m_impl->runner) {
         return failure(QStringLiteral("invalid_state"), QStringLiteral("Application is not prepared"));
     }
+    const QString stoppedTaskId = m_impl->snapshot.taskId;
+    m_impl->suppressedResultTaskId = stoppedTaskId;
     const hwtest::biz::Status status = m_impl->runner->stopTest(timeoutMs);
+    if (!status.ok() && m_impl->suppressedResultTaskId == stoppedTaskId) {
+        m_impl->suppressedResultTaskId.clear();
+    }
     return status.ok() ? ActionResult{} : bizFailure(status, QStringLiteral("Unable to stop test"));
+}
+
+ActionResult TestApplicationController::stopAsync(int timeoutMs)
+{
+    if (!onAffinityThread(this)) {
+        return affinityFailure();
+    }
+    if (timeoutMs < 0) {
+        return failure(QStringLiteral("invalid_timeout"),
+                       QStringLiteral("Stop timeout must not be negative"));
+    }
+    if (!m_impl->runner ||
+        (m_impl->snapshot.phase != QStringLiteral("running") &&
+         m_impl->snapshot.phase != QStringLiteral("paused"))) {
+        return failure(QStringLiteral("invalid_state"),
+                       QStringLiteral("An active test is required for asynchronous stop"));
+    }
+    if (m_impl->asyncStopInProgress) {
+        return failure(QStringLiteral("stop_in_progress"),
+                       QStringLiteral("An asynchronous stop is already active"));
+    }
+    if (m_impl->asyncStopThread.joinable()) {
+        m_impl->asyncStopThread.join();
+    }
+
+    hwtest::biz::ITestRunService* const runner = m_impl->runner.get();
+    const quint64 generation = m_impl->generation;
+    const QString stoppedTaskId = m_impl->snapshot.taskId;
+    m_impl->suppressedResultTaskId = stoppedTaskId;
+    m_impl->asyncStopInProgress = true;
+    try {
+        m_impl->asyncStopThread = std::thread(
+            [this, runner, timeoutMs, generation, stoppedTaskId] {
+                const hwtest::biz::Status status = runner->stopTest(timeoutMs);
+                const ActionResult result = status.ok()
+                    ? ActionResult{}
+                    : bizFailure(status, QStringLiteral("Unable to stop test"));
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, generation, result, stoppedTaskId] {
+                        if (m_impl->asyncStopThread.joinable()) {
+                            m_impl->asyncStopThread.join();
+                        }
+                        m_impl->asyncStopInProgress = false;
+                        if (generation == m_impl->generation) {
+                            if (!result.ok &&
+                                m_impl->suppressedResultTaskId == stoppedTaskId) {
+                                m_impl->suppressedResultTaskId.clear();
+                            }
+                            emit stopCompleted(result);
+                        }
+                    },
+                    Qt::QueuedConnection);
+            });
+    } catch (const std::exception& exception) {
+        m_impl->asyncStopInProgress = false;
+        if (m_impl->suppressedResultTaskId == stoppedTaskId) {
+            m_impl->suppressedResultTaskId.clear();
+        }
+        return failure(QStringLiteral("stop_thread"),
+                       QStringLiteral("Unable to start asynchronous stop: %1")
+                           .arg(QString::fromLocal8Bit(exception.what())));
+    }
+    return {};
 }
 
 ActionResult TestApplicationController::waitForTerminal(int timeoutMs)
@@ -703,11 +798,16 @@ ActionResult TestApplicationController::shutdown()
     if (!onAffinityThread(this)) {
         return affinityFailure();
     }
+    if (m_impl->asyncStopInProgress) {
+        return failure(QStringLiteral("stop_in_progress"),
+                       QStringLiteral("Cannot shut down while an asynchronous stop is active"));
+    }
     if (!m_impl->latchedShutdownFailure.ok && !m_impl->runner && !m_impl->hal &&
         !m_impl->executor) {
         return m_impl->latchedShutdownFailure;
     }
     ++m_impl->generation;
+    m_impl->suppressedResultTaskId.clear();
     ActionResult firstFailure;
     const bool configured = !m_impl->testConfigPath.isEmpty() && !m_impl->halConfigPath.isEmpty();
     const QString selectedResource = m_impl->snapshot.controlResourceId;

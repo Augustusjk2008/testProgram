@@ -1,8 +1,11 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('help', 'configure', 'build', 'test', 'tui', 'run', 'ports', 'clean')]
+    [ValidateSet('help', 'configure', 'build', 'test', 'start', 'tui', 'gui', 'run', 'ports', 'clean')]
     [string]$Action = 'help',
+
+    [ValidateSet('tui', 'gui')]
+    [string]$Ui = 'tui',
 
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
@@ -18,6 +21,12 @@ param(
     [switch]$SkipBuild
 )
 
+$actionWasSpecified = $PSBoundParameters.ContainsKey('Action')
+$uiWasSpecified = $PSBoundParameters.ContainsKey('Ui')
+if (-not $actionWasSpecified -and $uiWasSpecified) {
+    $Action = 'start'
+}
+
 $ErrorActionPreference = 'Stop'
 $RepoRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $GTestVersion = '1.15.2'
@@ -32,7 +41,9 @@ Actions:
   configure  Configure a product-only Visual Studio build.
   build      Configure and build all product targets.
   test       Configure, build, and run the complete CTest suite.
-  tui        Build and start the staged SYSTEM_STATUS console.
+  start      Build and start the selected SYSTEM_STATUS frontend.
+  tui        Compatibility alias for "start -Ui tui".
+  gui        Compatibility alias for "start -Ui gui".
   run        Build and run SYSTEM_STATUS once.
   ports      Build the TUI and list serial ports without opening one.
   clean      Run the CMake clean target; keep the configured build tree.
@@ -45,6 +56,7 @@ Common options:
   -ProtocolCsvDir <path>
   -Control <ResourceId>
   -Port <port-name>
+  -Ui tui|gui
   -QtPrefix <Qt CMake prefix>
   -TestRegex <CTest regex>
   -SkipBuild
@@ -54,7 +66,10 @@ Examples:
   .\hwtest.ps1 test
   .\hwtest.ps1 test -TestRegex "^(HalTypesTest|TuiShellTest)\."
   .\hwtest.ps1 ports
+  .\hwtest.ps1 -Ui tui
+  .\hwtest.ps1 start -Ui gui
   .\hwtest.ps1 tui -Port COM7
+  .\hwtest.ps1 gui -Port COM7
   .\hwtest.ps1 run -Control CONTROL_SERIAL -Port COM7
   .\hwtest.ps1 run -HalConfig .\configs\my_pc_hal.json
 '@ | Write-Host
@@ -173,7 +188,27 @@ function Application-Arguments {
     return $arguments
 }
 
+function Start-Frontend([ValidateSet('tui', 'gui')][string]$Frontend) {
+    $frontendId = $Frontend.ToLowerInvariant()
+    Assert-File $TestConfigPath 'Test configuration'
+    Assert-File $HalConfigPath 'HAL configuration'
+    $env:MB_DDF_PROTOCOL_CSV_DIR = Resolve-ProtocolAssets
+    if (-not $SkipBuild) {
+        Configure-Build $false
+        Build-Targets @("hwtest_$frontendId")
+    }
+
+    $executable = Join-Path $BuildPath "src\app\$Configuration\hwtest_$frontendId.exe"
+    Assert-File $executable "$($frontendId.ToUpperInvariant()) executable"
+    & $executable @(Application-Arguments)
+    exit $LASTEXITCODE
+}
+
 try {
+    if ($uiWasSpecified -and $Action -in @('run', 'ports', 'clean')) {
+        throw '-Ui cannot be used with run, ports, or clean.'
+    }
+
     if ($Action -eq 'help') {
         Show-HwtestHelp
         exit 0
@@ -205,18 +240,14 @@ try {
             }
             Invoke-Native 'ctest' $arguments
         }
+        'start' {
+            Start-Frontend $Ui
+        }
         'tui' {
-            Assert-File $TestConfigPath 'Test configuration'
-            Assert-File $HalConfigPath 'HAL configuration'
-            $env:MB_DDF_PROTOCOL_CSV_DIR = Resolve-ProtocolAssets
-            if (-not $SkipBuild) {
-                Configure-Build $false
-                Build-Targets @('hwtest_tui')
-            }
-            $executable = Join-Path $BuildPath "src\app\$Configuration\hwtest_tui.exe"
-            Assert-File $executable 'TUI executable'
-            & $executable @(Application-Arguments)
-            exit $LASTEXITCODE
+            Start-Frontend 'tui'
+        }
+        'gui' {
+            Start-Frontend 'gui'
         }
         'run' {
             Assert-File $TestConfigPath 'Test configuration'
@@ -254,6 +285,6 @@ try {
     exit 0
 }
 catch {
-    Write-Error $_.Exception.Message
+    Write-Error $_.Exception.Message -ErrorAction Continue
     exit 2
 }

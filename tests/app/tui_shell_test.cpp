@@ -1,9 +1,34 @@
+#include <app/test_application_controller.h>
 #include <app/tui_shell.h>
+
+#include "support/mbddf_udp_test_peer.h"
 
 #include <gtest/gtest.h>
 
+#include <QCoreApplication>
+#include <QFileInfo>
+#include <QTemporaryDir>
+
 namespace hwtest::app {
 namespace {
+
+QCoreApplication& ensureQtApplication()
+{
+    if (QCoreApplication* existing = QCoreApplication::instance()) {
+        return *existing;
+    }
+    static int argc = 1;
+    static char argument[] = "hwtest_app_tests";
+    static char* argv[] = {argument, nullptr};
+    static QCoreApplication application(argc, argv);
+    return application;
+}
+
+void expectSingleLine(const TuiReply& reply, const QString& expected)
+{
+    ASSERT_EQ(reply.lines.size(), 1);
+    EXPECT_EQ(reply.lines.first(), expected);
+}
 
 TEST(TuiShellTest, ParsesTheStagedWorkflowCommands)
 {
@@ -108,6 +133,88 @@ TEST(TuiShellTest, AppliesCommandLineControlAndSerialDefaultsWhenLoading)
     EXPECT_TRUE(status.lines.first().contains(QStringLiteral("control=CONTROL_SERIAL")));
     EXPECT_TRUE(status.lines.first().contains(QStringLiteral("serial=COM43")));
     EXPECT_TRUE(shell.execute(QStringLiteral("quit")).quit);
+}
+
+TEST(TuiShellTest, RunsTheStagedSystemStatusWorkflowThroughUdp)
+{
+    ensureQtApplication();
+    const QString assets = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
+
+    TestApplicationController controller;
+    TuiShell shell(&controller,
+                   QStringLiteral(HWTEST_APP_TEST_CONFIG),
+                   halConfigPath);
+
+    expectSingleLine(shell.execute(QStringLiteral("load")), QStringLiteral("ok load"));
+    expectSingleLine(shell.execute(QStringLiteral("prepare")), QStringLiteral("ok prepare"));
+    expectSingleLine(shell.execute(QStringLiteral("run")), QStringLiteral("ok run"));
+
+    ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(&peerError)) << peerError.toStdString();
+
+    expectSingleLine(shell.execute(QStringLiteral("wait 3000")), QStringLiteral("ok wait"));
+    const TuiReply result = shell.execute(QStringLiteral("result"));
+    ASSERT_EQ(result.lines.size(), 3);
+    EXPECT_TRUE(result.lines.at(0).contains(QStringLiteral("step=SYSTEM_STATUS")));
+    EXPECT_TRUE(result.lines.at(0).contains(QStringLiteral("item=system_status")));
+    EXPECT_TRUE(result.lines.at(1).contains(QStringLiteral("verdict=Pass")));
+    EXPECT_TRUE(result.lines.at(2).startsWith(QStringLiteral("rawData={")));
+    expectSingleLine(shell.execute(QStringLiteral("disconnect")),
+                     QStringLiteral("ok disconnect"));
+}
+
+TEST(TuiShellTest, StopThenWaitConvergesToStoppedInsteadOfTimingOut)
+{
+    ensureQtApplication();
+    const QString assets = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
+
+    TestApplicationController controller;
+    TuiShell shell(&controller,
+                   QStringLiteral(HWTEST_APP_TEST_CONFIG),
+                   halConfigPath);
+    expectSingleLine(shell.execute(QStringLiteral("load")), QStringLiteral("ok load"));
+    expectSingleLine(shell.execute(QStringLiteral("prepare")), QStringLiteral("ok prepare"));
+    expectSingleLine(shell.execute(QStringLiteral("run")), QStringLiteral("ok run"));
+    ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+
+    expectSingleLine(shell.execute(QStringLiteral("stop 3000")), QStringLiteral("ok stop"));
+    expectSingleLine(shell.execute(QStringLiteral("wait 3000")), QStringLiteral("ok wait"));
+    const TuiReply status = shell.execute(QStringLiteral("status"));
+    ASSERT_EQ(status.lines.size(), 1);
+    EXPECT_TRUE(status.lines.first().contains(QStringLiteral("phase=stopped")));
+    EXPECT_TRUE(status.lines.first().contains(QStringLiteral("state=Idle")));
+    expectSingleLine(shell.execute(QStringLiteral("disconnect")),
+                     QStringLiteral("ok disconnect"));
 }
 
 } // namespace

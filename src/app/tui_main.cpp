@@ -1,7 +1,6 @@
-#include <app/test_application_controller.h>
+#include <app/frontend_launch_options.h>
 #include <app/tui_shell.h>
 
-#include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
@@ -68,28 +67,11 @@ int main(int argc, char* argv[])
     parser.setApplicationDescription(
         QStringLiteral("Interactive staged TUI for MB_DDF_v2 SYSTEM_STATUS"));
     const QCommandLineOption helpOption = parser.addHelpOption();
-    const QCommandLineOption testConfigOption(
-        QStringList{QStringLiteral("t"), QStringLiteral("test-config")},
-        QStringLiteral("Default BIZ test configuration JSON used by 'load'"),
-        QStringLiteral("path"),
-        QStringLiteral("configs/mbddf_system_status.testcfg.json"));
-    const QCommandLineOption halConfigOption(
-        QStringList{QStringLiteral("H"), QStringLiteral("hal-config")},
-        QStringLiteral("Default HAL deployment configuration JSON used by 'load'"),
-        QStringLiteral("path"),
-        QStringLiteral("configs/mbddf_pc_hal.json"));
-    const QCommandLineOption controlOption(
-        QStringList{QStringLiteral("c"), QStringLiteral("control")},
-        QStringLiteral("Control ResourceId applied after 'load'"),
-        QStringLiteral("resource-id"));
-    const QCommandLineOption serialPortOption(
-        QStringList{QStringLiteral("p"), QStringLiteral("serial-port")},
-        QStringLiteral("Serial port applied after 'load' without changing the HAL JSON"),
-        QStringLiteral("port-name"));
-    parser.addOption(testConfigOption);
-    parser.addOption(halConfigOption);
-    parser.addOption(controlOption);
-    parser.addOption(serialPortOption);
+    const hwtest::app::FrontendOptionDefaults defaults{
+        QStringLiteral("configs/mbddf_system_status.testcfg.json"),
+        QStringLiteral("configs/mbddf_pc_hal.json"),
+        false};
+    hwtest::app::addFrontendOptions(parser, defaults);
     const QStringList arguments = application.arguments();
     if (arguments.contains(QStringLiteral("-?")) ||
         arguments.contains(QStringLiteral("-h")) ||
@@ -103,10 +85,14 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    const QString testConfigPath =
-        QDir::current().absoluteFilePath(parser.value(testConfigOption));
-    const QString halConfigPath =
-        QDir::current().absoluteFilePath(parser.value(halConfigOption));
+    hwtest::app::FrontendLaunchOptions options;
+    const hwtest::app::ActionResult parsed = hwtest::app::readFrontendOptions(
+        parser, QDir::currentPath(), defaults, &options);
+    if (!parsed.ok) {
+        writeLine(QStringLiteral("error %1 %2").arg(singleLine(parsed.code),
+                                                     singleLine(parsed.message)));
+        return 2;
+    }
     const bool interactive = stdinIsTerminal();
 #ifdef Q_OS_WIN
     if (interactive) {
@@ -117,10 +103,10 @@ int main(int argc, char* argv[])
 
     hwtest::app::TestApplicationController controller;
     hwtest::app::TuiShell shell(&controller,
-                                testConfigPath,
-                                halConfigPath,
-                                parser.value(controlOption),
-                                parser.value(serialPortOption));
+                                options.testConfigPath,
+                                options.halConfigPath,
+                                options.controlResourceId,
+                                options.serialPortName);
     InputGate gate;
     int processExitCode = 0;
 

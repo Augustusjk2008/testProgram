@@ -1,8 +1,34 @@
 if(NOT TARGET GTest::gtest_main)
     message(FATAL_ERROR "GTest::gtest_main must be available before tests/app is added")
 endif()
+if(NOT TARGET GTest::gtest)
+    message(FATAL_ERROR "GTest::gtest must be available before tests/app is added")
+endif()
+
+add_library(hwtest_app_test_support STATIC
+    support/mbddf_udp_test_peer.h
+    support/mbddf_udp_test_peer.cpp
+)
+
+target_compile_features(hwtest_app_test_support PUBLIC cxx_std_17)
+
+target_include_directories(hwtest_app_test_support
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(hwtest_app_test_support
+    PUBLIC
+        hwtest_algorithm_mbddf
+        ${HWTEST_QT_NETWORK_TARGET}
+)
+
+if(MSVC)
+    target_compile_options(hwtest_app_test_support PRIVATE /utf-8)
+endif()
 
 add_executable(hwtest_app_tests
+    frontend_launch_options_test.cpp
     test_application_controller_test.cpp
     tui_shell_test.cpp
 )
@@ -28,8 +54,8 @@ target_include_directories(hwtest_app_tests
 target_link_libraries(hwtest_app_tests
     PRIVATE
         hwtest_app_core
-        hwtest_algorithm_mbddf
-        ${HWTEST_QT_NETWORK_TARGET}
+        hwtest_tui_support
+        hwtest_app_test_support
         GTest::gtest_main
 )
 
@@ -40,6 +66,47 @@ add_dependencies(hwtest_app_tests
 
 include(GoogleTest)
 gtest_discover_tests(hwtest_app_tests)
+
+add_executable(hwtest_gui_tests
+    gui_test_main.cpp
+    gui_main_window_test.cpp
+)
+
+target_compile_features(hwtest_gui_tests PRIVATE cxx_std_17)
+
+target_compile_definitions(hwtest_gui_tests
+    PRIVATE
+        HWTEST_APP_TEST_CONFIG="${HWTEST_APP_TEST_CONFIG}"
+        HWTEST_APP_HAL_CONFIG="${HWTEST_APP_HAL_CONFIG}"
+        HWTEST_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+target_link_libraries(hwtest_gui_tests
+    PRIVATE
+        hwtest_gui_support
+        hwtest_tui_support
+        hwtest_app_test_support
+        GTest::gtest
+)
+
+add_dependencies(hwtest_gui_tests
+    hwtest_gui
+    hwtest_tui
+)
+
+if(MSVC)
+    target_compile_options(hwtest_gui_tests PRIVATE /utf-8)
+endif()
+
+gtest_discover_tests(hwtest_gui_tests)
+
+add_test(NAME HwtestGuiStartsOffscreen
+    COMMAND $<TARGET_FILE:hwtest_gui> --smoke-test
+)
+set_tests_properties(HwtestGuiStartsOffscreen PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 5
+)
 
 add_test(NAME HwtestPcRunnerHelp
     COMMAND $<TARGET_FILE:hwtest_pc_runner> --help
@@ -69,6 +136,25 @@ if(WIN32)
         PASS_REGULAR_EXPRESSION "hwtest.ps1 <action>"
         TIMEOUT 5
     )
+
+    add_test(NAME HwtestScriptRejectsInvalidUi
+        COMMAND ${CMAKE_COMMAND}
+            "-DSCRIPT=${PROJECT_SOURCE_DIR}/hwtest.ps1"
+            -DMODE=reject_invalid_ui
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/run_hwtest_script_test.cmake"
+    )
+    set_tests_properties(HwtestScriptRejectsInvalidUi PROPERTIES TIMEOUT 15)
+
+    add_test(NAME HwtestScriptSelectsTui
+        COMMAND ${CMAKE_COMMAND}
+            "-DSCRIPT=${PROJECT_SOURCE_DIR}/hwtest.ps1"
+            -DMODE=select_tui
+            "-DBUILD_DIR=${PROJECT_BINARY_DIR}"
+            "-DCONFIGURATION=$<CONFIG>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tui_smoke_input.txt"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/run_hwtest_script_test.cmake"
+    )
+    set_tests_properties(HwtestScriptSelectsTui PROPERTIES TIMEOUT 20)
 endif()
 
 add_test(NAME HwtestTuiScriptedSession

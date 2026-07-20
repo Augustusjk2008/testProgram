@@ -22,6 +22,28 @@
       "cwd": ".",
       "confirm": false,
       "enabled": true
+    },
+    {
+      "id": "start_tui",
+      "label": "启动 TUI",
+      "icon": "Terminal",
+      "windowsCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\hwtest.ps1 -Ui tui",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
+      "confirm": false,
+      "enabled": true
+    },
+    {
+      "id": "start_gui",
+      "label": "启动 GUI",
+      "icon": "Monitor",
+      "windowsCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\hwtest.ps1 -Ui gui",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
+      "confirm": false,
+      "enabled": true
     }
   ]
 }

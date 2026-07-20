@@ -1,5 +1,7 @@
 #include <app/tui_shell.h>
 
+#include <app/frontend_launch_options.h>
+
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -182,13 +184,11 @@ TuiReply TuiShell::execute(const QString& line)
         if (testPath.isEmpty() || halPath.isEmpty()) {
             return {{QStringLiteral("error load Test and HAL configuration paths are required")}, false};
         }
-        ActionResult result = m_controller->loadConfigurations(testPath, halPath);
-        if (result.ok && !m_defaultControlResource.trimmed().isEmpty()) {
-            result = m_controller->selectControl(m_defaultControlResource);
-        }
-        if (result.ok && !m_defaultSerialPort.trimmed().isEmpty()) {
-            result = m_controller->selectSerialPort(m_defaultSerialPort);
-        }
+        const FrontendLaunchOptions options{testPath,
+                                            halPath,
+                                            m_defaultControlResource.trimmed(),
+                                            m_defaultSerialPort.trimmed()};
+        const ActionResult result = configureController(*m_controller, options);
         if (result.ok) {
             m_defaultTestConfigPath = testPath;
             m_defaultHalConfigPath = halPath;

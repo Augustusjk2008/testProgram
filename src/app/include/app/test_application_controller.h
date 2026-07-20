@@ -68,12 +68,15 @@ public:
     ActionResult pause();
     ActionResult resume();
     ActionResult stop(int timeoutMs = 5000);
+    // Completion is reported by stopCompleted on this object's affinity thread.
+    ActionResult stopAsync(int timeoutMs = 5000);
     ActionResult waitForTerminal(int timeoutMs = -1);
     ActionResult shutdown();
     ApplicationSnapshot snapshot() const;
 
 signals:
     void snapshotChanged(const hwtest::app::ApplicationSnapshot& snapshot);
+    void stopCompleted(const hwtest::app::ActionResult& result);
 
 private:
     class Impl;
@@ -82,6 +85,7 @@ private:
 
 } // namespace hwtest::app
 
+Q_DECLARE_METATYPE(hwtest::app::ActionResult)
 Q_DECLARE_METATYPE(hwtest::app::ApplicationSnapshot)
 Q_DECLARE_METATYPE(hwtest::app::SerialPortInfo)
 Q_DECLARE_METATYPE(QVector<hwtest::app::SerialPortInfo>)

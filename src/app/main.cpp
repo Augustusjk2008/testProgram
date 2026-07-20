@@ -1,9 +1,8 @@
-#include <app/test_application_controller.h>
+#include <app/frontend_launch_options.h>
 
-#include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QCoreApplication>
-#include <QFileInfo>
+#include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -68,26 +67,8 @@ int main(int argc, char* argv[])
     parser.setApplicationDescription(
         QStringLiteral("Run the configured MB_DDF_v2 SYSTEM_STATUS test once"));
     const QCommandLineOption helpOption = parser.addHelpOption();
-    const QCommandLineOption testConfigOption(
-        QStringList{QStringLiteral("t"), QStringLiteral("test-config")},
-        QStringLiteral("BIZ test configuration JSON"),
-        QStringLiteral("path"));
-    const QCommandLineOption halConfigOption(
-        QStringList{QStringLiteral("H"), QStringLiteral("hal-config")},
-        QStringLiteral("HAL deployment configuration JSON"),
-        QStringLiteral("path"));
-    const QCommandLineOption controlOption(
-        QStringList{QStringLiteral("c"), QStringLiteral("control")},
-        QStringLiteral("Control ResourceId override"),
-        QStringLiteral("resource-id"));
-    const QCommandLineOption serialPortOption(
-        QStringList{QStringLiteral("p"), QStringLiteral("serial-port")},
-        QStringLiteral("Serial port override without changing the HAL JSON"),
-        QStringLiteral("port-name"));
-    parser.addOption(testConfigOption);
-    parser.addOption(halConfigOption);
-    parser.addOption(controlOption);
-    parser.addOption(serialPortOption);
+    const hwtest::app::FrontendOptionDefaults defaults{{}, {}, true};
+    hwtest::app::addFrontendOptions(parser, defaults);
     const QStringList arguments = application.arguments();
     if (arguments.contains(QStringLiteral("-?")) ||
         arguments.contains(QStringLiteral("-h")) ||
@@ -102,35 +83,17 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    if (!parser.isSet(testConfigOption) || !parser.isSet(halConfigOption)) {
-        return fail(QStringLiteral("arguments"),
-                    {false,
-                     QStringLiteral("missing_argument"),
-                     QStringLiteral("--test-config and --hal-config are required")});
+    hwtest::app::FrontendLaunchOptions options;
+    hwtest::app::ActionResult action = hwtest::app::readFrontendOptions(
+        parser, QDir::currentPath(), defaults, &options);
+    if (!action.ok) {
+        return fail(QStringLiteral("arguments"), action);
     }
-
-    const QString testConfigPath =
-        QFileInfo(parser.value(testConfigOption)).absoluteFilePath();
-    const QString halConfigPath =
-        QFileInfo(parser.value(halConfigOption)).absoluteFilePath();
 
     hwtest::app::TestApplicationController controller;
-    hwtest::app::ActionResult action =
-        controller.loadConfigurations(testConfigPath, halConfigPath);
+    action = hwtest::app::configureController(controller, options);
     if (!action.ok) {
         return failAfterShutdown(&controller, QStringLiteral("configuration"), action);
-    }
-    if (parser.isSet(controlOption)) {
-        action = controller.selectControl(parser.value(controlOption));
-        if (!action.ok) {
-            return failAfterShutdown(&controller, QStringLiteral("control"), action);
-        }
-    }
-    if (parser.isSet(serialPortOption)) {
-        action = controller.selectSerialPort(parser.value(serialPortOption));
-        if (!action.ok) {
-            return failAfterShutdown(&controller, QStringLiteral("serial_port"), action);
-        }
     }
 
     action = controller.prepare();
