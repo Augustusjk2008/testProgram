@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1.0",
+  "control": {
+    "deviceId": "mbddf_dut",
+    "resourceId": "CONTROL_NETWORK",
+    "runTimeoutMs": 5000
+  },
+  "hardware": {
+    "devices": [
+      {
+        "alias": "mbddf_dut",
+        "adapterId": "mock.adapter.v1",
+        "vendor": "MB_DDF",
+        "model": "MB_DDF_v2"
+      }
+    ],
+    "resources": {
+      "CONTROL_NETWORK": {
+        "device": "mbddf_dut",
+        "module": "control",
+        "direction": "bidirectional",
+        "providerId": "qt.udp",
+        "physicalIndex": 1,
+        "properties": {
+          "localAddress": "127.0.0.1",
+          "localPort": 0,
+          "remoteAddress": "127.0.0.1",
+          "remotePort": 3003
+        }
+      }
+    }
+  },
+  "safeState": {}
+}

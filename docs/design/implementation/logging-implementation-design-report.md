@@ -11,7 +11,7 @@
 | `hwtest_log_types` | `LogEvent`、`LogLevel`、字符串转换和元类型注册 | Qt Core |
 | `hwtest_log` | `ILogService`、`LogService`、sink、formatter、HAL 日志桥接 | Qt Core、`hwtest_hal`、`hwtest_log_types` |
 
-`hwtest_log_types` 是给 BIZ 等只交换 `LogEvent` 值的 HAL-free 边界；`hwtest_log` 才包含服务和 `hal_log_bridge`。本仓库当前没有 UI 订阅方。
+`hwtest_log_types` 是给 BIZ 等只交换 `LogEvent` 值的 HAL-free 边界；`hwtest_log` 才包含服务和 `hal_log_bridge`。当前 TUI 只消费应用快照，尚未订阅实时 `LogEvent`；未来 UI 订阅不得反向改变日志边界。
 
 ## 2. 当前文件结构
 

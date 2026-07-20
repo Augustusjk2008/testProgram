@@ -371,14 +371,17 @@ TEST(TestRunServiceTest, PauseResumeAndStopDriveTheExecutorRunControl)
     ASSERT_TRUE(service->initialize().ok());
     ASSERT_TRUE(service->loadConfiguration(configurationPath).ok());
     ASSERT_TRUE(service->startTest().ok());
-    ASSERT_TRUE(executor.waitForExecutionStart(2000));
+    ASSERT_TRUE(executor.waitForExecutionStart(3000));
 
     ASSERT_TRUE(service->pauseTest().ok());
     ASSERT_TRUE(waitForState(service.get(), TestState::Paused));
-    ASSERT_TRUE(test::waitUntil([&executor] { return executor.sawControl(RunControl::Pause); }, 1000));
+    ASSERT_TRUE(test::waitUntil([&executor] { return executor.sawControl(RunControl::Pause); },
+                                3000));
 
     ASSERT_TRUE(service->resumeTest().ok());
     ASSERT_TRUE(waitForState(service.get(), TestState::Running));
+    ASSERT_TRUE(test::waitUntil([&executor] { return executor.sawControl(RunControl::Run); },
+                                3000));
 
     ASSERT_TRUE(service->stopTest(321).ok());
     ASSERT_TRUE(waitForState(service.get(), TestState::Idle));

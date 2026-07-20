@@ -9,7 +9,7 @@
 - 测试目标：hwtest_hal_tests。
 - 测试源文件：9 个；源级 GoogleTest 定义：30 个。
 - CTest 通过 gtest_discover_tests 在构建后发现。30 是源级定义数，不是已执行结果；实际 CTest 条数和结果必须按 [测试规范](testing-specification.md) 完整构建后执行 ctest -N 和 ctest 确认。
-- tests/CMakeLists.txt 还注册日志、BIZ 和算法测试；本文只描述 HAL，不能据此推断整个仓库的 CTest 范围。
+- tests/CMakeLists.txt 还注册日志、BIZ、算法和应用测试；本文只描述 HAL，不能据此推断整个仓库的 CTest 范围。
 
 HAL 测试目标链接 hwtest_hal 与 GTest::gtest_main，并构建两个最小 DLL fixture：hal_adapter_fixture 和 hal_adapter_missing_symbol_fixture。fixture 仅用于 AdapterLoaderTest，不是厂家 Adapter 或真实硬件。
 

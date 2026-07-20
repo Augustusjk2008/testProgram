@@ -34,10 +34,10 @@ docs/design/
 | 算法 | `src/algorithm/` | `hwtest_algorithm_mbddf`，包含 MB_DDF 协议 CSV、编解码和 `SYSTEM_STATUS` 执行器 |
 | HAL | `src/hal/` | `hwtest_hal`；控制资源可走 `qt.serial`/`qt.udp`，其他资源仍为 `CAbiAdapter -> MockAdapter` 兼容路径 |
 | 日志 | `src/logging/` | `hwtest_log_types` 与 `hwtest_log` |
-| 应用 | `src/app/` | `hwtest_pc_runner`；按两份配置组装当前 `SYSTEM_STATUS` 控制测试 |
-| 测试 | `tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/` | 四个 GoogleTest 目标，经 CTest 注册 |
+| 应用 | `src/app/` | `hwtest_app_core` 统一组合生命周期；`hwtest_pc_runner` 一次运行，`hwtest_tui` 分步操作当前 `SYSTEM_STATUS` |
+| 测试 | `tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/`、`tests/app/` | 五个 GoogleTest 目标，经 CTest 注册 |
 
-`[当前实现]` 仓库没有图形 UI、TCP Provider、真实厂家链或真实硬件验收。Qt SerialPort/Network 已用于控制通道，UDP 已有本机模拟目标闭环，真实串口尚未联调。测试目标、源码清单和统计口径统一见 `testing/testing-specification.md`。
+`[当前实现]` 仓库已有行式 TUI，但没有 Qt GUI、Web UI、TCP Provider、真实厂家链或真实硬件验收。Qt SerialPort/Network 已用于控制通道，UDP 已有本机模拟目标闭环，真实串口尚未联调。测试目标、源码清单和统计口径统一见 `testing/testing-specification.md`。
 
 外部目录 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容已批准为 MB_DDF 协议 CSV 基线，但尚未形成仓库内可复现快照；当前清单和约束统一见 `contracts/device-communication-protocol.md`。
 

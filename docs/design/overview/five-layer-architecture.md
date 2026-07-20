@@ -19,10 +19,11 @@
 
 ## 2. 边界模型
 
-`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法和命令行组合入口；仓库没有图形 UI、TCP Provider、真实厂家链或真实硬件验收。
+`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法、共享应用控制器、一次性 runner 和行式 TUI；仓库没有 Qt GUI、Web UI、TCP Provider、真实厂家链或真实硬件验收。
 
 ```text
-hwtest_pc_runner
+hwtest_tui / hwtest_pc_runner
+  -> hwtest_app_core::TestApplicationController
   -> hwtest_biz
   -> biz::IAlgorithmExecutor
   -> hwtest_algorithm_mbddf
@@ -35,10 +36,11 @@ hwtest_pc_runner
 
 控制资源按 HAL 部署配置中的 `control.resourceId` 和资源 `providerId` 选择串口或 UDP；Qt 标准接口不经过 Vendor Adapter。AD/DA、DI/DO、旧 `ISerialBus` 和 CANFD 等既有资源仍走 `CAbiAdapter -> MockAdapter`。纯协议 golden 测试仍可注入 `SystemStatusSimulator`。
 
-`[目标契约-未实现]` 完整依赖方向如下。图形 UI、通用 Router、Vendor Provider 和控制通道 Mock Provider 不代表当前已实现。
+`[目标契约-未实现]` 完整依赖方向如下。Qt GUI、Web UI、通用 Router、Vendor Provider 和控制通道 Mock Provider 不代表当前已实现。
 
 ```text
-UI
+TUI / Qt GUI / Web UI
+  -> hwtest_app_core
   -> hwtest_biz
   -> biz::IAlgorithmExecutor
   -> 算法层
@@ -55,7 +57,7 @@ UI
 
 | 层或边界 | 负责 | 不负责 |
 | --- | --- | --- |
-| UI / 组合入口 | `[当前实现]` CLI 读取配置并组装当前单项测试；`[目标契约-未实现]` 图形 UI 的产品选择、测试启停、进度和结果展示 | 解释协议、绕过 BIZ 直接执行测试判定 |
+| UI / 应用组合 | `[当前实现]` `hwtest_app_core` 统一组装 HAL、算法、BIZ 和日志；runner 一次运行，TUI 支持配置加载、控制口选择、准备、启停、等待和结果查看；`[目标契约-未实现]` Qt GUI 与 Web UI | 解释协议、持有 Socket/串口、绕过应用控制器或 BIZ 直接执行测试判定 |
 | BIZ | 配置、计划、稳定拓扑排序、重试、运行状态、结果编排和报告 | 解释协议字段、执行单步判定、持有硬件或通讯对象、执行安全动作 |
 | 算法 | `[当前实现]` MB_DDF CSV、编解码、流式分帧、命令/序号匹配和 `SYSTEM_STATUS` 判定 | BIZ 流程、UI、具体 Qt/厂家连接、物理 safe state |
 | HAL | `[当前实现]` 提供资源、会话、安全 API 和控制通道原始 I/O；控制资源持有 Qt 串口/UDP 对象并执行操作 timeout | 业务调度、产品协议字段解释和测试判定 |
@@ -66,6 +68,7 @@ BIZ 只能直接依赖 Qt Core、`hwtest_log_types`、自身公共模型和 `biz
 ## 4. 生产 I/O 与配置边界
 
 - 面向测试设备或 DUT 的全部生产态硬件和通讯 I/O 必须统一经 HAL；当前控制通道已遵守该边界，算法不持有 `QSerialPort` 或 `QUdpSocket`。
+- 三种 UI 只允许调用 `hwtest_app_core` 的动作、快照和事件；不得分别复制 HAL 会话、算法执行器、BIZ 服务或日志收尾。控制器公共动作和 `snapshot()` 具有 QObject 线程亲和约束，Web 请求线程或 GUI worker 必须排队投递。`waitForTerminal()` 是 batch/TUI 的阻塞辅助方法，具有重入/运行代次保护；未来 Qt GUI/Web UI 应订阅 `snapshotChanged`，不得阻塞其事件线程。
 - 控制资源当前使用显式 `providerId` 路由 `qt.serial`/`qt.udp`；没有 `INetworkBus`，TCP、通用 Provider Router、Vendor Provider 和控制通道 Mock Provider 仍未实现。
 - 配置、日志和报告文件 I/O 不属于上述生产硬件/通讯 I/O 规则。
 - 新写出的 BIZ 配置只使用不透明的 `executionConfig`；旧根字段 `halConfig` 只允许在读取迁移阶段出现。BIZ 的字段和迁移语义见 `../contracts/business-scheduling-layer.md`。
@@ -90,8 +93,8 @@ BIZ 编排 TestPlan / TestContext / executionConfig
 ## 6. 当前落地范围
 
 - `src/algorithm/` 已有 `hwtest_algorithm_mbddf`、协议目录加载、payload/物理帧编解码、流式 `HalControlTransport`、`SystemStatusAlgorithmExecutor` 和 `SYSTEM_STATUS` 测试配置。
-- `src/app/` 的 `hwtest_pc_runner` 读取 `configs/mbddf_system_status.testcfg.json` 和 HAL 部署配置；修改 `control.resourceId` 即在 PC 端选择串口或 UDP，DUT 端无需切换模式。
-- 根 CMake 构建 HAL、日志、BIZ、算法和 CLI，并查找同一 Qt 主版本的 Core、Network、SerialPort。
+- `src/app/` 的 `hwtest_app_core` 提供 `TestApplicationController`；`hwtest_pc_runner` 复用它执行一次测试，`hwtest_tui` 复用它完成分步操作。TUI 的 `use <ResourceId>` 只修改内存中的 `control.resourceId`，PC 可在串口和 UDP 间选择，DUT 端无需切换模式。
+- 根 CMake 构建 HAL、日志、BIZ、算法、共享应用核心、runner 和 TUI，并查找同一 Qt 主版本的 Core、Network、SerialPort。
 - 当前测试目标、源码清单和统计口径以 `../testing/testing-specification.md` 为主定义，不以源级数量代替通过结果。
 - `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容是已批准的 MB_DDF 协议 CSV 基线。它仍是仓库外依赖，当前清单与可复现性限制见 `../contracts/device-communication-protocol.md`。
 
@@ -102,3 +105,33 @@ BIZ 编排 TestPlan / TestContext / executionConfig
 - 协议/golden 单测与产品模拟/集成测试按第 5 节隔离；后者以“实际经过 HAL”为证据边界，并继续区分 Mock、Qt Provider 和真实硬件等级。
 - 新配置只写 `executionConfig`，旧 `halConfig` 仅作为迁移读入键。
 - 日志映射不在本文复制，统一引用 `../contracts/log-interface-protocol.md`。
+
+## 8. 当前 TUI 操作
+
+从仓库根目录运行：
+
+```powershell
+$env:MB_DDF_PROTOCOL_CSV_DIR = "H:\Resources\RTLinux\Demos\MB_DDF_v2\docs\design\product_protocol_csv"
+.\build_vs\src\app\Debug\hwtest_tui.exe `
+  --test-config .\configs\mbddf_system_status.testcfg.json `
+  --hal-config .\configs\mbddf_pc_hal.json
+```
+
+当前闭环按以下命令分步执行：
+
+```text
+load
+controls
+use CONTROL_NETWORK
+prepare
+run
+status                   # 可重复查看
+wait 5000
+result
+disconnect
+quit
+```
+
+`load` 只读取并校验配置，不打开硬件；`use` 只在断开状态切换 PC 端逻辑控制资源；`prepare` 才创建 HAL 会话、算法执行器和 BIZ 服务；`run` 当前只运行唯一启用的 `mbddf.system_status`。`pause`、`resume`、`stop [timeout-ms]` 也已接入 BIZ，成功停止后阶段为 `stopped`，可再次 `wait` 或 `run`；当前单项事务较短，暂停可能在到达检查点前已经结束。标准输入由独立线程读取，Qt 主事件循环持续处理 BIZ/HAL 的排队事件；交互模式在 `wait` 期间仍可接收 `status`/`stop`，管道模式则保持逐命令确认顺序。stdin/stdout 固定为 UTF-8，同一命令流可通过管道脚本执行。
+
+`quit` 和 EOF 都会执行有序收尾；收尾失败会锁存在 `shutdown_failed` 快照中，TUI 以非零码退出。但现有 BIZ/算法停止仍是协作式的，`shutdown()` 最终会等待 worker；它不是进程级硬截止，强制杀进程也不能作为物理 safe state 已完成的证据。真实硬件使用前必须另行补进程监护和隔离安全验收。

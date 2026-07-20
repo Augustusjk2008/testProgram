@@ -61,6 +61,13 @@ QString testVerdictToString(TestVerdict verdict)
 
 void registerBizMetaTypes()
 {
+    // MOC records aliases used in ITestRunService signal signatures by their
+    // unqualified spelling. Register both spellings for queued UI delivery.
+    qRegisterMetaType<TaskId>("TaskId");
+    qRegisterMetaType<TestItemId>("TestItemId");
+    qRegisterMetaType<ErrorCode>("ErrorCode");
+    qRegisterMetaType<TestState>("TestState");
+    qRegisterMetaType<TestResult>("TestResult");
     qRegisterMetaType<ErrorCode>("hwtest::biz::ErrorCode");
     qRegisterMetaType<TestState>("hwtest::biz::TestState");
     qRegisterMetaType<TestVerdict>("hwtest::biz::TestVerdict");
