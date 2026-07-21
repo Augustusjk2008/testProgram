@@ -37,8 +37,19 @@
     {
       "id": "start_gui",
       "label": "启动 GUI",
-      "icon": "Monitor",
+      "icon": "Terminal",
       "windowsCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\hwtest.ps1 -Ui gui",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
+      "confirm": false,
+      "enabled": true
+    },
+    {
+      "id": "zip",
+      "label": "压缩",
+      "icon": "Package",
+      "windowsCommand": "if (Test-Path .gitignore) { git archive -o archive.zip HEAD } else { \"No .gitignore found, skipping.\" }",
       "linuxCommand": "",
       "macosCommand": "",
       "cwd": ".",

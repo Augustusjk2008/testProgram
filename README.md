@@ -13,6 +13,8 @@
 .\hwtest.ps1 test
 ```
 
+第一次使用命令行界面时，先阅读 [TUI 使用指南](docs/user/tui-usage-guide.md)。其中包含可直接照抄的串口流程、全部命令和状态说明、常见错误恢复，以及后续新增测试项目时的操作兼容规则。
+
 `tui` 和 `gui` 仍是兼容别名，例如 `.\hwtest.ps1 tui -Port COM7` 与 `.\hwtest.ps1 gui -Port COM7`。无参数执行脚本只显示帮助，不启动前端。
 
 `-Port` 只覆盖本次进程，不修改配置文件。也可以在独立的 HAL 部署配置中设置 `hardware.resources.<ResourceId>.properties.portName`，再用 `-HalConfig` 指定：

@@ -80,6 +80,20 @@ SYSTEM_STATUS 当前同时有 Simulator golden 链和“BIZ -> 算法 -> HalCont
 - 修改共享应用控制器、runner 或 TUI 命令时，必须运行 `hwtest_app_tests`；修改 Qt GUI 时还必须运行 `hwtest_gui_tests`。Qt GUI/Web UI 必须复用控制器 DTO/事件，不得以新增前端为由复制组合根。
 - 修复行为缺陷时，先补能复现问题的回归测试，再修改实现。
 
+### 5.1 前端使用习惯兼容准入
+
+面向操作人员的基础生命周期固定为 `load -> select -> prepare -> run -> terminal -> result -> disconnect`；TUI 中的 `use/port`、`wait/status` 分别承担 select 和 terminal 观察动作。用户操作说明见 [TUI 使用指南](../../user/tui-usage-guide.md)。
+
+当前 `TestApplicationController` 仍只接受 `mbddf.system_status`，并要求恰好一个启用的 SYSTEM_STATUS 步骤。以下规则是新增测试项目的合入门禁，不得据此宣称多项目执行器已经实现：
+
+- 新项目必须通过现有 `-TestConfig`、`-HalConfig` 选择；不得用产品专用入口复制一套加载、准备、运行和收尾生命周期。
+- 既有 TUI 命令的前置状态、硬件副作用和语义不得改变：`load/use/port` 不打开设备，`prepare` 才建立硬件会话，`disconnect/quit` 执行有序收尾。
+- 既有机器可读前缀和退出语义属于兼容面，包括 `ok`、`error`、`phase=`、`verdict=`、`rawData=` 以及成功/启动或收尾失败的既有进程退出码。输出可以尾部追加字段，不得静默改变现有字段含义或顺序。
+- 新能力优先通过配置和现有控制器 DTO 表达。确需新增命令或字段时只做追加式扩展；废弃项必须保留兼容别名、迁移说明和明确的移除周期。
+- `TuiShellTest` 继续锁定命令解析、前置状态和会话覆盖；`HwtestTuiScriptedSession` 继续锁定真实进程命令流；`FrontendEquivalenceTest` 继续锁定 TUI/GUI 控制器阶段、终态和结果等价性。
+- 每个新增项目至少增加一个从加载、选择、准备、运行、终态观察、结果读取到断开的前端工作流用例，并证明原有项目的上述回归未退化。涉及新硬件路径时还必须满足本文的证据级别和隔离测试要求。
+- 项目文档只新增配置组合、资源选择和项目特有结果字段；通用命令含义统一引用使用指南，避免不同项目形成互相冲突的操作手册。
+
 ## 6. 构建与验证
 
 根目录脚本是 Windows 下的推荐入口；它检查协议资产，使用 Visual Studio 2022 x64，并在 `test` 动作中启用完整测试。首次测试会把固定版本和哈希校验后的 GoogleTest 源码放入已忽略的 `tmp/deps/` 缓存：
