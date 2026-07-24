@@ -1,0 +1,19 @@
+index,length,type,name_cn,name_en,lsb,default,is_valid
+B1,1,CONST,同步字0,sync[0],,0x55,1
+B2,1,CONST,同步字1,sync[1],,0xAA,1
+B3,1,U8,数据段长度,len,,48,1
+B4,1,CONST,协议版本,version,,0x11,1
+B5,1,U8,类型组,type_group,,0x07,1
+B6,1,U8,子类型,sub_type,,0x02,1
+B7-8,2,U16,序列号,seq,,,1
+B9,4,BIT,PWM命令兼容保留位,pwm_command_reserved,,0,1
+B9,1,BIT,舵1方向,direction[0],,0,1
+B9,1,BIT,舵2方向,direction[1],,0,1
+B9,1,BIT,舵3方向,direction[2],,0,1
+B9,1,BIT,舵4方向,direction[3],,0,1
+B10,1,U8,舵1 PWM占空比百分比,pwm_duty_percent[0],,0,1
+B11,1,U8,舵2 PWM占空比百分比,pwm_duty_percent[1],,0,1
+B12,1,U8,舵3 PWM占空比百分比,pwm_duty_percent[2],,0,1
+B13,1,U8,舵4 PWM占空比百分比,pwm_duty_percent[3],,0,1
+B14-51,38,RESERVED,填充,pad,,0,1
+B52-53,2,U16,CRC16校验,crc,,,1

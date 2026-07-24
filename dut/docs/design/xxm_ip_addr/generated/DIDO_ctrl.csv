@@ -1,0 +1,162 @@
+﻿ip_core,access,address_raw,address_value,byte_offset,address_scale,name,description,notes,source_workbook,source_sheet,source_row
+DIDO_ctrl,write,0x1,1,4,4,"通用DO0接口控制寄存器(32位,下同)（舵锁使能）","低16位有效，高16位无效；
+高有效模式；
+16'hAAAA：输出高电平；16'hFFFF：输出低电平；写其他无效；
+默认输出低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,3
+DIDO_ctrl,write,0x2,2,8,4,通用DO1接口控制寄存器（数控衰减器控制）,"低16位有效，高16位无效；
+高有效模式；
+16'hAAAA：输出高电平；16'hFFFF：输出低电平；写其他无效；
+默认输出低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,4
+DIDO_ctrl,write,0x3,3,12,4,通用DO2接口控制寄存器（数遥发送使能）,"低16位有效，高16位无效；
+高有效模式；
+16'hAAAA：输出高电平；16'hFFFF：输出低电平；写其他无效；
+默认输出低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,5
+DIDO_ctrl,write,0x4,4,16,4,通用DO3接口控制寄存器（24V_EN，上电拉低——使能；给16'hAAAA输出高电平——失能）,"低16位有效，高16位无效；
+高有效模式；
+16'hAAAA：输出高电平；16'hFFFF：输出低电平；写其他无效；
+默认输出低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,6
+DIDO_ctrl,write,0x5,5,20,4,通用DO4接口控制寄存器（DYT_5V_EN，上电拉低——使能；给16'hAAAA输出高电平——失能）,"低16位有效，高16位无效；
+高有效模式；
+16'hAAAA：输出高电平；16'hFFFF：输出低电平；写其他无效；
+默认输出低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,7
+DIDO_ctrl,write,0x6,6,24,4,通用DO5接口控制寄存器（DI_EN1，无需控制，恒拉低）,"低16位有效，高16位无效；
+高有效模式；
+16'hAAAA：输出高电平；16'hFFFF：输出低电平；写其他无效；
+默认输出低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,8
+DIDO_ctrl,write,0x7,7,28,4,通用DO6接口控制寄存器（DO_EN使能，无需控制，上电恒拉低，包括点火、pwm、普通DO口的输出控制）,"低16位有效，高16位无效；
+高有效模式；
+16'hAAAA：输出高电平；16'hFFFF：输出低电平；写其他无效；
+默认输出低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,9
+DIDO_ctrl,write,0x8,8,32,4,通用DO7接口控制寄存器,"低16位有效，高16位无效；
+高有效模式；
+16'hAAAA：输出高电平；16'hFFFF：输出低电平；写其他无效；
+默认输出低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,10
+DIDO_ctrl,write,0x9,9,36,4,通用DO8接口控制寄存器,"低16位有效，高16位无效；
+低有效模式；
+16'hAAAA：输出低电平；16'hFFFF：输出高电平；写其他无效；
+默认输出高电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,11
+DIDO_ctrl,write,0xA,10,40,4,通用DO9接口控制寄存器,"低16位有效，高16位无效；
+低有效模式；
+16'hAAAA：输出低电平；16'hFFFF：输出高电平；写其他无效；
+默认输出高电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,12
+DIDO_ctrl,write,0xB,11,44,4,通用DO10接口控制寄存器,"低16位有效，高16位无效；
+低有效模式；
+16'hAAAA：输出低电平；16'hFFFF：输出高电平；写其他无效；
+默认输出高电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,13
+DIDO_ctrl,write,0xC,12,48,4,通用DO11接口控制寄存器,"低16位有效，高16位无效；
+低有效模式；
+16'hAAAA：输出低电平；16'hFFFF：输出高电平；写其他无效；
+默认输出高电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,14
+DIDO_ctrl,write,0xD,13,52,4,通用DO12接口控制寄存器,"低16位有效，高16位无效；
+低有效模式；
+16'hAAAA：输出低电平；16'hFFFF：输出高电平；写其他无效；
+默认输出高电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,15
+DIDO_ctrl,write,0xE,14,56,4,通用DO13接口控制寄存器,"低16位有效，高16位无效；
+低有效模式；
+16'hAAAA：输出低电平；16'hFFFF：输出高电平；写其他无效；
+默认输出高电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,16
+DIDO_ctrl,write,0xF,15,60,4,通用DO14接口控制寄存器,"低16位有效，高16位无效；
+低有效模式；
+16'hAAAA：输出低电平；16'hFFFF：输出高电平；写其他无效；
+默认输出高电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,17
+DIDO_ctrl,write,0x10,16,64,4,通用DO15接口控制寄存器,"低16位有效，高16位无效；
+低有效模式；
+16'hAAAA：输出低电平；16'hFFFF：输出高电平；写其他无效；
+默认输出高电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,18
+DIDO_ctrl,read,0x0,0,0,4,通信测试,32'hAAAABBBB,,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,19
+DIDO_ctrl,read,0x1,1,4,4,通用DO0输出电平状态（舵锁使能）,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,20
+DIDO_ctrl,read,0x2,2,8,4,通用DO1输出电平状态（数控衰减器控制）,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,21
+DIDO_ctrl,read,0x3,3,12,4,通用DO2输出电平状态（数遥发送使能）,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,22
+DIDO_ctrl,read,0x4,4,16,4,通用DO3输出电平状态（24V_EN，上电拉低——使能；给16'hAAAA输出高电平——失能）,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,23
+DIDO_ctrl,read,0x5,5,20,4,通用DO4输出电平状态（DYT_5V_EN，上电拉低——使能；给16'hAAAA输出高电平——失能）,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,24
+DIDO_ctrl,read,0x6,6,24,4,通用DO5输出电平状态（DI_EN1，无需控制，恒拉低）,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,25
+DIDO_ctrl,read,0x7,7,28,4,通用DO6输出电平状态（DO_EN使能，无需控制，上电恒拉低，包括点火、pwm、普通DO口的输出控制）,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,26
+DIDO_ctrl,read,0x8,8,32,4,通用DO7输出电平状态,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,27
+DIDO_ctrl,read,0x9,9,36,4,通用DO8输出电平状态,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,28
+DIDO_ctrl,read,0xA,10,40,4,通用DO9输出电平状态,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,29
+DIDO_ctrl,read,0xB,11,44,4,通用DO10输出电平状态,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,30
+DIDO_ctrl,read,0xC,12,48,4,通用DO11输出电平状态,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,31
+DIDO_ctrl,read,0xD,13,52,4,通用DO12输出电平状态,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,32
+DIDO_ctrl,read,0xE,14,56,4,通用DO13输出电平状态,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,33
+DIDO_ctrl,read,0xF,15,60,4,通用DO14输出电平状态,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,34
+DIDO_ctrl,read,0x10,16,64,4,通用DO15输出电平状态,"低1位有效，高31位为0；
+1为高电平，0为低电平。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,35
+DIDO_ctrl,read,0x20,32,128,4,通用DI0输入电平状态（联锁、电气弹动）,"回读，低8位有效，高24位为0；
+高有效模式；
+输入1：8'hAA；输入0：8'hFF；
+默认输入0。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,36
+DIDO_ctrl,read,0x21,33,132,4,通用DI1输入电平状态（引信报警）,"回读，低8位有效，高24位为0；
+高有效模式；
+输入1：8'hAA；输入0：8'hFF；
+默认输入0。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,37
+DIDO_ctrl,read,0x22,34,136,4,通用DI2输入电平状态（引信起爆指令）,"回读，低8位有效，高24位为0；
+高有效模式；
+输入1：8'hAA；输入0：8'hFF；
+默认输入0。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,38
+DIDO_ctrl,read,0x23,35,140,4,通用DI3输入电平状态（锁相环锁定指示）,"回读，低8位有效，高24位为0；
+高有效模式；
+输入1：8'hAA；输入0：8'hFF；
+默认输入0。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,39
+DIDO_ctrl,read,0x24,36,144,4,通用DI4输入电平状态,"回读，低8位有效，高24位为0；
+高有效模式；
+输入1：8'hAA；输入0：8'hFF；
+默认输入0。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,40
+DIDO_ctrl,read,0x25,37,148,4,通用DI5输入电平状态,"回读，低8位有效，高24位为0；
+高有效模式；
+输入1：8'hAA；输入0：8'hFF；
+默认输入0。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,41
+DIDO_ctrl,read,0x26,38,152,4,通用DI6输入电平状态,"回读，低8位有效，高24位为0；
+高有效模式；
+输入1：8'hAA；输入0：8'hFF；
+默认输入0。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,42
+DIDO_ctrl,read,0x27,39,156,4,通用DI7输入电平状态,"回读，低8位有效，高24位为0；
+高有效模式；
+输入1：8'hAA；输入0：8'hFF；
+默认输入0。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,43
+DIDO_ctrl,read,0x28,40,160,4,通用DI8输入电平状态（投放允许）,"回读，低8位有效，高24位为0；
+低有效模式；
+输入0：8'hAA；输入1：8'hFF；
+默认输入1。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,44
+DIDO_ctrl,read,0x29,41,164,4,通用DI9输入电平状态,"回读，低8位有效，高24位为0；
+低有效模式；
+输入0：8'hAA；输入1：8'hFF；
+默认输入1。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,45
+DIDO_ctrl,read,0x2A,42,168,4,通用DI10输入电平状态,"回读，低8位有效，高24位为0；
+低有效模式；
+输入0：8'hAA；输入1：8'hFF；
+默认输入1。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,46
+DIDO_ctrl,read,0x2B,43,172,4,通用DI11输入电平状态,"回读，低8位有效，高24位为0；
+低有效模式；
+输入0：8'hAA；输入1：8'hFF；
+默认输入1。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,47
+DIDO_ctrl,read,0x2C,44,176,4,通用DI12输入电平状态,"回读，低8位有效，高24位为0；
+低有效模式；
+输入0：8'hAA；输入1：8'hFF；
+默认输入1。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,48
+DIDO_ctrl,read,0x2D,45,180,4,通用DI13输入电平状态,"回读，低8位有效，高24位为0；
+低有效模式；
+输入0：8'hAA；输入1：8'hFF；
+默认输入1。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,49
+DIDO_ctrl,read,0x2E,46,184,4,通用DI14输入电平状态,"回读，低8位有效，高24位为0；
+低有效模式；
+输入0：8'hAA；输入1：8'hFF；
+默认输入1。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,50
+DIDO_ctrl,read,0x2F,47,188,4,通用DI15输入电平状态,"回读，低8位有效，高24位为0；
+低有效模式；
+输入0：8'hAA；输入1：8'hFF；
+默认输入1。",,DIDO_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,51

@@ -1,0 +1,8 @@
+*.h text eol=crlf
+*.hpp text eol=crlf
+*.c text eol=crlf
+*.cpp text eol=crlf
+*.cmake text eol=crlf
+CMakeLists.txt text eol=crlf
+*.ps1 text eol=crlf
+*.bat text eol=crlf

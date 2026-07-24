@@ -1,0 +1,12 @@
+﻿index,length,type,name_cn,name_en,lsb,default,is_valid
+B1,1,CONST,同步字0,sync[0],,0x55,1
+B2,1,CONST,同步字1,sync[1],,0xAA,1
+B3,1,U8,数据段长度,len,,48,1
+B4,1,CONST,协议版本,version,,0x11,1
+B5,1,U8,类型组,type_group,,0x04,1
+B6,1,U8,子类型,sub_type,,0x02,1
+B7-8,2,U16,序列号,seq,,,1
+B9-12,4,U32,DO通道第1组,channel[0],,0,1
+B13-16,4,U32,DO通道第2组,channel[1],,0,1
+B17-51,35,RESERVED,填充,pad,,0,1
+B52-53,2,U16,CRC16校验,crc,,,1

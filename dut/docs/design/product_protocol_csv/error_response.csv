@@ -1,0 +1,15 @@
+﻿index,length,type,name_cn,name_en,lsb,default,is_valid
+B1,1,CONST,同步字0,sync[0],,0x55,1
+B2,1,CONST,同步字1,sync[1],,0xAA,1
+B3,1,U8,数据段长度,len,,48,1
+B4,1,CONST,协议版本,version,,0x11,1
+B5,1,U8,类型组,type_group,,0xFF,1
+B6,1,U8,子类型,sub_type,,0x00,1
+B7-8,2,U16,序列号,seq,,,1
+B9,1,U8,原类型组,orig_tg,,,1
+B10,1,U8,原子类型,orig_st,,,1
+B11-12,2,U16,原序列号,orig_seq,,,1
+B13-14,2,U16,产品端错误码,err_code,,,1
+B15-18,4,U32,错误明细,detail,,,1
+B19-51,33,RESERVED,填充,pad,,0,1
+B52-53,2,U16,CRC16校验,crc,,,1

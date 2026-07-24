@@ -1,0 +1,33 @@
+index,length,type,name_cn,name_en,lsb,default,is_valid
+B1,1,CONST,同步字0,sync[0],,0x55,1
+B2,1,CONST,同步字1,sync[1],,0xAA,1
+B3,1,U8,数据段长度,len,,48,1
+B4,1,CONST,协议版本,version,,0x11,1
+B5,1,U8,类型组,type_group,,0x07,1
+B6,1,U8,子类型,sub_type,,0x02,1
+B7-8,2,U16,序列号,seq,,,1
+B9,1,U8,执行状态,status,,0,1
+B10-11,2,U16,产品端错误码,err_code,,0,1
+B12,1,BIT,舵1 PWM占空比匹配,pwm_duty_match[0],,,1
+B12,1,BIT,舵2 PWM占空比匹配,pwm_duty_match[1],,,1
+B12,1,BIT,舵3 PWM占空比匹配,pwm_duty_match[2],,,1
+B12,1,BIT,舵4 PWM占空比匹配,pwm_duty_match[3],,,1
+B12,1,BIT,舵1方向回读,direction_readback[0],,,1
+B12,1,BIT,舵2方向回读,direction_readback[1],,,1
+B12,1,BIT,舵3方向回读,direction_readback[2],,,1
+B12,1,BIT,舵4方向回读,direction_readback[3],,,1
+B13-16,4,U32,舵1 PWM占空比回读,pwm_duty[0],,,1
+B17-20,4,U32,舵2 PWM占空比回读,pwm_duty[1],,,1
+B21-24,4,U32,舵3 PWM占空比回读,pwm_duty[2],,,1
+B25-28,4,U32,舵4 PWM占空比回读,pwm_duty[3],,,1
+B29-32,4,U32,PWM波峰值,pwm_peak,,,1
+B33-34,2,S16F,舵反馈FK1,helm_AD_value[0],0.000152587890625,,1
+B35-36,2,S16F,舵反馈FK2,helm_AD_value[1],0.000152587890625,,1
+B37-38,2,S16F,舵反馈FK3,helm_AD_value[2],0.000152587890625,,1
+B39-40,2,S16F,舵反馈FK4,helm_AD_value[3],0.000152587890625,,1
+B41,1,U8,四路PWM使能位图,pwm_enable_mask,,,1
+B42,1,U8,PWM更新使能,pwm_update_enabled,,,1
+B43,1,U8,AD7606采集使能,ad_acquisition_enabled,,,1
+B44,1,U8,AD7606滤波使能,ad_filter_enabled,,,1
+B45-51,7,RESERVED,填充,pad,,0,1
+B52-53,2,U16,CRC16校验,crc,,,1

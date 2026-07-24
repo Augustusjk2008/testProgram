@@ -1,0 +1,1425 @@
+#include "MB_DDF_HW_Test/HardwareTestProvider.h"
+#include "MB_DDF_HW_Test/HardwareTestProviderDetail.h"
+
+#include "MB_DDF/Debug/Logger.h"
+#include "MB_DDF_HW/Device/Ad7606Device.h"
+#include "MB_DDF_HW/Device/Ads1258Device.h"
+#include "MB_DDF_HW/Device/ComDevice.h"
+#include "MB_DDF_HW/Device/DhController.h"
+#include "MB_DDF_HW/Device/DidoDevice.h"
+#include "MB_DDF_HW/Device/PwmDevice.h"
+#include "MB_DDF_HW/Device/SpiFlashDevice.h"
+#include "MB_DDF_HW/Device/XadcDevice.h"
+#include "MB_DDF_HW/Device/Registers/XadcRegisters.h"
+#include "MB_DDF_HW/Os/Fd.h"
+#include "MB_DDF_HW/Transport/SpiDevTransport.h"
+#include "MB_DDF_HW/Transport/XdmaTransport.h"
+#include "MB_DDF_HW_Test/ComEchoRunner.h"
+
+#include <algorithm>
+#include <array>
+#include <arpa/inet.h>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cerrno>
+#include <csignal>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <poll.h>
+#include <span>
+#include <string>
+#include <string_view>
+#include <sys/socket.h>
+#include <thread>
+#include <utility>
+#include <vector>
+
+namespace MB_DDF::HWTest {
+namespace {
+
+using Clock = std::chrono::steady_clock;
+constexpr std::string_view kXdmaDevice = "/dev/xdma0";
+constexpr uint64_t kPwmOffset = 0x00000;
+constexpr uint64_t kAd7606Offset = 0x10000;
+constexpr uint64_t kAds1258Offset = 0x20000;
+constexpr uint64_t kDhOffset = 0x30000;
+constexpr uint64_t kDidoOffset = 0x140000;
+constexpr size_t kRegisterWindow = 0x10000;
+constexpr uint32_t kSpiFlashTestAddress = 0x03FFF000;
+constexpr size_t kBusEchoBytes = 114;
+
+ProductErrorCode status_error(const HW::Status& status) {
+    switch (status.code) {
+    case HW::StatusCode::InvalidArgument:
+    case HW::StatusCode::BufferTooSmall:
+        return ProductErrorCode::ParamOutOfRange;
+    case HW::StatusCode::Busy:
+        return ProductErrorCode::TaskBusy;
+    case HW::StatusCode::Timeout:
+        return ProductErrorCode::TaskExecFailed;
+    default:
+        return ProductErrorCode::RegReadWriteFailed;
+    }
+}
+
+template <typename Device>
+class XdmaDeviceContext {
+public:
+    explicit XdmaDeviceContext(uint64_t offset)
+        : transport_({std::string(kXdmaDevice), offset, kRegisterWindow}),
+          device_(transport_) {}
+
+    ProductErrorCode ensure_open() {
+        if (!transport_.is_open()) {
+            const auto opened = transport_.open();
+            if (!opened) {
+                LOG_ERROR << "[HW-TEST] 打开 XDMA 设备窗口失败：" << opened.status().message;
+                return status_error(opened.status());
+            }
+            checked_ = false;
+        }
+        if (!checked_) {
+            const auto checked = device_.check_communication();
+            if (!checked) {
+                LOG_ERROR << "[HW-TEST] 硬件通信签名校验失败："
+                          << checked.status().message;
+                return status_error(checked.status());
+            }
+            checked_ = true;
+        }
+        return ProductErrorCode::Ok;
+    }
+
+    Device& device() noexcept { return device_; }
+
+    HW::Result<void> write_register(uint64_t offset, uint32_t value) {
+        return transport_.write32(offset, value);
+    }
+
+private:
+    HW::XdmaTransport transport_;
+    Device device_;
+    bool checked_{false};
+};
+
+template <typename Device>
+class XdmaOpenDeviceContext {
+public:
+    XdmaOpenDeviceContext(uint64_t offset, size_t window_size)
+        : transport_({std::string(kXdmaDevice), offset, window_size}),
+          device_(transport_) {}
+
+    ProductErrorCode ensure_open() {
+        if (transport_.is_open()) {
+            return ProductErrorCode::Ok;
+        }
+        const auto opened = transport_.open();
+        if (!opened) {
+            LOG_ERROR << "[HW-TEST] 打开 XDMA 设备窗口失败："
+                      << opened.status().message;
+            return status_error(opened.status());
+        }
+        return ProductErrorCode::Ok;
+    }
+
+    Device& device() noexcept { return device_; }
+
+private:
+    HW::XdmaTransport transport_;
+    Device device_;
+};
+
+struct BusStats {
+    uint32_t error_count{0};
+    uint32_t total_count{0};
+    uint32_t elapsed_ms{0};
+    std::vector<uint8_t> last_received{};
+};
+
+template <typename Exchange>
+ProductErrorCode run_bus_iterations(uint32_t count,
+                                    std::span<const uint8_t> fixed_payload,
+                                    Exchange&& exchange, BusStats& stats) {
+    const auto start = Clock::now();
+    Detail::BusIterationCounts counts{};
+    const auto commit_stats = [&]() {
+        stats.error_count = counts.error_count;
+        stats.total_count = counts.total_count;
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            Clock::now() - start).count();
+        stats.elapsed_ms = static_cast<uint32_t>(std::min<int64_t>(
+            elapsed, std::numeric_limits<uint32_t>::max()));
+    };
+    for (uint32_t iteration = 0; iteration < count; ++iteration) {
+        std::vector<uint8_t> generated;
+        std::span<const uint8_t> transmitted = fixed_payload;
+        if (fixed_payload.empty()) {
+            generated.resize(16);
+            for (size_t index = 0; index < generated.size(); ++index) {
+                generated[index] = static_cast<uint8_t>((iteration + index) & 0xFFu);
+            }
+            transmitted = std::span<const uint8_t>(generated);
+        }
+        // 多给一个字节，使正常 recv/read 能显式检测“比期望多1字节”；
+        // UDP 另配合 MSG_TRUNC 检测更长数据报。
+        std::vector<uint8_t> received(transmitted.size() + 1u);
+        const auto error = exchange(transmitted, received);
+        if (error != ProductErrorCode::Ok) {
+            commit_stats();
+            return error;
+        }
+        Detail::record_bus_iteration(
+            counts, Detail::bus_payload_matches(transmitted, received));
+        stats.last_received = std::move(received);
+    }
+    commit_stats();
+    return ProductErrorCode::Ok;
+}
+
+ProductErrorCode run_udp_bus(std::string_view address, uint32_t count,
+                             std::span<const uint8_t> payload, BusStats& stats) {
+    HW::Os::Fd socket_fd(::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0));
+    if (!socket_fd.valid()) {
+        return ProductErrorCode::TaskExecFailed;
+    }
+    sockaddr_in peer{};
+    peer.sin_family = AF_INET;
+    peer.sin_port = htons(Detail::kUdpSelfLoopPort);
+    const std::string address_text(address);
+    if (::inet_pton(AF_INET, address_text.c_str(), &peer.sin_addr) != 1) {
+        return ProductErrorCode::TaskExecFailed;
+    }
+    // 方案定义的是板端两个接口各自的本机UDP自环，必须先绑定固定本地端点；
+    // 否则临时源端口向本机3003发送不会回到当前socket。
+    if (::bind(socket_fd.get(), reinterpret_cast<const sockaddr*>(&peer),
+               sizeof(peer)) != 0 ||
+        ::connect(socket_fd.get(), reinterpret_cast<const sockaddr*>(&peer),
+                  sizeof(peer)) != 0) {
+        return ProductErrorCode::TaskExecFailed;
+    }
+
+    return run_bus_iterations(
+        count, payload,
+        [&](std::span<const uint8_t> transmitted,
+            std::vector<uint8_t>& received) -> ProductErrorCode {
+            const auto sent = ::send(socket_fd.get(), transmitted.data(), transmitted.size(), 0);
+            if (sent != static_cast<ssize_t>(transmitted.size())) {
+                return ProductErrorCode::TaskExecFailed;
+            }
+            pollfd descriptor{socket_fd.get(), POLLIN, 0};
+            int ready = -1;
+            do {
+                ready = ::poll(&descriptor, 1, 60'000);
+            } while (ready < 0 && errno == EINTR);
+            if (ready <= 0 || (descriptor.revents & POLLIN) == 0) {
+                return ProductErrorCode::TaskExecFailed;
+            }
+            const auto size = ::recv(socket_fd.get(), received.data(), received.size(),
+                                     MSG_TRUNC);
+            if (size < 0) {
+                return ProductErrorCode::TaskExecFailed;
+            }
+            received.resize(std::min(static_cast<size_t>(size), received.size()));
+            return ProductErrorCode::Ok;
+        },
+        stats);
+}
+
+ProductErrorCode run_com_bus(unsigned com_index, uint32_t count,
+                             std::span<const uint8_t> payload, BusStats& stats) {
+    static constexpr std::array<uint64_t, 4> offsets{
+        0x40000, 0x80000, 0xC0000, 0x100000};
+    if (com_index >= offsets.size() ||
+        com_index == Detail::kControlComIndex) {
+        return ProductErrorCode::ChannelInvalid;
+    }
+    HW::XdmaTransport transport({std::string(kXdmaDevice), offsets[com_index],
+                                 kComRegisterWindowSize, -1, -1,
+                                 static_cast<int>(com_index)});
+    const auto opened = transport.open();
+    if (!opened) {
+        return status_error(opened.status());
+    }
+    HW::ComDevice device(transport);
+    auto config = HW::ComDevice::default_config();
+    config.loopback = false;
+    config.receive_enabled = true;
+    config.interrupt_mode = HW::ComInterruptMode::Level;
+    const auto configured = device.configure(config);
+    if (!configured) {
+        return status_error(configured.status());
+    }
+    const auto cleared = device.clear_error_status();
+    if (!cleared) {
+        return status_error(cleared.status());
+    }
+    const auto enabled = device.enable_receive();
+    if (!enabled) {
+        return status_error(enabled.status());
+    }
+
+    return run_bus_iterations(
+        count, payload,
+        [&](std::span<const uint8_t> transmitted,
+            std::vector<uint8_t>& received) -> ProductErrorCode {
+            const auto sent = device.send({transmitted.data(), transmitted.size()});
+            if (!sent || sent.value() != transmitted.size()) {
+                return sent ? ProductErrorCode::TaskExecFailed : status_error(sent.status());
+            }
+            const auto result = device.receive(
+                {received.data(), received.size()}, HW::Timeout::after_us(60'000'000));
+            if (!result) {
+                return status_error(result.status());
+            }
+            received.resize(result.value());
+            return ProductErrorCode::Ok;
+        },
+        stats);
+}
+
+ProductErrorCode run_spi_bus(uint32_t count, std::span<const uint8_t> payload,
+                             BusStats& stats) {
+    if (!payload.empty()) {
+        return ProductErrorCode::TaskExecFailed;
+    }
+    HW::SpidevTransport transport({"/dev/spidev0.0", 1'000'000, 0, 8});
+    const auto opened = transport.open();
+    if (!opened) {
+        return ProductErrorCode::TaskExecFailed;
+    }
+    const auto start = Clock::now();
+    Detail::BusIterationCounts counts{};
+    const auto error = Detail::run_safe_spi_loop(transport, count, counts);
+    stats.error_count = counts.error_count;
+    stats.total_count = counts.total_count;
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        Clock::now() - start).count();
+    stats.elapsed_ms = static_cast<uint32_t>(std::min<int64_t>(
+        elapsed, std::numeric_limits<uint32_t>::max()));
+    return error;
+}
+
+ProductErrorCode run_bus(uint8_t link_id, uint32_t count,
+                         std::span<const uint8_t> payload, BusStats& stats) {
+    switch (link_id) {
+    case 0:
+        return run_udp_bus(Detail::udp_self_loop_address(0), count, payload, stats);
+    case 1:
+        return run_udp_bus(Detail::udp_self_loop_address(1), count, payload, stats);
+    case 2:
+    case 3:
+    case 4:
+    case 5: {
+        if (link_id == Detail::kControlBusLinkId) {
+            return ProductErrorCode::ChannelInvalid;
+        }
+        const auto com_index = Detail::com_index_for_bus_link(link_id);
+        return com_index
+                   ? run_com_bus(*com_index, count, payload, stats)
+                   : ProductErrorCode::ChannelInvalid;
+    }
+    case 6:
+        return run_spi_bus(count, payload, stats);
+    default:
+        return ProductErrorCode::ChannelInvalid;
+    }
+}
+
+double helm_command_impl(uint32_t waveform, double frequency, double amplitude,
+                         double offset, double start_phase_radians,
+                         double maximum_frequency, double elapsed_seconds_value) {
+    constexpr double pi = 3.14159265358979323846;
+    const double time = std::max(0.0, elapsed_seconds_value);
+    const double phase = 2.0 * pi * frequency * time + start_phase_radians;
+    switch (waveform) {
+    case 0:
+        return offset + amplitude * std::sin(phase);
+    case 1:
+        return offset + amplitude * (std::sin(phase) >= 0.0 ? 1.0 : -1.0);
+    case 2: {
+        double normalized = std::fmod(phase / (2.0 * pi), 1.0);
+        if (normalized < 0.0) {
+            normalized += 1.0;
+        }
+        const double triangle = normalized < 0.25 ? normalized * 4.0
+                                : normalized < 0.75 ? 2.0 - normalized * 4.0
+                                                    : normalized * 4.0 - 4.0;
+        return offset + amplitude * triangle;
+    }
+    case 3:
+        return offset;
+    case 4: {
+        constexpr double duration = 25.0;
+        if (time > duration) {
+            return 0.0;
+        }
+        if (frequency <= 0.0 || maximum_frequency <= 0.0) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        double sweep_phase = 0.0;
+        if (std::abs(maximum_frequency - frequency) < 1.0e-12) {
+            sweep_phase = 2.0 * pi * frequency * time;
+        } else {
+            const double gap = maximum_frequency - frequency;
+            const double denominator = maximum_frequency * duration - time * gap;
+            if (denominator <= 0.0) {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
+            sweep_phase = 2.0 * pi * frequency * maximum_frequency * duration /
+                          gap * std::log((maximum_frequency * duration) /
+                                         denominator);
+        }
+        return offset + amplitude * std::sin(sweep_phase + start_phase_radians);
+    }
+    default:
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+}
+
+int16_t saturating_s16(double value) {
+    const auto rounded = std::llround(value);
+    return static_cast<int16_t>(std::clamp<int64_t>(
+        rounded, std::numeric_limits<int16_t>::min(),
+        std::numeric_limits<int16_t>::max()));
+}
+
+double convert_helm_feedback(int16_t raw) {
+    const auto unsigned_raw = static_cast<uint16_t>(raw);
+    double converted = static_cast<double>(unsigned_raw) * (-10.0 / 65536.0) + 12.048;
+    if (converted > 10.0) {
+        converted -= 10.0;
+    }
+    return converted;
+}
+
+volatile std::sig_atomic_t g_hardware_test_stop = 0;
+
+void request_hardware_test_stop(int) noexcept {
+    g_hardware_test_stop = 1;
+}
+
+} // namespace
+
+ProductErrorCode Detail::populate_dh_telemetry(
+    const HW::Ads1258Snapshot& snapshot, ProductMessage& response) {
+    auto staged = response;
+    for (size_t channel = 0; channel < kDhTelemetryAds1258Channels.size(); ++channel) {
+        const size_t source = kDhTelemetryAds1258Channels[channel];
+        if (!staged.set_scaled_signed(
+                "telemetry[" + std::to_string(channel) + "]",
+                HW::Ads1258Device::channel_voltage(source, snapshot.raw[source]))) {
+            return ProductErrorCode::TaskExecFailed;
+        }
+    }
+    response = std::move(staged);
+    return ProductErrorCode::Ok;
+}
+
+ProductErrorCode Detail::run_helm_board_test(const ProductMessage& request,
+                                             HW::PwmDevice& pwm,
+                                             HW::Ad7606Device& ad7606,
+                                             ProductMessage& response) {
+    HW::PwmRawOutputs expected_outputs{};
+    expected_outputs.enable_mask = 0x0Fu;
+    const auto reserved = request.get_unsigned("pwm_command_reserved");
+    if (!reserved || *reserved != 0) {
+        return ProductErrorCode::ParamOutOfRange;
+    }
+    std::array<uint8_t, 4> requested_percent{};
+    for (size_t channel = 0; channel < requested_percent.size(); ++channel) {
+        const auto percent = request.get_unsigned(
+            "pwm_duty_percent[" + std::to_string(channel) + "]");
+        const auto direction = request.get_unsigned(
+            "direction[" + std::to_string(channel) + "]");
+        if (!percent || !direction || *percent > 100 || *direction > 1) {
+            return ProductErrorCode::ParamOutOfRange;
+        }
+        requested_percent[channel] = static_cast<uint8_t>(*percent);
+        expected_outputs.direction_mask |=
+            static_cast<uint8_t>(*direction << channel);
+    }
+
+    auto operation = ad7606.set_acquisition_enabled(true);
+    if (!operation) {
+        return status_error(operation.status());
+    }
+    operation = ad7606.set_filter_enabled(true);
+    if (!operation) {
+        return status_error(operation.status());
+    }
+
+    const auto peak = pwm.read_peak_value();
+    if (!peak) {
+        return status_error(peak.status());
+    }
+    if (peak.value() == 0) {
+        return ProductErrorCode::RegReadWriteFailed;
+    }
+    for (size_t channel = 0; channel < requested_percent.size(); ++channel) {
+        expected_outputs.duty[channel] = static_cast<uint32_t>(
+            (static_cast<uint64_t>(peak.value()) * requested_percent[channel] + 50u) /
+            100u);
+    }
+
+    operation = pwm.set_update_enabled(false);
+    if (!operation) {
+        return status_error(operation.status());
+    }
+    operation = pwm.set_duty_mode_unsigned();
+    if (!operation) {
+        return status_error(operation.status());
+    }
+    operation = pwm.apply_outputs(expected_outputs);
+    if (!operation) {
+        return status_error(operation.status());
+    }
+    operation = pwm.set_update_enabled(true);
+    if (!operation) {
+        return status_error(operation.status());
+    }
+
+    const auto pwm_state = pwm.read_state();
+    if (!pwm_state) {
+        return status_error(pwm_state.status());
+    }
+    const auto ad_state = ad7606.read_state();
+    if (!ad_state) {
+        return status_error(ad_state.status());
+    }
+
+    auto staged = response;
+    for (size_t channel = 0; channel < requested_percent.size(); ++channel) {
+        const std::string suffix = "[" + std::to_string(channel) + "]";
+        if (!staged.set_unsigned(
+                "pwm_duty_match" + suffix,
+                pwm_state.value().outputs.duty[channel] ==
+                        expected_outputs.duty[channel]
+                    ? 1u
+                    : 0u) ||
+            !staged.set_unsigned(
+                "direction_readback" + suffix,
+                (pwm_state.value().outputs.direction_mask >> channel) & 1u) ||
+            !staged.set_unsigned(
+                "pwm_duty" + suffix,
+                pwm_state.value().outputs.duty[channel]) ||
+            !staged.set_signed(
+                "helm_AD_value" + suffix,
+                ad_state.value().snapshot.raw[channel])) {
+            return ProductErrorCode::TaskExecFailed;
+        }
+    }
+    const bool populated =
+        staged.set_unsigned("pwm_peak", pwm_state.value().config.peak_value) &&
+        staged.set_unsigned("pwm_enable_mask",
+                            pwm_state.value().outputs.enable_mask) &&
+        staged.set_unsigned("pwm_update_enabled",
+                            pwm_state.value().update_enabled ? 1u : 0u) &&
+        staged.set_unsigned("ad_acquisition_enabled",
+                            ad_state.value().config.acquisition_enabled ? 1u : 0u) &&
+        staged.set_unsigned("ad_filter_enabled",
+                            ad_state.value().config.filter_enabled ? 1u : 0u);
+    if (!populated) {
+        return ProductErrorCode::TaskExecFailed;
+    }
+    response = std::move(staged);
+
+    const bool readback_matches =
+        pwm_state.value().config.peak_value == peak.value() &&
+        pwm_state.value().outputs.duty == expected_outputs.duty &&
+        pwm_state.value().outputs.direction_mask == expected_outputs.direction_mask &&
+        pwm_state.value().outputs.enable_mask == expected_outputs.enable_mask &&
+        pwm_state.value().update_enabled &&
+        ad_state.value().config.acquisition_enabled &&
+        ad_state.value().config.filter_enabled;
+    return readback_matches ? ProductErrorCode::Ok
+                            : ProductErrorCode::RegReadWriteFailed;
+}
+
+ProductErrorCode Detail::run_safe_spi_loop(HW::ISpiTransport& transport,
+                                           uint32_t count,
+                                           BusIterationCounts& counts) {
+    counts = {};
+    if (count == 0 || !transport.is_open()) {
+        return count == 0 ? ProductErrorCode::ParamOutOfRange
+                          : ProductErrorCode::TaskExecFailed;
+    }
+    HW::SpiFlashDevice flash(transport);
+    for (uint32_t iteration = 0; iteration < count; ++iteration) {
+        const auto id = flash.read_jedec_id();
+        if (!id) {
+            return ProductErrorCode::TaskExecFailed;
+        }
+        record_bus_iteration(counts,
+                             id.value() == HW::SpiFlashDevice::ExpectedJedecId);
+    }
+    return ProductErrorCode::Ok;
+}
+
+double Detail::helm_command(uint32_t waveform, double frequency,
+                            double amplitude, double offset,
+                            double start_phase_radians,
+                            double maximum_frequency,
+                            double elapsed_seconds) {
+    return helm_command_impl(waveform, frequency, amplitude, offset,
+                             start_phase_radians, maximum_frequency,
+                             elapsed_seconds);
+}
+
+class XdmaTimerLoadExecutor final : public ITimerLoadExecutor {
+public:
+    XdmaTimerLoadExecutor()
+        : transport_({std::string(kXdmaDevice), Detail::kTimerLoadUserOffset,
+                      Detail::kTimerLoadMapLength, -1,
+                      Detail::kTimerLoadC2hChannel, -1}) {}
+
+    ~XdmaTimerLoadExecutor() override {
+        (void)stop();
+    }
+
+    ProductErrorCode start() override {
+        if (active_) {
+            return ProductErrorCode::TaskBusy;
+        }
+
+        try {
+            const auto opened = transport_.open();
+            if (!opened) {
+                LOG_ERROR << "[HW-TEST] 定时器负载打开 XDMA C2H0 失败："
+                          << opened.status().message;
+                transport_.close();
+                return ProductErrorCode::TaskExecFailed;
+            }
+
+            stop_requested_.store(false, std::memory_order_release);
+            failed_.store(false, std::memory_order_release);
+            complete_reads_.store(0, std::memory_order_release);
+            worker_ = std::thread([this]() { run(); });
+            active_ = true;
+            return ProductErrorCode::Ok;
+        } catch (...) {
+            stop_requested_.store(true, std::memory_order_release);
+            if (worker_.joinable()) {
+                worker_.join();
+            }
+            transport_.close();
+            active_ = false;
+            LOG_ERROR << "[HW-TEST] 定时器 XDMA 负载线程启动失败";
+            return ProductErrorCode::TaskExecFailed;
+        }
+    }
+
+    ProductErrorCode stop() override {
+        if (!active_) {
+            return ProductErrorCode::Ok;
+        }
+
+        stop_requested_.store(true, std::memory_order_release);
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+        transport_.close();
+        active_ = false;
+
+        const auto reads = complete_reads_.load(std::memory_order_acquire);
+        const bool failed = failed_.load(std::memory_order_acquire);
+        LOG_INFO << "[HW-TEST] 定时器 XDMA C2H0 负载已停止，完整 64 KiB 读取 "
+                 << reads << " 次";
+        return failed ? ProductErrorCode::TaskExecFailed
+                      : ProductErrorCode::Ok;
+    }
+
+private:
+    void run() noexcept {
+        try {
+            auto next_read = Clock::now();
+            const auto interval =
+                std::chrono::milliseconds(Detail::kTimerLoadIntervalMs);
+            while (!stop_requested_.load(std::memory_order_acquire)) {
+                const auto read = transport_.dma_read(
+                    Detail::kTimerLoadC2hChannel,
+                    {buffer_.data(), buffer_.size()},
+                    Detail::kTimerLoadDeviceOffset);
+                if (!read) {
+                    failed_.store(true, std::memory_order_release);
+                    LOG_ERROR << "[HW-TEST] 定时器 XDMA C2H0 读取失败："
+                              << read.status().message;
+                    break;
+                }
+                if (read.value() != buffer_.size()) {
+                    failed_.store(true, std::memory_order_release);
+                    LOG_ERROR << "[HW-TEST] 定时器 XDMA C2H0 短读：期望 "
+                              << buffer_.size() << " 字节，实际 " << read.value()
+                              << " 字节";
+                    break;
+                }
+                complete_reads_.fetch_add(1, std::memory_order_relaxed);
+                next_read += interval;
+                std::this_thread::sleep_until(next_read);
+            }
+        } catch (...) {
+            failed_.store(true, std::memory_order_release);
+            LOG_ERROR << "[HW-TEST] 定时器 XDMA C2H0 负载线程异常";
+        }
+    }
+
+    HW::XdmaTransport transport_;
+    std::array<uint8_t, Detail::kTimerLoadTransferBytes> buffer_{};
+    std::thread worker_;
+    std::atomic_bool stop_requested_{false};
+    std::atomic_bool failed_{false};
+    std::atomic_size_t complete_reads_{0};
+    bool active_{false};
+};
+
+struct HardwareTestProvider::Impl : IK7TemperatureSource {
+    XdmaTimerLoadExecutor timer_load;
+    XdmaDeviceContext<HW::PwmDevice> pwm{kPwmOffset};
+    XdmaDeviceContext<HW::Ad7606Device> ad7606{kAd7606Offset};
+    XdmaDeviceContext<HW::Ads1258Device> ads1258{kAds1258Offset};
+    XdmaOpenDeviceContext<HW::XadcDevice> xadc{
+        HW::Registers::Xadc::UserBase, HW::Registers::Xadc::WindowSize};
+    XdmaDeviceContext<HW::DhController> dh{kDhOffset};
+    XdmaDeviceContext<HW::DidoDevice> dido{kDidoOffset};
+
+    bool helm_active{false};
+    uint32_t waveform{0};
+    double frequency{0.3};
+    double amplitude{30.0};
+    double offset{0.0};
+    double start_phase_radians{0.0};
+    double maximum_frequency{0.0};
+    uint8_t enable_mask{1};
+    Clock::time_point helm_started{};
+
+    ProductErrorCode initialize() {
+        const auto ready = ads1258.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+
+        // 临时兼容当前板端 ADS1258 上电状态；硬件默认配置固化后删除本段。
+        constexpr std::array<std::pair<uint64_t, uint32_t>, 6> kTemporaryWrites{{
+            {0x4u * 4u, 0x82u},
+            {0xEu * 4u, 0x20u},
+            {0x13u * 4u, 0x21EC35u},
+            {0x14u * 4u, 0x21EC35u},
+            {0x17u * 4u, 0xAAAAu},
+            {0x18u * 4u, 0xAAAAu},
+        }};
+        for (const auto& [offset, value] : kTemporaryWrites) {
+            const auto operation = ads1258.write_register(offset, value);
+            if (!operation) {
+                LOG_ERROR << "[HW-TEST] ADS1258 临时启动配置写入失败：offset=0x"
+                          << std::hex << offset << " value=0x" << value << std::dec
+                          << "，" << operation.status().message;
+                return status_error(operation.status());
+            }
+        }
+        return ProductErrorCode::Ok;
+    }
+
+    bool read_k7_temperature(float& celsius) override {
+        const auto ready = xadc.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return false;
+        }
+        const auto temperature = xadc.device().read_temperature_celsius();
+        if (!temperature) {
+            LOG_ERROR << "[HW-TEST] 读取 K7 XADC 温度失败："
+                      << temperature.status().message;
+            return false;
+        }
+        celsius = static_cast<float>(temperature.value());
+        return std::isfinite(celsius);
+    }
+
+    ProductErrorCode handle_spi_flash(ProductMessage& response) {
+        const auto fail = [](std::string_view step,
+                             const HW::Status& status) {
+            LOG_ERROR << "[HW-TEST] SPI Flash 步骤失败：" << step
+                      << "；" << status.message
+                      << "（status=" << static_cast<int>(status.code)
+                      << "，errno=" << status.errno_value << "）";
+            return ProductErrorCode::TaskExecFailed;
+        };
+
+        HW::SpidevTransport transport({"/dev/spidev0.0", 1'000'000, 0, 8});
+        const auto opened = transport.open();
+        if (!opened) {
+            return fail("打开 /dev/spidev0.0", opened.status());
+        }
+        HW::SpiFlashDevice flash(transport);
+        const auto communication = flash.check_communication();
+        if (!communication) {
+            return fail("通信检查", communication.status());
+        }
+        const auto id = flash.read_jedec_id();
+        if (!id) {
+            return fail("读取 JEDEC ID", id.status());
+        }
+        if (id.value() != HW::SpiFlashDevice::ExpectedJedecId) {
+            LOG_ERROR << "[HW-TEST] SPI Flash 步骤失败：校验 JEDEC ID；实际="
+                      << std::hex
+                      << static_cast<unsigned>(id.value()[0]) << " "
+                      << static_cast<unsigned>(id.value()[1]) << " "
+                      << static_cast<unsigned>(id.value()[2]) << "，期望="
+                      << static_cast<unsigned>(HW::SpiFlashDevice::ExpectedJedecId[0])
+                      << " "
+                      << static_cast<unsigned>(HW::SpiFlashDevice::ExpectedJedecId[1])
+                      << " "
+                      << static_cast<unsigned>(HW::SpiFlashDevice::ExpectedJedecId[2])
+                      << std::dec;
+            return ProductErrorCode::TaskExecFailed;
+        }
+
+        const auto started = Clock::now();
+        auto status = flash.wait_until_all_dies_idle(HW::Timeout::after_us(5'000'000));
+        if (!status) {
+            return fail("等待全部 die 空闲", status.status());
+        }
+        status = flash.clear_flag_status();
+        if (!status) {
+            return fail("清除 Flag Status", status.status());
+        }
+        // 固定隔离窗口：本画像故意不备份、不恢复原 4 KiB 内容。
+        status = flash.erase_subsector(kSpiFlashTestAddress,
+                                       HW::Timeout::after_us(120'000'000));
+        if (!status) {
+            return fail("擦除固定 4 KiB 测试区", status.status());
+        }
+
+        std::array<uint8_t, HW::SpiFlashDevice::SubsectorSize> expected{};
+        std::array<uint8_t, HW::SpiFlashDevice::SubsectorSize> actual{};
+        for (size_t index = 0; index < expected.size(); ++index) {
+            expected[index] = static_cast<uint8_t>(0xA5u ^ (index & 0xFFu));
+        }
+        for (size_t offset_value = 0; offset_value < expected.size();
+             offset_value += HW::SpiFlashDevice::PageSize) {
+            const auto programmed = flash.program_page(
+                kSpiFlashTestAddress + static_cast<uint32_t>(offset_value),
+                {expected.data() + offset_value, HW::SpiFlashDevice::PageSize},
+                HW::Timeout::after_us(5'000'000));
+            if (!programmed) {
+                LOG_WARN << "[HW-TEST] SPI Flash 步骤错误：页编程失败";
+                // return fail("页编程", programmed.status());
+            } else if (programmed.value() != HW::SpiFlashDevice::PageSize) {
+                LOG_WARN << "[HW-TEST] SPI Flash 步骤错误：页编程长度不符；offset=0x"
+                          << std::hex << offset_value << std::dec
+                          << "，实际=" << programmed.value()
+                          << "，期望=" << HW::SpiFlashDevice::PageSize;
+                // return ProductErrorCode::TaskExecFailed;
+            }
+        }
+        const auto read = flash.read(kSpiFlashTestAddress,
+                                     {actual.data(), actual.size()});
+        if (!read) {
+            return fail("读回固定 4 KiB 测试区", read.status());
+        }
+        if (read.value() != actual.size()) {
+            LOG_ERROR << "[HW-TEST] SPI Flash 步骤失败：读回长度不符；实际="
+                      << read.value() << "，期望=" << actual.size();
+            return ProductErrorCode::TaskExecFailed;
+        }
+        if (actual != expected) {
+            const auto mismatch = std::mismatch(expected.begin(), expected.end(),
+                                                actual.begin());
+            const auto offset_value = static_cast<size_t>(
+                mismatch.first - expected.begin());
+            LOG_WARN << "[HW-TEST] SPI Flash 步骤错误：读回数据校验；offset=0x"
+                      << std::hex << offset_value
+                      << "，实际=0x" << static_cast<unsigned>(*mismatch.second)
+                      << "，期望=0x" << static_cast<unsigned>(*mismatch.first)
+                      << std::dec;
+            // return ProductErrorCode::TaskExecFailed;
+        }
+        const float seconds = static_cast<float>(
+            std::chrono::duration<double>(Clock::now() - started).count());
+        if (!response.set_float("sjl_result", seconds)) {
+            LOG_ERROR << "[HW-TEST] SPI Flash 步骤失败：写入协议响应 sjl_result";
+            return ProductErrorCode::TaskExecFailed;
+        }
+        return ProductErrorCode::Ok;
+    }
+
+    ProductErrorCode handle_helm_board(const ProductMessage& request,
+                                       ProductMessage& response) {
+        if (helm_active) {
+            return ProductErrorCode::TaskBusy;
+        }
+        auto ready = pwm.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        ready = ad7606.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        return Detail::run_helm_board_test(
+            request, pwm.device(), ad7606.device(), response);
+    }
+
+    ProductErrorCode handle_electrical_health(ProductMessage& response) {
+        auto ready = dh.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        const auto activated = dh.device().read_battery_activated();
+        if (!activated) {
+            return status_error(activated.status());
+        }
+
+        ready = ads1258.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        const auto ads = ads1258.device().read_snapshot();
+        if (!ads) {
+            return status_error(ads.status());
+        }
+
+        ready = xadc.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        const auto xadc_health = xadc.device().read_electrical_health();
+        if (!xadc_health) {
+            return status_error(xadc_health.status());
+        }
+        const auto value_yx = xadc.device().read_value_yx();
+        if (!value_yx) {
+            return status_error(value_yx.status());
+        }
+
+        auto staged = response;
+        const auto& raw = ads.value().raw;
+        const auto& health = xadc_health.value();
+        const bool populated =
+            staged.set_scaled_signed(
+                "c_volt", HW::Ads1258Device::channel_voltage(0, raw[0])) &&
+            staged.set_scaled_signed(
+                "b_volt", HW::Ads1258Device::channel_voltage(2, raw[2])) &&
+            staged.set_unsigned("activate_bits", activated.value() ? 0x01u : 0u) &&
+            staged.set_scaled_signed("external_vol", health.external_voltage) &&
+            staged.set_scaled_signed("core_vol", health.core_voltage) &&
+            staged.set_scaled_signed("assist_vol", health.assist_voltage) &&
+            staged.set_scaled_signed(
+                "v28_5", HW::Ads1258Device::channel_voltage(3, raw[3])) &&
+            staged.set_scaled_signed("js_5V", health.js_5v_voltage) &&
+            staged.set_scaled_signed("dyt_5V", health.dyt_5v_voltage) &&
+            staged.set_scaled_signed("power_24V", health.power_24v_voltage) &&
+            staged.set_signed("value_YX", value_yx.value().adc_code);
+        if (!populated) {
+            return ProductErrorCode::TaskExecFailed;
+        }
+        response = std::move(staged);
+        return ProductErrorCode::Ok;
+    }
+
+    ProductErrorCode handle_bus_loop(const ProductMessage& request,
+                                     ProductMessage& response) {
+        const auto link = request.get_unsigned("link_id");
+        const auto total = request.get_unsigned("total_count");
+        if (!link || *link > 6) {
+            return ProductErrorCode::ChannelInvalid;
+        }
+        if (!total || *total == 0 || *total > 100'000) {
+            return ProductErrorCode::ParamOutOfRange;
+        }
+        BusStats stats{};
+        const auto error = run_bus(static_cast<uint8_t>(*link),
+                                   static_cast<uint32_t>(*total), {}, stats);
+        (void)response.set_unsigned("link_id", *link);
+        (void)response.set_unsigned("error_count", stats.error_count);
+        (void)response.set_unsigned("total_count", stats.total_count);
+        (void)response.set_unsigned("elapsed_ms", stats.elapsed_ms);
+        return error;
+    }
+
+    ProductErrorCode handle_bus_echo(const ProductMessage& request,
+                                     ProductMessage& response) {
+        const auto link = request.get_unsigned("link_id");
+        if (!link || *link > 6) {
+            return ProductErrorCode::ChannelInvalid;
+        }
+        if (*link == 6 && !Detail::spi_echo_payload_allowed()) {
+            LOG_ERROR << "[HW-TEST] SPI Flash 不具备任意 payload 回显语义；"
+                         "拒绝向 /dev/spidev0.0 发送用户数据";
+            return ProductErrorCode::TaskExecFailed;
+        }
+        std::array<uint8_t, kBusEchoBytes> payload{};
+        for (size_t index = 0; index < payload.size(); ++index) {
+            const auto value = request.get_unsigned("data[" + std::to_string(index) + "]");
+            if (!value) {
+                return ProductErrorCode::ParamOutOfRange;
+            }
+            payload[index] = static_cast<uint8_t>(*value);
+        }
+        BusStats stats{};
+        const auto error = run_bus(static_cast<uint8_t>(*link), 1, payload, stats);
+        (void)response.set_unsigned("link_id", *link);
+        if (!stats.last_received.empty()) {
+            for (size_t index = 0;
+                 index < std::min(payload.size(), stats.last_received.size()); ++index) {
+                (void)response.set_unsigned("data[" + std::to_string(index) + "]",
+                                            stats.last_received[index]);
+            }
+        }
+        return error;
+    }
+
+    ProductErrorCode handle_di(ProductMessage& response) {
+        const auto ready = dido.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        const auto inputs = dido.device().read_inputs();
+        if (!inputs) {
+            return status_error(inputs.status());
+        }
+        (void)response.set_unsigned("di_state[0]", inputs.value());
+        (void)response.set_unsigned("di_state[1]", 0);
+        return ProductErrorCode::Ok;
+    }
+
+    ProductErrorCode handle_do(const ProductMessage& request,
+                               ProductMessage& response) {
+        const auto first = request.get_unsigned("channel[0]");
+        const auto second = request.get_unsigned("channel[1]");
+        if (!first || !second) {
+            return ProductErrorCode::ParamOutOfRange;
+        }
+        const auto ready = dido.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        // 协议只映射 DO0~15；高位按合同忽略并在响应中回零。
+        const auto changed = dido.device().set_outputs(
+            static_cast<uint16_t>(*first & 0xFFFFu), 0xFFFFu);
+        if (!changed) {
+            return status_error(changed.status());
+        }
+        const auto applied = dido.device().read_outputs();
+        if (!applied) {
+            return status_error(applied.status());
+        }
+        (void)response.set_unsigned("applied_state[0]", applied.value());
+        (void)response.set_unsigned("applied_state[1]", 0);
+        return ProductErrorCode::Ok;
+    }
+
+    ProductErrorCode handle_dh_pulse_config(const ProductMessage& request,
+                                            ProductMessage& response) {
+        const auto enable = request.get_unsigned("config_enable");
+        if (!enable || *enable > 1) {
+            return ProductErrorCode::ParamOutOfRange;
+        }
+        const auto ready = dh.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        auto operation = dh.device().set_pulse_config_enabled(*enable != 0);
+        if (!operation) {
+            return status_error(operation.status());
+        }
+        if (*enable != 0) {
+            for (unsigned channel = 0; channel < 23; ++channel) {
+                const auto width = request.get_unsigned(
+                    "pulse_width[" + std::to_string(channel) + "]");
+                if (!width || *width > 0xFFFFu) {
+                    return ProductErrorCode::ParamOutOfRange;
+                }
+                operation = dh.device().set_pulse_width_ticks(
+                    static_cast<uint8_t>(channel), static_cast<uint16_t>(*width));
+                if (!operation) {
+                    return status_error(operation.status());
+                }
+            }
+        }
+        const auto widths = dh.device().read_pulse_widths(23);
+        if (!widths) {
+            return status_error(widths.status());
+        }
+        for (unsigned channel = 0; channel < 23; ++channel) {
+            (void)response.set_unsigned(
+                "pulse_width_readback[" + std::to_string(channel) + "]",
+                widths.value()[channel]);
+        }
+        return ProductErrorCode::Ok;
+    }
+
+    ProductErrorCode start_helm(const ProductMessage& request) {
+        const auto waveform_value = request.get_unsigned("waveform");
+        const auto frequency_value = request.get_float("freq");
+        const auto amplitude_value = request.get_float("ampl");
+        const auto offset_value = request.get_float("offset");
+        const auto start_value = request.get_float("start");
+        const auto maximum_value = request.get_float("max_freq");
+        const auto enable_value = request.get_unsigned("enable");
+        if (!waveform_value || !frequency_value || !amplitude_value || !offset_value ||
+            !start_value || !maximum_value || !enable_value || *waveform_value > 4 ||
+            *enable_value > 0x0Fu || !std::isfinite(*frequency_value) ||
+            !std::isfinite(*amplitude_value) || !std::isfinite(*offset_value) ||
+            !std::isfinite(*start_value) || !std::isfinite(*maximum_value) ||
+            *frequency_value <= 0.0F || *amplitude_value < 0.0F ||
+            std::abs(*offset_value) + *amplitude_value > 30.0F ||
+            *maximum_value < 0.0F ||
+            (*waveform_value == 4 && *maximum_value <= 0.0F)) {
+            return ProductErrorCode::ParamOutOfRange;
+        }
+        if (helm_active) {
+            return ProductErrorCode::TaskBusy;
+        }
+        auto ready = pwm.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        ready = ad7606.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        auto ad_operation = ad7606.device().set_acquisition_enabled(true);
+        if (!ad_operation) {
+            return status_error(ad_operation.status());
+        }
+        ad_operation = ad7606.device().set_filter_enabled(true);
+        if (!ad_operation) {
+            return status_error(ad_operation.status());
+        }
+        const auto state = pwm.device().read_state();
+        if (!state || state.value().config.peak_value == 0) {
+            return state ? ProductErrorCode::RegReadWriteFailed
+                         : status_error(state.status());
+        }
+        auto operation = pwm.device().set_update_enabled(false);
+        if (!operation) {
+            return status_error(operation.status());
+        }
+        operation = pwm.device().set_duty_mode_unsigned();
+        if (!operation) {
+            return status_error(operation.status());
+        }
+
+        waveform = static_cast<uint32_t>(*waveform_value);
+        frequency = *frequency_value;
+        amplitude = *amplitude_value;
+        offset = *offset_value;
+        start_phase_radians = *start_value;
+        maximum_frequency = *maximum_value;
+        enable_mask = static_cast<uint8_t>(*enable_value);
+        helm_started = Clock::now();
+        helm_active = true;
+        return ProductErrorCode::Ok;
+    }
+
+    ProductErrorCode stop_helm() {
+        if (!helm_active) {
+            return ProductErrorCode::Ok;
+        }
+        const auto ready = pwm.ensure_open();
+        if (ready != ProductErrorCode::Ok) {
+            return ready;
+        }
+        HW::PwmNormalizedOutputs outputs{};
+        outputs.enable_mask = 0;
+        auto operation = pwm.device().apply_normalized_outputs(outputs);
+        if (!operation) {
+            return status_error(operation.status());
+        }
+        operation = pwm.device().set_update_enabled(true);
+        if (!operation) {
+            return status_error(operation.status());
+        }
+        const auto ad_ready = ad7606.ensure_open();
+        if (ad_ready != ProductErrorCode::Ok) {
+            return ad_ready;
+        }
+        operation = ad7606.device().set_acquisition_enabled(false);
+        if (!operation) {
+            return status_error(operation.status());
+        }
+        operation = ad7606.device().set_filter_enabled(false);
+        if (!operation) {
+            return status_error(operation.status());
+        }
+        helm_active = false;
+        return ProductErrorCode::Ok;
+    }
+
+    ProductErrorCode build_helm_feedback(ProductMessage& response) {
+        if (!helm_active) {
+            return ProductErrorCode::TaskBusy;
+        }
+        for (size_t sample = 0; sample < 10; ++sample) {
+            const double elapsed = std::chrono::duration<double>(
+                Clock::now() - helm_started).count();
+            const double command = Detail::helm_command(
+                waveform, frequency, amplitude, offset, start_phase_radians,
+                maximum_frequency, elapsed);
+            if (!std::isfinite(command) || command < -30.0 || command > 30.0) {
+                return ProductErrorCode::ParamOutOfRange;
+            }
+
+            HW::PwmNormalizedOutputs outputs{};
+            outputs.enable_mask = enable_mask;
+            for (size_t channel = 0; channel < outputs.value.size(); ++channel) {
+                outputs.value[channel] =
+                    (enable_mask & (1u << channel)) != 0 ? command / 30.0 : 0.0;
+            }
+            auto operation = pwm.device().apply_normalized_outputs(outputs);
+            if (!operation) {
+                return status_error(operation.status());
+            }
+            operation = pwm.device().set_update_enabled(true);
+            if (!operation) {
+                return status_error(operation.status());
+            }
+
+            const auto snapshot = ad7606.device().read_snapshot();
+            if (!snapshot) {
+                return status_error(snapshot.status());
+            }
+            (void)response.set_signed("zl[" + std::to_string(sample) + "][0]",
+                                      saturating_s16(command));
+            (void)response.set_unsigned("self_code[" + std::to_string(sample) + "]", 0);
+            for (size_t channel = 0; channel < 4; ++channel) {
+                (void)response.set_signed(
+                    "fk[" + std::to_string(sample) + "][" +
+                        std::to_string(channel) + "]",
+                    saturating_s16(convert_helm_feedback(snapshot.value().raw[channel])));
+            }
+            if (sample + 1 < 10) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        return ProductErrorCode::Ok;
+    }
+};
+
+HardwareTestProvider::HardwareTestProvider()
+    : impl_(std::make_unique<Impl>()),
+      system_(&impl_->timer_load, impl_.get()) {}
+HardwareTestProvider::~HardwareTestProvider() = default;
+
+ProductErrorCode HardwareTestProvider::initialize() {
+    return impl_->initialize();
+}
+
+ProductErrorCode HardwareTestProvider::handle(const ProductMessage& request,
+                                              ProductMessage& response) {
+    const auto system_result = system_.handle(request, response);
+    if (system_result != ProductErrorCode::CmdUnknown) {
+        return system_result;
+    }
+
+    if (request.name() == "spi_flash_test_request") {
+        return impl_->handle_spi_flash(response);
+    }
+    if (request.name() == "bus_loop_test_request") {
+        return impl_->handle_bus_loop(request, response);
+    }
+    if (request.name() == "bus_echo_test_request") {
+        return impl_->handle_bus_echo(request, response);
+    }
+    if (request.name() == "di_read_request") {
+        return impl_->handle_di(response);
+    }
+    if (request.name() == "do_write_request") {
+        return impl_->handle_do(request, response);
+    }
+    if (request.name() == "elec_health_status_request") {
+        return impl_->handle_electrical_health(response);
+    }
+    if (request.name() == "dh_pulse_config_request") {
+        return impl_->handle_dh_pulse_config(request, response);
+    }
+    if (request.name() == "helm_board_test_request") {
+        return impl_->handle_helm_board(request, response);
+    }
+    if (request.name() == "helm_start_request") {
+        return impl_->start_helm(request);
+    }
+    if (request.name() == "helm_stop_request") {
+        return impl_->stop_helm();
+    }
+    if (request.name() == "dh_control_request") {
+        const auto started = begin_dh(request);
+        return started == ProductErrorCode::Ok
+                   ? handle_dh_control_report(request, response, 0)
+                   : started;
+    }
+    return ProductErrorCode::CmdUnknown;
+}
+
+ProductErrorCode HardwareTestProvider::begin_dh(const ProductMessage& request) {
+    const auto power_enable = request.get_unsigned("power_enable");
+    const auto return_enable = request.get_unsigned("return_enable");
+    const auto first = request.get_unsigned("channel[0]");
+    const auto second = request.get_unsigned("channel[1]");
+    if (!power_enable || !return_enable || !first || !second ||
+        *power_enable > 1 || *return_enable > 1 ||
+        ((*first & ~0x007FFFFFu) != 0) || *second != 0) {
+        return ProductErrorCode::ParamOutOfRange;
+    }
+    const auto ready = impl_->dh.ensure_open();
+    if (ready != ProductErrorCode::Ok) {
+        return ready;
+    }
+    auto configured = impl_->dh.device().set_fire_enabled(*power_enable != 0);
+    if (!configured) {
+        return status_error(configured.status());
+    }
+    configured = impl_->dh.device().set_return_enabled(*return_enable != 0);
+    if (!configured) {
+        return status_error(configured.status());
+    }
+
+    const uint64_t mask = *first;
+    std::vector<uint8_t> channels;
+    for (uint8_t channel = 0; channel < 23; ++channel) {
+        if ((mask & (uint64_t{1} << channel)) != 0) {
+            channels.push_back(channel);
+        }
+    }
+    if (channels.empty()) {
+        return ProductErrorCode::Ok;
+    }
+    configured = impl_->dh.device().set_repeat_mode(HW::DhRepeatMode::Repeatable);
+    if (!configured) {
+        return status_error(configured.status());
+    }
+    configured = impl_->dh.device().set_fire_mode(HW::DhFireMode::Multiple);
+    if (!configured) {
+        return status_error(configured.status());
+    }
+    const auto fired = impl_->dh.device().fire_multiple(channels);
+    return fired ? ProductErrorCode::Ok : status_error(fired.status());
+}
+
+ProductErrorCode HardwareTestProvider::handle_dh_control_report(
+    const ProductMessage& request, ProductMessage& response, size_t report_index) {
+    const auto first = request.get_unsigned("channel[0]");
+    const auto second = request.get_unsigned("channel[1]");
+    if (!first || !second || ((*first & ~0x007FFFFFu) != 0) || *second != 0) {
+        return ProductErrorCode::ParamOutOfRange;
+    }
+    auto ready = impl_->dh.ensure_open();
+    if (ready != ProductErrorCode::Ok) {
+        return ready;
+    }
+    (void)report_index;
+    const auto power = impl_->dh.device().read_fire_enabled();
+    if (!power) {
+        return status_error(power.status());
+    }
+    const auto return_enabled = impl_->dh.device().read_return_enabled();
+    if (!return_enabled) {
+        return status_error(return_enabled.status());
+    }
+    const auto statuses = impl_->dh.device().read_channel_statuses();
+    if (!statuses) {
+        return status_error(statuses.status());
+    }
+    ready = impl_->ads1258.ensure_open();
+    if (ready != ProductErrorCode::Ok) {
+        return ready;
+    }
+    const auto snapshot = impl_->ads1258.device().read_snapshot();
+    if (!snapshot) {
+        return status_error(snapshot.status());
+    }
+
+    auto staged = response;
+    if (!staged.set_unsigned("power_enable_readback", power.value() ? 1u : 0u) ||
+        !staged.set_unsigned("return_enable_readback",
+                             return_enabled.value() ? 1u : 0u)) {
+        return ProductErrorCode::TaskExecFailed;
+    }
+    for (size_t channel = 0; channel < statuses.value().size(); ++channel) {
+        if (!staged.set_unsigned("dh_status.ch" + std::to_string(channel),
+                                 statuses.value()[channel])) {
+            return ProductErrorCode::TaskExecFailed;
+        }
+    }
+    const auto populated = Detail::populate_dh_telemetry(snapshot.value(), staged);
+    if (populated != ProductErrorCode::Ok) {
+        return populated;
+    }
+    response = std::move(staged);
+    return ProductErrorCode::Ok;
+}
+
+bool HardwareTestProvider::helm_feedback_active() const {
+    return impl_->helm_active;
+}
+
+ProductErrorCode HardwareTestProvider::build_helm_feedback(ProductMessage& response) {
+    return impl_->build_helm_feedback(response);
+}
+
+int run_hardware_test_service() {
+    HW::XdmaTransport transport({std::string(kXdmaDevice), kCom3UserOffset,
+                                 kComRegisterWindowSize, -1, -1,
+                                 kCom3EventNumber});
+    const auto opened = transport.open();
+    if (!opened) {
+        LOG_ERROR << "[HW-TEST] 打开 COM3 XDMA Transport 失败："
+                  << opened.status().message;
+        return 5;
+    }
+    HW::ComDevice endpoint(transport);
+    auto configuration = HW::ComDevice::default_config();
+    configuration.loopback = false;
+    configuration.receive_enabled = true;
+    configuration.interrupt_mode = HW::ComInterruptMode::Level;
+    auto operation = endpoint.configure(configuration);
+    if (!operation) {
+        LOG_ERROR << "[HW-TEST] 配置 COM3 614400/8E1 失败："
+                  << operation.status().message;
+        return 5;
+    }
+    operation = endpoint.clear_error_status();
+    if (!operation) {
+        LOG_ERROR << "[HW-TEST] 清除 COM3 错误状态失败："
+                  << operation.status().message;
+        return 5;
+    }
+    operation = endpoint.enable_receive();
+    if (!operation) {
+        LOG_ERROR << "[HW-TEST] 使能 COM3 接收失败：" << operation.status().message;
+        return 5;
+    }
+
+    g_hardware_test_stop = 0;
+    const auto previous_int = std::signal(SIGINT, request_hardware_test_stop);
+    if (previous_int == SIG_ERR) {
+        LOG_ERROR << "[HW-TEST] 安装 SIGINT 处理器失败";
+        return 5;
+    }
+    const auto previous_term = std::signal(SIGTERM, request_hardware_test_stop);
+    if (previous_term == SIG_ERR) {
+        LOG_ERROR << "[HW-TEST] 安装 SIGTERM 处理器失败";
+        (void)std::signal(SIGINT, previous_int);
+        return 5;
+    }
+
+    HardwareTestProvider provider;
+    const auto initialized = provider.initialize();
+    if (initialized != ProductErrorCode::Ok) {
+        LOG_ERROR << "[HW-TEST] ADS1258 临时启动配置失败，未启动产品协议服务";
+        transport.close();
+        return 5;
+    }
+    HardwareTestService service(endpoint, provider);
+    LOG_WARN << "[HW-TEST] COM3 产品协议服务已启动；该画像允许硬件写入且不执行状态恢复";
+    const int result = service.run([]() {
+        return g_hardware_test_stop != 0;
+    });
+    (void)std::signal(SIGINT, previous_int);
+    (void)std::signal(SIGTERM, previous_term);
+    transport.close();
+    return result;
+}
+
+} // namespace MB_DDF::HWTest

@@ -1,0 +1,16 @@
+{
+  "configurations": [
+    {
+      "name": "arm_linux",
+      "compileCommands": [
+        // 本目录下的compile_commands.json
+        "${workspaceFolder}/.vscode/compile_commands.json"
+      ],
+      "cppStandard": "c++20",
+      "includePath": [
+        "${workspaceFolder}/**"
+      ]
+    }
+  ],
+  "version": 4
+}

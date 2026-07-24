@@ -15,6 +15,8 @@
 - 公共 API、CMake 目标和测试注册是“当前已实现行为”的代码事实。代码与文档冲突时，先判断代码是否违反分层、安全或公共契约；代码合理则同步文档，代码明显有缺陷则修代码并补回归测试。
 - `docs/plan/`、`docs/superpowers/plans/` 是历史执行记录，不是现行接口事实源。
 - 审查、搜索和统计默认忽略 `tmp/`、`build*/`、`cmake-build*/`、`out/` 和 `.git/`；不得把附件、生成物或旧构建结果当作仓库实现事实。
+- `dut/mb_ddf_v2/` 是随仓库导入的嵌入式 MB_DDF_v2 被测对象（DUT）快照；该目录内的 `AGENTS.md` 对其子树具有更高优先级。DUT 的 C++20/AArch64 工程、Python/PyQt 串口工具、协议 CSV、目标板测试和部署脚本与宿主 Qt/C++17 工程分开维护。
+- DUT 快照来源为 `H:/Resources/RTLinux/Demos/MB_DDF_v2`，导入提交为 `32d961fbaccc3411378241dd1fa850d662354e4c`；导入边界、排除的生成物和校验统计见 `dut/mb_ddf_v2/IMPORT_METADATA.md`。
 
 ## 当前实现
 
@@ -27,7 +29,7 @@
 - 应用：`src/app/` 提供共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support`，以及独立的 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui`；三个入口均通过 `TestApplicationController` 从 BIZ 测试配置和 HAL 部署配置组装当前唯一的 `mbddf.system_status` 测试。
 - 测试：`tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/`、`tests/app/` 使用 GoogleTest 并通过 CTest 注册；当前清单和统计只以 `docs/design/testing/testing-specification.md` 为准。
 - 当前已有行式 TUI 和 Qt Widgets GUI，但没有 Web UI、TCP Provider、真实厂家链或真实硬件验收。HAL 控制通道已实现 `qt.serial` 和 `qt.udp`，其中 UDP 已有经应用控制器/BIZ/算法/HAL 的本机模拟目标闭环；真实串口尚未联调。`SystemStatusSimulator` 仍只作为纯协议替身。
-- `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容是已批准的 MB_DDF 协议 CSV 基线，当前清单为 32 个 CSV；代码、测试和文档应以该目录现状为准。该目录不在仓库内，交付时仍须记录观测时间和清单；manifest、内容哈希和不可变快照尚未实现。
+- `dut/mb_ddf_v2/docs/design/product_protocol_csv/` 是已导入的 MB_DDF 协议 CSV 快照，导入提交时清单为 32 个 CSV；源事实目录仍为 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv`，本次观测时间和提交记录见 `dut/mb_ddf_v2/IMPORT_METADATA.md`。仓库尚未实现协议 manifest、内容哈希和不可变快照的自动机制。
 
 ## 分层与 I/O 边界
 
@@ -80,3 +82,10 @@ ctest --test-dir build_vs -C Release --output-on-failure
 - 修改 BIZ 时必须运行 BIZ 契约/架构测试，确认 `src/biz/` 和 `tests/biz/` 没有越层依赖。
 - 修改算法层时运行 `tests/algorithm/`；产品模拟或集成验证必须经过 HAL，而不是直连 Simulator。
 - 修复行为缺陷时先补能够复现问题的回归测试；仅修改说明性文档时至少运行链接/术语检查和 `git diff --check`。
+
+### DUT 构建与验证边界
+
+- 宿主工程的 `CMakeLists.txt` 不加入 `dut/mb_ddf_v2/`；宿主 Debug/Release 构建和 CTest 不会隐式编译或运行 DUT。
+- 进入 `dut/mb_ddf_v2/` 后，按其局部 `AGENTS.md` 和 `README.md` 使用 `build.ps1`、`debug.ps1`、`tests/test-dds-only.ps1`、`tests/test-all.ps1` 与 `tests/test-deploy.ps1`。
+- DUT 的协议 CSV、板端单元测试、目标板 smoke/performance/stress 结果属于 DUT 证据；除非明确记录 AArch64 工具链、sysroot、部署目标和运行结果，不得把它们写成宿主应用或真实硬件验收证据。
+- `dut/mb_ddf_v2/` 内的 `src/MB_DDF_HW`、`src/MB_DDF_HW_Test` 和 `test_pyqt` 可能执行真实硬件读写或写入 PWM/方向/使能状态。运行 `HW_TEST`、`DEMO` 或全量硬件测试前，必须确认目标板隔离、串口/链路配置和恢复责任；默认只做源码审查和无硬件的静态验证。

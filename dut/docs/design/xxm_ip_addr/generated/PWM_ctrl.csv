@@ -1,0 +1,76 @@
+﻿ip_core,access,address_raw,address_value,byte_offset,address_scale,name,description,notes,source_workbook,source_sheet,source_row
+PWM_ctrl,write,0x1,1,4,4,舵1占空比（32位，下同）,"当占空比模式为有符号模式时（16'hAAAA），写入占空比为有符号数，占空比和方向会同时更新；
+当占空比模式为无符号模式时（其他），写入占空比为无符号数，对应方向信号CPU需在对应地址给出，即占空比和方向分开更新；
+占空比模式默认为有符号模式。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,3
+PWM_ctrl,write,0x2,2,8,4,舵2占空比,"当占空比模式为有符号模式时（16'hAAAA），写入占空比为有符号数，占空比和方向会同时更新；
+当占空比模式为无符号模式时（其他），写入占空比为无符号数，对应方向信号CPU需在对应地址给出，即占空比和方向分开更新；
+占空比模式默认为有符号模式。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,4
+PWM_ctrl,write,0x3,3,12,4,舵3占空比,"当占空比模式为有符号模式时（16'hAAAA），写入占空比为有符号数，占空比和方向会同时更新；
+当占空比模式为无符号模式时（其他），写入占空比为无符号数，对应方向信号CPU需在对应地址给出，即占空比和方向分开更新；
+占空比模式默认为有符号模式。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,5
+PWM_ctrl,write,0x4,4,16,4,舵4占空比,"当占空比模式为有符号模式时（16'hAAAA），写入占空比为有符号数，占空比和方向会同时更新；
+当占空比模式为无符号模式时（其他），写入占空比为无符号数，对应方向信号CPU需在对应地址给出，即占空比和方向分开更新；
+占空比模式默认为有符号模式。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,6
+PWM_ctrl,write,0x5,5,20,4,舵1方向,"低16位有效，高16位无效；
+当占空比模式为无符号模式时，需使用到此地址；
+16'hAAAA：方向输出1；16'hFFFF：方向输出0；
+4舵方向默认为1。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,7
+PWM_ctrl,write,0x6,6,24,4,舵2方向,"低16位有效，高16位无效；
+当占空比模式为无符号模式时，需使用到此地址；
+16'hAAAA：方向输出1；16'hFFFF：方向输出0；
+4舵方向默认为1。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,8
+PWM_ctrl,write,0x7,7,28,4,舵3方向,"低16位有效，高16位无效；
+当占空比模式为无符号模式时，需使用到此地址；
+16'hAAAA：方向输出1；16'hFFFF：方向输出0；
+4舵方向默认为1。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,9
+PWM_ctrl,write,0x8,8,32,4,舵4方向,"低16位有效，高16位无效；
+当占空比模式为无符号模式时，需使用到此地址；
+16'hAAAA：方向输出1；16'hFFFF：方向输出0；
+4舵方向默认为1。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,10
+PWM_ctrl,write,0x9,9,36,4,4舵占空比更新使能寄存器,"低16位有效，高16位无效；
+16'hAAAA：开启使能；16'hFFFF：关闭使能；
+默认关闭。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,11
+PWM_ctrl,write,0xA,10,40,4,4舵pwm使能寄存器,"D3-D0：1舵pwm使能，4'hA：使能；4'hF：失能；
+D7-D4：2舵pwm使能，4'hA：使能；4'hF：失能；
+D11-D8：3舵pwm使能，4'hA：使能；4'hF：失能；
+D15-D12：4舵pwm使能，4'hA：使能；4'hF：失能；
+默认4个舵pwm失能，输出为0。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,12
+PWM_ctrl,write,0xB,11,44,4,pwm载波频率配置,"低16位有效，高16位无效；
+公式：pwm载波频率配置值 = （波峰值 * 全局时钟周期 / 解算周期）/ 2。
+其中默认载波频率为4000Hz（等同于解算频率）。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,13
+PWM_ctrl,write,0xC,12,48,4,波峰值配置,默认为100000000。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,14
+PWM_ctrl,write,0xD,13,52,4,pwm输出波形模式配置,"低16位有效，高16位无效；
+16'hA001：输出波形为锯齿波；
+16'hA002：输出波形为三角波；
+默认为锯齿波。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,15
+PWM_ctrl,write,0xE,14,56,4,舵占空比模式配置,"低16位有效，高16位无效；
+16'hAAAA：占空比模式为有符号模式；
+16'hFFFF：占空比模式为无符号模式；
+默认为有符号模式。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,16
+PWM_ctrl,read,0x0,0,0,4,通信测试（32位，下同）,32'hAAAABBBB,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,17
+PWM_ctrl,read,0x1,1,4,4,舵1占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,18
+PWM_ctrl,read,0x2,2,8,4,舵2占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,19
+PWM_ctrl,read,0x3,3,12,4,舵3占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,20
+PWM_ctrl,read,0x4,4,16,4,舵4占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,21
+PWM_ctrl,read,0x5,5,20,4,舵1方向,"低1位有效，高31位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,22
+PWM_ctrl,read,0x6,6,24,4,舵2方向,"低1位有效，高31位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,23
+PWM_ctrl,read,0x7,7,28,4,舵3方向,"低1位有效，高31位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,24
+PWM_ctrl,read,0x8,8,32,4,舵4方向,"低1位有效，高31位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,25
+PWM_ctrl,read,0x9,9,36,4,4舵占空比更新使能寄存器,"低1位有效，高31位为0；
+1：使能；0：关闭；",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,26
+PWM_ctrl,read,0xA,10,40,4,4舵pwm使能寄存器,"低4位有效，高28位为0；
+D0：1：使能1舵pwm输出；0：关闭1舵pwm输出；
+D1：1：使能2舵pwm输出；0：关闭2舵pwm输出；
+D2：1：使能3舵pwm输出；0：关闭3舵pwm输出；
+D3：1：使能4舵pwm输出；0：关闭4舵pwm输出；",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,27
+PWM_ctrl,read,0xB,11,44,4,pwm载波频率配置,"低16位有效，高16位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,28
+PWM_ctrl,read,0xC,12,48,4,波峰值配置,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,29
+PWM_ctrl,read,0xD,13,52,4,pwm输出波形模式配置,"低16位有效，高16位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,30
+PWM_ctrl,read,0xE,14,56,4,舵占空比模式配置,"低16位有效，高16位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,31

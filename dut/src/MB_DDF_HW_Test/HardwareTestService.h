@@ -1,0 +1,66 @@
+#pragma once
+
+#include "MB_DDF_HW/Endpoint/IByteEndpoint.h"
+#include "MB_DDF_HW_Test/ProductProtocol.h"
+
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <functional>
+#include <mutex>
+#include <optional>
+
+namespace MB_DDF::HWTest {
+
+class IHardwareTestProvider {
+public:
+    virtual ~IHardwareTestProvider() = default;
+    virtual ProductErrorCode handle(const ProductMessage& request,
+                                    ProductMessage& response) = 0;
+    virtual ProductErrorCode begin_dh(const ProductMessage& request) {
+        (void)request;
+        return ProductErrorCode::Ok;
+    }
+    virtual ProductErrorCode handle_dh_control_report(const ProductMessage& request,
+                                                      ProductMessage& response,
+                                                      size_t report_index) {
+        (void)report_index;
+        return handle(request, response);
+    }
+    virtual bool helm_feedback_active() const = 0;
+    virtual ProductErrorCode build_helm_feedback(ProductMessage& response) = 0;
+};
+
+/// 组合 COM3、产品协议服务和真实板级 Provider 的 HW_TEST 编译期入口。
+int run_hardware_test_service();
+
+class HardwareTestService {
+public:
+    using Sleeper = std::function<void(std::chrono::microseconds)>;
+    using StopPredicate = std::function<bool()>;
+
+    HardwareTestService(HW::IByteEndpoint& endpoint, IHardwareTestProvider& provider,
+                        uint16_t initial_transmit_sequence = 0,
+                        Sleeper sleeper = {});
+
+    bool process_once(HW::Timeout timeout);
+    bool emit_helm_feedback_once();
+    int run(const StopPredicate& stop_requested);
+
+private:
+    static std::string_view response_name(std::string_view request_name);
+    static void set_execution_status(ProductMessage& response, ProductErrorCode error);
+    bool send_message(ProductMessage& message,
+                      std::optional<uint16_t> explicit_sequence = std::nullopt);
+    bool process_dh_request(const ProductMessage& request);
+
+    HW::IByteEndpoint& endpoint_;
+    IHardwareTestProvider& provider_;
+    ProductProtocol protocol_;
+    Sleeper sleeper_;
+    std::mutex send_mutex_;
+    // 接收线程和舵反馈线程不得并发访问同一组硬件 Device/Transport。
+    std::mutex provider_mutex_;
+};
+
+} // namespace MB_DDF::HWTest

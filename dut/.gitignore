@@ -1,0 +1,15 @@
+# .gitignore
+.git/
+build/
+.deps/
+install/
+tests/results/
+.vscode/compile_commands.json
+.vscode/.gdbserver_uploaded
+.worktrees/
+.codegraph/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+~$*.xlsx
+AGENTS.md
