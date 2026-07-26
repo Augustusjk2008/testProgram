@@ -14,30 +14,30 @@ import {
   formatTimestamp,
   formatValue,
 } from '../shared/format'
+import type { TestMeasurementDescriptor } from '../shared/protocol'
 import { useSession } from '../features/session/SessionProvider'
 
-const PRIMARY_FIELDS = [
-  'cpu_usage',
-  'mem_usage',
-  'cpu_temp',
-  'rk_temp',
-  'k7_temp',
-  'power_on_sec',
-]
-
-function MetricCard({ field, value }: { field: string; value: unknown }) {
+function MetricCard({
+  field,
+  value,
+  measurements,
+}: {
+  field: string
+  value: unknown
+  measurements: TestMeasurementDescriptor[]
+}) {
   const isTemperature = field.includes('temp')
   const isRuntime = field === 'power_on_sec'
   const Icon = isTemperature ? Thermometer : field.includes('usage') ? Gauge : Cpu
   return (
     <article className="metric-card">
       <div className="metric-card__top">
-        <span>{fieldLabel(field)}</span>
+        <span>{fieldLabel(field, measurements)}</span>
         <Icon size={18} />
       </div>
       <div className="metric-card__value">
         {isRuntime ? formatDuration(value) : formatValue(value)}
-        {!isRuntime && <small>{fieldUnit(field)}</small>}
+        {!isRuntime && <small>{fieldUnit(field, measurements)}</small>}
       </div>
       <code>{field}</code>
     </article>
@@ -47,17 +47,22 @@ function MetricCard({ field, value }: { field: string; value: unknown }) {
 export function OverviewPage() {
   const { connectionState, latestSample, snapshot } = useSession()
   const values = latestSample?.values ?? {}
-  const visibleFields = PRIMARY_FIELDS.filter((field) => typeof values[field] === 'number')
+  const measurements = snapshot.descriptor.measurements
+  const primaryFields = measurements.filter(({ primary }) => primary).map(({ id }) => id)
+  const visibleFields = (primaryFields.length > 0
+    ? primaryFields
+    : Object.keys(values).filter((field) => typeof values[field] === 'number').slice(0, 6))
+    .filter((field) => typeof values[field] === 'number')
+  const testTitle = snapshot.descriptor.title || snapshot.testItemId || snapshot.algorithmId || '当前测试'
 
   return (
     <div className="page-stack overview-page">
       <section className="overview-lead panel">
         <div className="overview-lead__status">
-          <span className="eyebrow">SYSTEM STATUS / LIVE</span>
-          <h2>{snapshot.testItemId || 'SYSTEM_STATUS'}</h2>
+          <span className="eyebrow">{testTitle.toUpperCase()} / LIVE</span>
+          <h2>{snapshot.descriptor.testItemId || snapshot.testItemId || testTitle}</h2>
           <p>
-            当前演示通过 PC 主机发出状态指令，并将每轮设备反馈实时投影到浏览器。
-            设备自主持续回告保持为独立运行能力。
+            {snapshot.descriptor.description || '当前测试通过 PC 主机采集设备反馈，并将每轮结果实时投影到浏览器。'}
           </p>
           <div className="status-facts">
             <span><i className={`status-dot status-dot--${connectionState}`} />{connectionState}</span>
@@ -80,12 +85,12 @@ export function OverviewPage() {
 
       <section className="metric-grid" aria-label="最新状态量">
         {visibleFields.length > 0 ? visibleFields.map((field) => (
-          <MetricCard field={field} key={field} value={values[field]} />
+          <MetricCard field={field} key={field} value={values[field]} measurements={measurements} />
         )) : (
           <div className="empty-state panel metric-grid__empty">
             <Pulse size={30} />
             <h3>等待第一条遥测样本</h3>
-            <p>在上方完成“加载配置 → 连接设备 → 开始测试”，这里会显示真实 SYSTEM_STATUS 数值。</p>
+            <p>在上方完成“加载配置 → 连接设备 → 开始测试”，这里会显示当前测试的主要测量量。</p>
           </div>
         )}
       </section>
@@ -132,8 +137,8 @@ export function OverviewPage() {
                 .filter(([, value]) => typeof value === 'number')
                 .map(([field, value]) => (
                   <div key={field}>
-                    <span>{fieldLabel(field)}<code>{field}</code></span>
-                    <strong>{formatValue(value, 3)} <small>{fieldUnit(field)}</small></strong>
+                <span>{fieldLabel(field, measurements)}<code>{field}</code></span>
+                    <strong>{formatValue(value, 3)} <small>{fieldUnit(field, measurements)}</small></strong>
                   </div>
                 ))}
             </div>

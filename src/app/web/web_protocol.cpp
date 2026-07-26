@@ -1,5 +1,6 @@
 #include "web_protocol.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QJsonValue>
@@ -37,6 +38,36 @@ bool isKnownAction(const QString& action)
     return actions.contains(action);
 }
 
+QJsonObject descriptorObject(const TestDescriptor& descriptor)
+{
+    QJsonArray supportedRunModes;
+    for (const QString& mode : descriptor.supportedRunModes) {
+        supportedRunModes.push_back(mode);
+    }
+    QJsonArray measurements;
+    for (const TestMeasurementDescriptor& measurement : descriptor.measurements) {
+        measurements.push_back(QJsonObject{
+            {QStringLiteral("id"), measurement.id},
+            {QStringLiteral("label"), measurement.label},
+            {QStringLiteral("unit"), measurement.unit},
+            {QStringLiteral("primary"), measurement.primary},
+        });
+    }
+    return QJsonObject{
+        {QStringLiteral("configId"), descriptor.configId},
+        {QStringLiteral("productModel"), descriptor.productModel},
+        {QStringLiteral("productName"), descriptor.productName},
+        {QStringLiteral("configVersion"), descriptor.configVersion},
+        {QStringLiteral("stepId"), descriptor.stepId},
+        {QStringLiteral("testItemId"), descriptor.testItemId},
+        {QStringLiteral("algorithmId"), descriptor.algorithmId},
+        {QStringLiteral("title"), descriptor.title},
+        {QStringLiteral("description"), descriptor.description},
+        {QStringLiteral("supportedRunModes"), supportedRunModes},
+        {QStringLiteral("measurements"), measurements},
+    };
+}
+
 QJsonObject snapshotObject(const ApplicationSnapshot& snapshot)
 {
     QJsonObject object;
@@ -66,6 +97,8 @@ QJsonObject snapshotObject(const ApplicationSnapshot& snapshot)
                   static_cast<double>(snapshot.cycleIndex));
     object.insert(QStringLiteral("sampleCount"),
                   static_cast<double>(snapshot.sampleCount));
+    object.insert(QStringLiteral("descriptor"),
+                  descriptorObject(snapshot.descriptor));
     return object;
 }
 

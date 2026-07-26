@@ -13,7 +13,7 @@ import { useSession } from '../features/session/SessionProvider'
 import { DEFAULT_TIME_WINDOW_SECONDS } from '../shared/config'
 import { fieldLabel } from '../shared/format'
 
-const STORAGE_KEY = 'hwtest.chart-workspace.SYSTEM_STATUS.v1'
+const STORAGE_KEY = 'hwtest.chart-workspace.v2'
 
 interface StoredConfig {
   layout: ChartLayout
@@ -32,18 +32,24 @@ function loadConfig(): StoredConfig {
 }
 
 export function ChartsPage() {
-  const { clearTelemetry, dataVersion, fields, telemetry } = useSession()
+  const { clearTelemetry, dataVersion, fields, snapshot, telemetry } = useSession()
+  const descriptor = snapshot.descriptor
   const initial = useMemo(loadConfig, [])
   const [layout, setLayout] = useState<ChartLayout>(initial.layout)
   const [windowSeconds, setWindowSeconds] = useState(initial.windowSeconds)
   const [assignments, setAssignments] = useState<SeriesAssignment[]>(initial.assignments)
 
   useEffect(() => {
+    const descriptorFields = descriptor.measurements.map(({ id }) => id)
+    const availableFields = fields.length > 0 ? fields : descriptorFields
     setAssignments((current) => {
-      const next = createAssignments(fields, current)
-      return next.length === current.length ? current : next
+      const scopedCurrent = descriptorFields.length > 0
+        ? current.filter(({ path }) => descriptorFields.includes(path))
+        : current
+      const next = createAssignments(availableFields, scopedCurrent, descriptor.measurements)
+      return next
     })
-  }, [fields])
+  }, [descriptor.measurements, fields])
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -75,7 +81,7 @@ export function ChartsPage() {
           <div>
             <span className="eyebrow">TIME SERIES / CANVAS</span>
             <h2>曲线工作台</h2>
-            <p>横轴固定为采样时间；字段选择、图组和时间窗均保存在本机浏览器。</p>
+            <p>横轴固定为采样时间；当前测试的测量字段、图组和时间窗均保存在本机浏览器。</p>
           </div>
           <div className="performance-note">
             <SlidersHorizontal size={18} />
@@ -89,7 +95,7 @@ export function ChartsPage() {
             <h3>{fields.length === 0 ? '等待可绘制量' : '尚未选择曲线'}</h3>
             <p>
               {fields.length === 0
-                ? '启动 PC 周期测试后，数值字段会从 SYSTEM_STATUS 样本中自动出现。'
+                ? `启动${descriptor.title || '测试'}后，数值字段会从样本中自动出现。`
                 : '在左侧勾选一个或多个量；可全部同图、每项一图或输入自定义图组。'}
             </p>
           </section>
@@ -105,7 +111,7 @@ export function ChartsPage() {
                   ? group.id
                   : group.fields.length === 1
                     ? fieldLabel(group.fields[0])
-                    : 'SYSTEM_STATUS · 合并视图'}
+                  : `${descriptor.title || '测试'} · 合并视图`}
                 windowSeconds={windowSeconds}
               />
             ))}

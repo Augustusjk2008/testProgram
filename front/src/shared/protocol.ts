@@ -6,6 +6,27 @@ export interface TestRunOptions {
   maxCycles: number
 }
 
+export interface TestMeasurementDescriptor {
+  id: string
+  label: string
+  unit: string
+  primary: boolean
+}
+
+export interface TestDescriptor {
+  configId: string
+  productModel: string
+  productName: string
+  configVersion: string
+  stepId: string
+  testItemId: string
+  algorithmId: string
+  title: string
+  description: string
+  supportedRunModes: RunMode[]
+  measurements: TestMeasurementDescriptor[]
+}
+
 export type ActionName =
   | 'load'
   | 'snapshot'
@@ -44,6 +65,7 @@ export interface ApplicationSnapshot {
   maxCycles: number
   cycleIndex: number
   sampleCount: number
+  descriptor: TestDescriptor
 }
 
 export interface ApplicationSample {
@@ -102,6 +124,20 @@ export interface SerialPortInfo {
   systemLocation: string
 }
 
+export const EMPTY_TEST_DESCRIPTOR: TestDescriptor = {
+  configId: '',
+  productModel: '',
+  productName: '',
+  configVersion: '',
+  stepId: '',
+  testItemId: '',
+  algorithmId: '',
+  title: '',
+  description: '',
+  supportedRunModes: [],
+  measurements: [],
+}
+
 export const EMPTY_SNAPSHOT: ApplicationSnapshot = {
   phase: 'empty',
   testState: 'Uninitialized',
@@ -125,4 +161,5 @@ export const EMPTY_SNAPSHOT: ApplicationSnapshot = {
   maxCycles: 1,
   cycleIndex: 0,
   sampleCount: 0,
+  descriptor: EMPTY_TEST_DESCRIPTOR,
 }

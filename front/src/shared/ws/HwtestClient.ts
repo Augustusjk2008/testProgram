@@ -3,8 +3,12 @@ import type {
   ApplicationSample,
   ApplicationSnapshot,
   ReplyMessage,
+  RunMode,
   ServerMessage,
+  TestDescriptor,
+  TestMeasurementDescriptor,
 } from '../protocol'
+import { EMPTY_TEST_DESCRIPTOR } from '../protocol'
 
 type JsonObject = Record<string, unknown>
 
@@ -34,6 +38,62 @@ function requiredNumber(parent: JsonObject, key: string): number {
     throw new Error(`Invalid protocol field: ${key}`)
   }
   return value
+}
+
+function requiredBoolean(parent: JsonObject, key: string): boolean {
+  const value = parent[key]
+  if (typeof value !== 'boolean') {
+    throw new Error(`Invalid protocol field: ${key}`)
+  }
+  return value
+}
+
+function parseDescriptor(value: JsonObject): TestDescriptor {
+  try {
+    const modeValue = value.supportedRunModes
+    if (!Array.isArray(modeValue) || !modeValue.every((mode) => (
+      mode === 'single' || mode === 'pc_periodic' || mode === 'device_stream'
+    ))) {
+      throw new Error('supportedRunModes')
+    }
+    const measurementValue = value.measurements
+    if (!Array.isArray(measurementValue)) throw new Error('measurements')
+    const measurements: TestMeasurementDescriptor[] = measurementValue.map((item) => {
+      if (!isObject(item)) throw new Error('measurement')
+      return {
+        id: requiredString(item, 'id'),
+        label: requiredString(item, 'label'),
+        unit: requiredString(item, 'unit'),
+        primary: requiredBoolean(item, 'primary'),
+      }
+    })
+    return {
+      configId: requiredString(value, 'configId'),
+      productModel: requiredString(value, 'productModel'),
+      productName: requiredString(value, 'productName'),
+      configVersion: requiredString(value, 'configVersion'),
+      stepId: requiredString(value, 'stepId'),
+      testItemId: requiredString(value, 'testItemId'),
+      algorithmId: requiredString(value, 'algorithmId'),
+      title: requiredString(value, 'title'),
+      description: requiredString(value, 'description'),
+      supportedRunModes: modeValue as RunMode[],
+      measurements,
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid protocol descriptor: ${detail}`)
+  }
+}
+
+function parseSnapshot(value: JsonObject): ApplicationSnapshot {
+  const descriptorValue = value.descriptor
+  return {
+    ...(value as unknown as ApplicationSnapshot),
+    descriptor: descriptorValue === undefined
+      ? EMPTY_TEST_DESCRIPTOR
+      : parseDescriptor(requiredObject(value, 'descriptor')),
+  }
 }
 
 function parseSample(value: JsonObject): ApplicationSample {
@@ -72,7 +132,7 @@ export function parseServerMessage(text: string): ServerMessage {
       v: 1,
       type: 'snapshot',
       seq: requiredNumber(parsed, 'seq'),
-      snapshot: requiredObject(parsed, 'snapshot') as unknown as ApplicationSnapshot,
+      snapshot: parseSnapshot(requiredObject(parsed, 'snapshot')),
     }
   }
   if (parsed.type === 'sample') {

@@ -44,6 +44,27 @@ struct ApplicationSample {
     QVariantMap tags;
 };
 
+struct TestMeasurementDescriptor {
+    QString id;
+    QString label;
+    QString unit;
+    bool primary = false;
+};
+
+struct TestDescriptor {
+    QString configId;
+    QString productModel;
+    QString productName;
+    QString configVersion;
+    QString stepId;
+    QString testItemId;
+    QString algorithmId;
+    QString title;
+    QString description;
+    QVector<QString> supportedRunModes;
+    QVector<TestMeasurementDescriptor> measurements;
+};
+
 struct ApplicationSnapshot {
     QString phase = QStringLiteral("empty");
     QString testState = QStringLiteral("Uninitialized");
@@ -67,6 +88,7 @@ struct ApplicationSnapshot {
     quint64 maxCycles = 1;
     quint64 cycleIndex = 0;
     quint64 sampleCount = 0;
+    TestDescriptor descriptor;
 };
 
 class TestApplicationController final : public QObject {
@@ -112,5 +134,7 @@ Q_DECLARE_METATYPE(hwtest::app::ActionResult)
 Q_DECLARE_METATYPE(hwtest::app::ApplicationSample)
 Q_DECLARE_METATYPE(hwtest::app::ApplicationSnapshot)
 Q_DECLARE_METATYPE(hwtest::app::SerialPortInfo)
+Q_DECLARE_METATYPE(hwtest::app::TestDescriptor)
+Q_DECLARE_METATYPE(hwtest::app::TestMeasurementDescriptor)
 Q_DECLARE_METATYPE(hwtest::app::TestRunOptions)
 Q_DECLARE_METATYPE(QVector<hwtest::app::SerialPortInfo>)

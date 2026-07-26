@@ -26,6 +26,27 @@ inline void expectSemanticallyEquivalentSnapshots(const ApplicationSnapshot& lef
     EXPECT_EQ(left.message, right.message);
     EXPECT_EQ(left.attempts, right.attempts);
     EXPECT_EQ(left.rawData, right.rawData);
+    EXPECT_EQ(left.descriptor.configId, right.descriptor.configId);
+    EXPECT_EQ(left.descriptor.productModel, right.descriptor.productModel);
+    EXPECT_EQ(left.descriptor.productName, right.descriptor.productName);
+    EXPECT_EQ(left.descriptor.configVersion, right.descriptor.configVersion);
+    EXPECT_EQ(left.descriptor.stepId, right.descriptor.stepId);
+    EXPECT_EQ(left.descriptor.testItemId, right.descriptor.testItemId);
+    EXPECT_EQ(left.descriptor.algorithmId, right.descriptor.algorithmId);
+    EXPECT_EQ(left.descriptor.title, right.descriptor.title);
+    EXPECT_EQ(left.descriptor.description, right.descriptor.description);
+    EXPECT_EQ(left.descriptor.supportedRunModes, right.descriptor.supportedRunModes);
+    ASSERT_EQ(left.descriptor.measurements.size(), right.descriptor.measurements.size());
+    for (int index = 0; index < left.descriptor.measurements.size(); ++index) {
+        EXPECT_EQ(left.descriptor.measurements.at(index).id,
+                  right.descriptor.measurements.at(index).id);
+        EXPECT_EQ(left.descriptor.measurements.at(index).label,
+                  right.descriptor.measurements.at(index).label);
+        EXPECT_EQ(left.descriptor.measurements.at(index).unit,
+                  right.descriptor.measurements.at(index).unit);
+        EXPECT_EQ(left.descriptor.measurements.at(index).primary,
+                  right.descriptor.measurements.at(index).primary);
+    }
 }
 
 } // namespace hwtest::app::test

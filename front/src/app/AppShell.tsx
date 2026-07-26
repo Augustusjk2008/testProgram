@@ -27,6 +27,9 @@ interface AppShellProps {
 export function AppShell({ page, onPageChange, children }: AppShellProps) {
   const { connectionDetail, connectionState, snapshot, wsUrl } = useSession()
   const activePage = NAV_ITEMS.find(({ id }) => id === page) ?? NAV_ITEMS[0]
+  const descriptor = snapshot.descriptor
+  const productLabel = descriptor.productModel || 'MB_DDF'
+  const testLabel = descriptor.title || descriptor.algorithmId || '未选择测试'
 
   return (
     <div className="app-shell">
@@ -39,7 +42,7 @@ export function AppShell({ page, onPageChange, children }: AppShellProps) {
         <div className="sidebar__station">
           <span className="eyebrow">STATION</span>
           <strong>PC HOST · 01</strong>
-          <small>MB_DDF / SYSTEM_STATUS</small>
+          <small>{productLabel} / {testLabel}</small>
         </div>
 
         <nav aria-label="主导航">
@@ -79,7 +82,7 @@ export function AppShell({ page, onPageChange, children }: AppShellProps) {
           <div className="topbar__session">
             <span><small>控制资源</small><strong>{snapshot.controlResourceId || '未配置'}</strong></span>
             <span><small>任务 ID</small><strong title={snapshot.taskId}>{snapshot.taskId ? snapshot.taskId.slice(0, 8) : '—'}</strong></span>
-            <span><small>算法</small><strong>{snapshot.algorithmId || 'mbddf.system_status'}</strong></span>
+            <span><small>算法</small><strong>{snapshot.algorithmId || descriptor.algorithmId || '未选择'}</strong></span>
           </div>
         </header>
 

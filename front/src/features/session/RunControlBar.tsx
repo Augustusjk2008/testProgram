@@ -6,7 +6,7 @@ import {
   Stop as StopIcon,
   WarningCircle,
 } from '@phosphor-icons/react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type { RunMode, TestRunOptions } from '../../shared/protocol'
 import { useSession } from './SessionProvider'
@@ -43,6 +43,11 @@ export function RunControlBar() {
 
   const active = ['running', 'paused', 'stopping'].includes(snapshot.phase)
   const canStart = ['ready', 'finished', 'stopped'].includes(snapshot.phase)
+  const testTitle = snapshot.descriptor.title || snapshot.descriptor.productName || '当前测试'
+  const supportedModes: RunMode[] = snapshot.descriptor.supportedRunModes.length > 0
+    ? snapshot.descriptor.supportedRunModes
+    : ['single', 'pc_periodic']
+  const modeOptions = MODE_LABELS.filter(({ mode }) => supportedModes.includes(mode))
   const periodicError = useMemo(() => {
     if (options.mode !== 'pc_periodic') return ''
     if (!Number.isInteger(options.intervalMs) || options.intervalMs < 10 || options.intervalMs > 3_600_000) {
@@ -53,7 +58,15 @@ export function RunControlBar() {
     }
     return ''
   }, [options])
-  const unsupported = options.mode === 'device_stream'
+  const unsupported = !supportedModes.includes(options.mode)
+
+  useEffect(() => {
+    if (supportedModes.includes(options.mode)) return
+    const mode = supportedModes[0] ?? 'single'
+    const next = { ...options, mode }
+    setOptions(next)
+    window.localStorage.setItem(RUN_OPTIONS_KEY, JSON.stringify(next))
+  }, [options, supportedModes])
 
   function saveOptions(next: TestRunOptions) {
     setOptions(next)
@@ -89,7 +102,7 @@ export function RunControlBar() {
       </div>
 
       <div className="run-mode" role="group" aria-label="运行模式">
-        {MODE_LABELS.map(({ mode, title, caption }) => (
+        {modeOptions.map(({ mode, title, caption }) => (
           <button
             className={options.mode === mode ? 'run-mode__item is-active' : 'run-mode__item'}
             disabled={active}
@@ -140,8 +153,10 @@ export function RunControlBar() {
         ) : (
           <div className={unsupported ? 'mode-note mode-note--warning' : 'mode-note'}>
             {unsupported
-              ? 'SYSTEM_STATUS 没有设备流启动/停止命令；该模式保留给支持主动回告的后续算法。'
-              : '执行一次 SYSTEM_STATUS 指令并采集一次反馈。'}
+              ? `${testTitle} 不支持当前运行模式。`
+              : options.mode === 'single'
+                ? (snapshot.descriptor.description || `执行一次${testTitle}并采集一次反馈。`)
+                : '由 PC 按设定间隔重复采集反馈。'}
           </div>
         )}
       </div>

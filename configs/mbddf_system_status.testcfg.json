@@ -95,5 +95,24 @@
     "stopOnFirstFailure": true,
     "allowResume": false
   },
-  "reportFields": {}
+  "reportFields": {
+    "title": "系统状态",
+    "description": "读取处理器、内存、温度、PCIe 与运行时间状态。",
+    "supportedRunModes": ["single", "pc_periodic"],
+    "measurements": [
+      {"id": "status", "label": "设备状态", "unit": "", "primary": false},
+      {"id": "err_code", "label": "设备错误码", "unit": "", "primary": false},
+      {"id": "cpu_usage", "label": "CPU 占用率", "unit": "%", "primary": true},
+      {"id": "mem_usage", "label": "内存占用率", "unit": "%", "primary": true},
+      {"id": "cpu_freq_little", "label": "小核频率", "unit": "MHz", "primary": false},
+      {"id": "cpu_freq_big", "label": "大核频率", "unit": "MHz", "primary": false},
+      {"id": "pcie_speed", "label": "PCIe 速率", "unit": "GT/s", "primary": false},
+      {"id": "pcie_width", "label": "PCIe 通道宽度", "unit": "lane", "primary": false},
+      {"id": "net_init_time", "label": "网络初始化时间", "unit": "ms", "primary": false},
+      {"id": "cpu_temp", "label": "CPU 温度", "unit": "°C", "primary": true},
+      {"id": "rk_temp", "label": "RK 温度", "unit": "°C", "primary": true},
+      {"id": "k7_temp", "label": "K7 温度", "unit": "°C", "primary": true},
+      {"id": "power_on_sec", "label": "上电时长", "unit": "s", "primary": true}
+    ]
+  }
 }

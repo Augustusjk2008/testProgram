@@ -169,6 +169,15 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     snapshot.maxCycles = 0;
     snapshot.cycleIndex = 17;
     snapshot.sampleCount = 42;
+    snapshot.descriptor.configId = QStringLiteral("mbddf-system-status");
+    snapshot.descriptor.title = QStringLiteral("系统状态");
+    snapshot.descriptor.supportedRunModes = {
+        QStringLiteral("single"), QStringLiteral("pc_periodic")};
+    snapshot.descriptor.measurements = {
+        TestMeasurementDescriptor{QStringLiteral("cpu_usage"),
+                                  QStringLiteral("CPU 占用率"),
+                                  QStringLiteral("%"),
+                                  true}};
 
     const QJsonObject envelope = makeSnapshot(12, snapshot);
     EXPECT_EQ(envelope.value(QStringLiteral("v")).toInt(), 1);
@@ -177,7 +186,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(envelope.value(QStringLiteral("seq")).toInt(), 12);
 
     const QJsonObject json = envelope.value(QStringLiteral("snapshot")).toObject();
-    EXPECT_EQ(json.size(), 22);
+    EXPECT_EQ(json.size(), 23);
     EXPECT_EQ(json.value(QStringLiteral("phase")).toString(), snapshot.phase);
     EXPECT_EQ(json.value(QStringLiteral("testState")).toString(), snapshot.testState);
     EXPECT_EQ(json.value(QStringLiteral("controlResourceId")).toString(),
@@ -204,6 +213,26 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
               static_cast<double>(snapshot.cycleIndex));
     EXPECT_EQ(json.value(QStringLiteral("sampleCount")).toDouble(),
               static_cast<double>(snapshot.sampleCount));
+    const QJsonObject descriptor = json.value(QStringLiteral("descriptor")).toObject();
+    EXPECT_EQ(descriptor.value(QStringLiteral("configId")).toString(),
+              snapshot.descriptor.configId);
+    EXPECT_EQ(descriptor.value(QStringLiteral("title")).toString(),
+              snapshot.descriptor.title);
+    ASSERT_EQ(descriptor.value(QStringLiteral("supportedRunModes"))
+                  .toArray()
+                  .size(),
+              2);
+    ASSERT_EQ(descriptor.value(QStringLiteral("measurements"))
+                  .toArray()
+                  .size(),
+              1);
+    EXPECT_EQ(descriptor.value(QStringLiteral("measurements"))
+                  .toArray()
+                  .first()
+                  .toObject()
+                  .value(QStringLiteral("unit"))
+                  .toString(),
+              QStringLiteral("%"));
     const QJsonObject rawData = json.value(QStringLiteral("rawData")).toObject();
     EXPECT_DOUBLE_EQ(rawData.value(QStringLiteral("cpu_usage")).toDouble(), 12.5);
     ASSERT_TRUE(rawData.value(QStringLiteral("flags")).isArray());

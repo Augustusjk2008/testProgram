@@ -23,6 +23,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QSet>
 #include <QThread>
 #include <QTimer>
 
@@ -112,6 +113,81 @@ QString serialPortNameFor(const QVariantMap& halConfig, const QString& resourceI
         .value(QStringLiteral("portName")).toString().trimmed();
 }
 
+TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
+                                  const hwtest::biz::TestStep& step)
+{
+    TestDescriptor descriptor;
+    descriptor.configId = config.configId;
+    descriptor.productModel = config.productModel;
+    descriptor.productName = config.productName;
+    descriptor.configVersion = config.configVersion;
+    descriptor.stepId = step.stepId;
+    descriptor.testItemId = step.testItemId;
+    descriptor.algorithmId = step.algorithmId;
+
+    const QVariantMap presentation = config.reportFields;
+    descriptor.title = presentation.value(QStringLiteral("title")).toString().trimmed();
+    if (descriptor.title.isEmpty()) {
+        descriptor.title = step.name.trimmed();
+    }
+    if (descriptor.title.isEmpty()) {
+        descriptor.title = step.testItemId;
+    }
+    descriptor.description =
+        presentation.value(QStringLiteral("description")).toString().trimmed();
+
+    static const QSet<QString> knownModes{
+        QStringLiteral("single"),
+        QStringLiteral("pc_periodic"),
+        QStringLiteral("device_stream"),
+    };
+    QSet<QString> seenModes;
+    for (const QVariant& modeValue :
+         presentation.value(QStringLiteral("supportedRunModes")).toList()) {
+        const QString mode = modeValue.toString().trimmed();
+        if (knownModes.contains(mode) && !seenModes.contains(mode)) {
+            descriptor.supportedRunModes.push_back(mode);
+            seenModes.insert(mode);
+        }
+    }
+    if (descriptor.supportedRunModes.isEmpty()) {
+        descriptor.supportedRunModes = {
+            QStringLiteral("single"), QStringLiteral("pc_periodic")};
+    }
+
+    QSet<QString> seenMeasurements;
+    for (const QVariant& measurementValue :
+         presentation.value(QStringLiteral("measurements")).toList()) {
+        const QVariantMap map = measurementValue.toMap();
+        const QString id = map.value(QStringLiteral("id")).toString().trimmed();
+        if (id.isEmpty() || seenMeasurements.contains(id)) {
+            continue;
+        }
+        QString label = map.value(QStringLiteral("label")).toString().trimmed();
+        if (label.isEmpty()) {
+            label = id;
+        }
+        descriptor.measurements.push_back(TestMeasurementDescriptor{
+            id,
+            label,
+            map.value(QStringLiteral("unit")).toString().trimmed(),
+            map.value(QStringLiteral("primary")).toBool(),
+        });
+        seenMeasurements.insert(id);
+    }
+    if (descriptor.measurements.isEmpty()) {
+        for (const hwtest::biz::Criterion& criterion : step.criteria) {
+            const QString id = criterion.metric.trimmed();
+            if (!id.isEmpty() && !seenMeasurements.contains(id)) {
+                descriptor.measurements.push_back(
+                    TestMeasurementDescriptor{id, id, {}, true});
+                seenMeasurements.insert(id);
+            }
+        }
+    }
+    return descriptor;
+}
+
 } // namespace
 
 class TestApplicationController::Impl {
@@ -132,6 +208,7 @@ public:
     hwtest::hal::IHalDevice* device = nullptr;
     std::unique_ptr<hwtest::biz::IAlgorithmExecutor> executor;
     QString selectedAlgorithmId;
+    TestDescriptor descriptor;
     TestServicePtr runner{nullptr, &hwtest::biz::destroyTestRunService};
     hwtest::logging::LogService logService;
     std::unique_ptr<hwtest::logging::JsonLineFileSink> fileSink;
@@ -151,6 +228,8 @@ TestApplicationController::TestApplicationController(QObject* parent)
     qRegisterMetaType<ApplicationSample>();
     qRegisterMetaType<ApplicationSnapshot>();
     qRegisterMetaType<SerialPortInfo>();
+    qRegisterMetaType<TestDescriptor>();
+    qRegisterMetaType<TestMeasurementDescriptor>();
     qRegisterMetaType<TestRunOptions>();
     qRegisterMetaType<QVector<SerialPortInfo>>();
 }
@@ -187,6 +266,7 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
 
     int enabledSteps = 0;
     QString selectedAlgorithmId;
+    const hwtest::biz::TestStep* selectedStep = nullptr;
     for (const hwtest::biz::TestStep& step : testConfig.value.steps) {
         if (!step.enabled) {
             continue;
@@ -199,6 +279,7 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
         }
         ++enabledSteps;
         selectedAlgorithmId = step.algorithmId;
+        selectedStep = &step;
     }
     if (enabledSteps != 1) {
         return failure(QStringLiteral("test_config"),
@@ -246,12 +327,14 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     m_impl->testConfigPath = absoluteTestPath;
     m_impl->halConfigPath = absoluteHalPath;
     m_impl->selectedAlgorithmId = selectedAlgorithmId;
+    m_impl->descriptor = makeTestDescriptor(testConfig.value, *selectedStep);
     m_impl->halConfig = halConfig;
     m_impl->controls = controls;
     m_impl->runTimeoutMs = timeoutMs;
     m_impl->snapshot = {};
     m_impl->suppressedResultTaskId.clear();
     m_impl->snapshot.phase = QStringLiteral("configured");
+    m_impl->snapshot.descriptor = m_impl->descriptor;
     m_impl->snapshot.controlResourceId = selected->resourceId;
     m_impl->snapshot.providerId = selected->providerId;
     m_impl->snapshot.serialPortName = serialPortNameFor(halConfig, selected->resourceId);
@@ -932,6 +1015,9 @@ ActionResult TestApplicationController::shutdown()
     m_impl->device = nullptr;
 
     m_impl->snapshot = {};
+    if (configured) {
+        m_impl->snapshot.descriptor = m_impl->descriptor;
+    }
     if (!firstFailure.ok) {
         m_impl->latchedShutdownFailure = firstFailure;
         m_impl->snapshot.phase = QStringLiteral("shutdown_failed");

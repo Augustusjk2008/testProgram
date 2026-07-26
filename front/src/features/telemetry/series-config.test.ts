@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildChartGroups, createAssignments } from './series-config'
+import type { TestMeasurementDescriptor } from '../../shared/protocol'
 
 describe('series chart grouping', () => {
   const assignments = [
@@ -32,6 +33,18 @@ describe('series chart grouping', () => {
     expect(createAssignments(['cpu_usage', 'rk_temp'], assignments)).toEqual([
       ...assignments,
       { path: 'rk_temp', enabled: true, groupId: 'temperature' },
+    ])
+  })
+
+  it('uses descriptor primary flags for the initial chart selection', () => {
+    const measurements: TestMeasurementDescriptor[] = [
+      { id: 'c_volt', label: 'C 路电压', unit: 'V', primary: true },
+      { id: 'activate_bits', label: '激活位', unit: '', primary: false },
+    ]
+
+    expect(createAssignments(['c_volt', 'activate_bits'], [], measurements)).toEqual([
+      { path: 'c_volt', enabled: true, groupId: 'system' },
+      { path: 'activate_bits', enabled: false, groupId: 'system' },
     ])
   })
 })

@@ -1,3 +1,5 @@
+import type { TestMeasurementDescriptor } from './protocol'
+
 const FIELD_LABELS: Record<string, string> = {
   cpu_usage: 'CPU 占用率',
   mem_usage: '内存占用率',
@@ -28,12 +30,20 @@ const FIELD_UNITS: Record<string, string> = {
   power_on_sec: 's',
 }
 
-export function fieldLabel(path: string): string {
-  return FIELD_LABELS[path] ?? path.replaceAll('_', ' ')
+export function fieldLabel(
+  path: string,
+  measurements: TestMeasurementDescriptor[] = [],
+): string {
+  const descriptor = measurements.find(({ id }) => id === path)
+  return descriptor?.label || FIELD_LABELS[path] || path.replaceAll('_', ' ')
 }
 
-export function fieldUnit(path: string): string {
-  return FIELD_UNITS[path] ?? ''
+export function fieldUnit(
+  path: string,
+  measurements: TestMeasurementDescriptor[] = [],
+): string {
+  const descriptor = measurements.find(({ id }) => id === path)
+  return descriptor ? descriptor.unit : FIELD_UNITS[path] || ''
 }
 
 export function formatValue(value: unknown, digits = 2): string {

@@ -127,6 +127,37 @@ TEST(TestApplicationControllerTest, LoadsAndPreparesElectricalHealthConfiguratio
     EXPECT_TRUE(controller.shutdown().ok);
 }
 
+TEST(TestApplicationControllerTest, ProjectsDescriptorFromElectricalHealthConfiguration)
+{
+    ensureQtApplication();
+    const QString assets = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_ELEC_HEALTH_CONFIG),
+        QStringLiteral(HWTEST_APP_HAL_CONFIG)).ok);
+
+    const TestDescriptor& descriptor = controller.snapshot().descriptor;
+    EXPECT_EQ(descriptor.configId, QStringLiteral("mbddf-elec-health"));
+    EXPECT_EQ(descriptor.productModel, QStringLiteral("MB_DDF_v2"));
+    EXPECT_EQ(descriptor.algorithmId, QStringLiteral("mbddf.elec_health_status"));
+    EXPECT_EQ(descriptor.title, QStringLiteral("电气健康"));
+    EXPECT_EQ(descriptor.description, QStringLiteral("读取电源与辅助电压健康量。"));
+    const QVector<QString> expectedModes{
+        QStringLiteral("single"), QStringLiteral("pc_periodic")};
+    EXPECT_EQ(descriptor.supportedRunModes, expectedModes);
+    ASSERT_EQ(descriptor.measurements.size(), 13);
+    EXPECT_EQ(descriptor.measurements.first().id, QStringLiteral("status"));
+    EXPECT_EQ(descriptor.measurements.first().label, QStringLiteral("设备状态"));
+    EXPECT_EQ(descriptor.measurements.at(2).id, QStringLiteral("c_volt"));
+    EXPECT_EQ(descriptor.measurements.at(2).unit, QStringLiteral("V"));
+    EXPECT_TRUE(descriptor.measurements.at(2).primary);
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
 TEST(TestApplicationControllerTest, RunsElectricalHealthThroughTheSelectedUdpControlResource)
 {
     ensureQtApplication();

@@ -16,14 +16,14 @@
 | tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
 | tests/biz/ | hwtest_biz_tests | 6 | 41 | 配置、计划、单次/PC 周期/设备流调度、Qt 工作线程、样本、报告和架构边界 |
 | tests/algorithm/ | hwtest_algorithm_tests | 2 | 22 | MB_DDF CSV、流式控制传输、SYSTEM_STATUS、ELEC_HEALTH_STATUS 和设备流能力判定 |
-| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 81 | 共享启动/控制器、TUI/GUI/WebSocket、连续运行样本、异步停止与关闭、跨前端等价性、架构边界及经 HAL/Qt UDP 的两个独立测试闭环 |
-| 合计 | 7 个目标 | 28 | 182 | 当前源级 GoogleTest 清单 |
+| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 82 | 共享启动/控制器、TUI/GUI/WebSocket、连续运行样本、异步停止与关闭、跨前端等价性、架构边界、配置 descriptor 及经 HAL/Qt UDP 的两个独立测试闭环 |
+| 合计 | 7 个目标 | 28 | 183 | 当前源级 GoogleTest 清单 |
 
-182 是当前测试源码中的 GoogleTest 定义数。完整构建后的 CTest 清单为 192 条：182 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试。2026-07-26 的 Debug 构建后 `ctest -N` 实际列出 192 条；清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
+183 是当前测试源码中的 GoogleTest 定义数。完整构建后的 CTest 清单为 193 条：183 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试。2026-07-26 的 Debug 构建后 `ctest -N` 实际列出 193 条；清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
 
 28 个测试定义源文件使用 `*_test.cpp` 命名。两个 HAL DLL fixture、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含测试定义，不计入该数量。
 
-浏览器前端当前有 3 个 `*.test.ts` 文件、9 条 Vitest，用于协议解析/请求、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组。它们由 `npm test` 独立运行，不计入上述 192 条 CTest。
+浏览器前端当前有 4 个 `*.test.ts` 文件、14 条 Vitest，用于协议解析/请求、配置 descriptor 校验、配置测量标签/单位、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组。它们由 `npm test` 独立运行，不计入上述 193 条 CTest。
 
 ## 2. 当前覆盖与条件资产
 
@@ -33,8 +33,8 @@
 | 日志 | LogService、JsonLineFileSink、HalLogEvent 到 LogEvent 桥接 | 不覆盖 UI 或真实设备日志链 |
 | BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、专用 QThread 的 event dispatcher/计时器注册、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象；Qt 线程回归只证明同步任务具备 Qt dispatcher，不证明算法调用期间持续泵送事件、HAL actor 或跨线程取消；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
 | 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器、两个固定命令执行器的 Qt UDP/脚本传输路径、ELEC_HEALTH_STATUS 字段判定和两个算法拒绝设备流 | 当前只实现两个已知的独立单步算法；本机 UDP 模拟目标不等同于真实板端通讯；拒绝设备流不证明其他算法已实现设备持续回告 |
-| 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、控制资源与会话串口选择、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | 默认自动化中的串口选择只证明配置覆盖；下述 COM3 实机 smoke 独立于 CTest，不能外推到真实网口、其他 DUT 或长期稳定性 |
-| 浏览器前端 | Vitest 下的类型化协议、有界数据结构、字段发现、时间窗、降采样和图组；TypeScript/Vite 生产构建 | 不替代 WebSocket/UDP C++ 集成测试，也不证明真实硬件、长期浏览器稳定性或设备流算法 |
+| 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、控制资源与会话串口选择、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影（含配置 descriptor）、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | 默认自动化中的串口选择只证明配置覆盖；下述 COM3 实机 smoke 独立于 CTest，不能外推到真实网口、其他 DUT 或长期稳定性 |
+| 浏览器前端 | Vitest 下的类型化协议、descriptor 校验与字段标签/单位、有界数据结构、字段发现、时间窗、降采样和图组；TypeScript/Vite 生产构建 | 不替代 WebSocket/UDP C++ 集成测试，也不证明真实硬件、长期浏览器稳定性或设备流算法 |
 
 下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
 
@@ -58,7 +58,7 @@
 ### 2.2 2026-07-26 QThread 修复后复核
 
 - `TestRunService` 的任务 worker 已从原生 `std::thread` 迁移到 `QThread::create()`；`TestRunServiceTest.PcPeriodicWorkerProvidesQtEventDispatcher` 先在旧实现上因 dispatcher 为空、计时器 ID 为 `0` 失败，再在新实现上通过。该用例检查一次 `prepare()` 和两轮 `executeStep()` 位于同一非应用线程、存在 `QAbstractEventDispatcher` 且可注册 Qt 计时器。
-- 使用外部 32 份协议 CSV 完成 Debug 全量构建和 192 条 CTest，结果为 192/192 通过；随后 Release 全量构建和 CTest 同样为 192/192 通过。
+- 使用外部 32 份协议 CSV 完成 Debug 全量构建和 193 条 CTest，结果为 193/193 通过；随后 Release 全量构建和 CTest 同样为 193/193 通过。
 - 自退出的 `hwtest_pc_runner` 随后使用 `CONTROL_SERIAL`、COM3、`614400 / 8E1 / 无流控` 发起一次 SYSTEM_STATUS；调用覆盖串口打开、写入、等待读取和关闭，未再观察到 `QObject::startTimer` 警告，但因板端产品协议服务未响应而以 `BusTimeout` 结束。目标板 SSH 22 端口探测也未在 15 秒内成功。
 - 随后在用户再次明确授权、板端可达且无遗留服务的条件下，使用来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 的 `HW_TEST Release` 画像启动产品协议服务。宿主只启动 Debug `hwtest_web`，显式选择 `CONTROL_SERIAL`、COM3 和外部 32 份协议 CSV；未启动浏览器/Vite 前端，WebSocket 客户端直接发送 `load -> prepare -> single -> pc_periodic -> quit`。
 - 单次运行收到一个 `SYSTEM_STATUS` 样本并到达 `finished/Pass/Ok`，`status=0`、`err_code=0`。随后 `pc_periodic` 以 `intervalMs=100`、`maxCycles=3` 完成轮次 `1,2,3`，样本事件序号为 `2,3,4`，最终快照为 `cycleIndex=3`、`sampleCount=3` 和 `finished/Pass/Ok`；三轮产品协议序号依次为 `4660,4661,4662`。

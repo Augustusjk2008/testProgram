@@ -95,5 +95,24 @@
     "stopOnFirstFailure": true,
     "allowResume": false
   },
-  "reportFields": {}
+  "reportFields": {
+    "title": "电气健康",
+    "description": "读取电源与辅助电压健康量。",
+    "supportedRunModes": ["single", "pc_periodic"],
+    "measurements": [
+      {"id": "status", "label": "设备状态", "unit": "", "primary": false},
+      {"id": "err_code", "label": "设备错误码", "unit": "", "primary": false},
+      {"id": "c_volt", "label": "C 路电压", "unit": "V", "primary": true},
+      {"id": "b_volt", "label": "B 路电压", "unit": "V", "primary": true},
+      {"id": "activate_bits", "label": "激活位", "unit": "", "primary": false},
+      {"id": "external_vol", "label": "外部电压", "unit": "V", "primary": true},
+      {"id": "core_vol", "label": "核心电压", "unit": "V", "primary": true},
+      {"id": "assist_vol", "label": "辅助电压", "unit": "V", "primary": true},
+      {"id": "v28_5", "label": "28.5 V 电源", "unit": "V", "primary": true},
+      {"id": "js_5V", "label": "计算 5 V 电源", "unit": "V", "primary": false},
+      {"id": "dyt_5V", "label": "调理 5 V 电源", "unit": "V", "primary": false},
+      {"id": "power_24V", "label": "24 V 电源", "unit": "V", "primary": true},
+      {"id": "value_YX", "label": "YX 模拟量", "unit": "", "primary": false}
+    ]
+  }
 }

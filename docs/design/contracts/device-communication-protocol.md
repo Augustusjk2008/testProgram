@@ -209,6 +209,8 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 `ELEC_HEALTH_STATUS` 使用独立的 `configs/mbddf_elec_health.testcfg.json`，配置只把 Profile 替换为 `elec_health_status_request` / `elec_health_status_response`。请求命令为 `type_group=0x05`、`sub_type=0x01`，其保留填充字节由 CSV 定义；响应解码为 `status`、`err_code`、`c_volt`、`b_volt`、`activate_bits`、`external_vol`、`core_vol`、`assist_vol`、`v28_5`、`js_5V`、`dyt_5V`、`power_24V` 和 `value_YX`。当前判定标准只有 `status == 0` 且 `err_code == 0`，电压和模拟量仅作为样本输出，不在配置中推导或增加未经批准的阈值。该命令没有设备侧 START/STOP 配对，因此支持单次和 PC 周期，不支持 `device_stream`。
 
+两个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes` 和 `measurements`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；缺少展示元数据时，前端回退到步骤身份和样本字段。
+
 算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。
 
 当前 `ProtocolProfile` 列表由 BIZ 保存和透传，但 MB_DDF 固定命令执行器没有把它与 `executionConfig.protocol.*ProfileId`、CSV 命令键或 HAL 资源做完整交叉校验。该绑定仍是未实现项，不能仅凭两个同名 Profile 宣称映射已建立。

@@ -2,6 +2,7 @@ import { CheckSquare, Eraser, SquaresFour } from '@phosphor-icons/react'
 
 import { fieldLabel, fieldUnit } from '../../shared/format'
 import type { ChartLayout, SeriesAssignment } from './series-config'
+import { useSession } from '../session/SessionProvider'
 
 interface ChartConfiguratorProps {
   assignments: SeriesAssignment[]
@@ -28,6 +29,8 @@ export function ChartConfigurator({
   onWindowChange,
   onClear,
 }: ChartConfiguratorProps) {
+  const { snapshot } = useSession()
+  const measurements = snapshot.descriptor.measurements
   const selectedCount = assignments.filter(({ enabled }) => enabled).length
 
   function update(path: string, patch: Partial<SeriesAssignment>) {
@@ -110,8 +113,8 @@ export function ChartConfigurator({
                     type="checkbox"
                   />
                   <span>
-                    <strong>{fieldLabel(assignment.path)}</strong>
-                    <small>{assignment.path}{fieldUnit(assignment.path) ? ` · ${fieldUnit(assignment.path)}` : ''}</small>
+                    <strong>{fieldLabel(assignment.path, measurements)}</strong>
+                    <small>{assignment.path}{fieldUnit(assignment.path, measurements) ? ` · ${fieldUnit(assignment.path, measurements)}` : ''}</small>
                   </span>
                 </label>
                 {layout === 'custom' && assignment.enabled && (

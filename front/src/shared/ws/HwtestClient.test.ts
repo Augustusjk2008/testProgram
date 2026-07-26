@@ -37,4 +37,66 @@ describe('HwtestClient protocol boundary', () => {
     expect(() => parseServerMessage('{"v":2,"type":"hello"}'))
       .toThrow(/protocol/i)
   })
+
+  it('parses the configuration descriptor carried by snapshots', () => {
+    const snapshot = parseServerMessage(JSON.stringify({
+      v: 1,
+      type: 'snapshot',
+      seq: 3,
+      snapshot: {
+        phase: 'configured',
+        testState: 'Uninitialized',
+        controlResourceId: 'CONTROL_NETWORK',
+        providerId: 'qt.udp',
+        serialPortName: '',
+        taskId: '',
+        stepId: '',
+        testItemId: '',
+        algorithmId: '',
+        progress: 0,
+        progressStep: '',
+        hasResult: false,
+        verdict: '',
+        errorCode: '',
+        message: '',
+        attempts: 0,
+        rawData: {},
+        runMode: 'single',
+        intervalMs: 1000,
+        maxCycles: 1,
+        cycleIndex: 0,
+        sampleCount: 0,
+        descriptor: {
+          configId: 'mbddf-elec-health',
+          productModel: 'MB_DDF_v2',
+          productName: 'MB_DDF electrical health',
+          configVersion: '1.0.0',
+          stepId: 'ELEC_HEALTH_STATUS',
+          testItemId: 'elec_health_status',
+          algorithmId: 'mbddf.elec_health_status',
+          title: '电气健康',
+          description: '读取电源与辅助电压健康量。',
+          supportedRunModes: ['single', 'pc_periodic'],
+          measurements: [
+            { id: 'c_volt', label: 'C 路电压', unit: 'V', primary: true },
+          ],
+        },
+      },
+    }))
+
+    expect(snapshot.type).toBe('snapshot')
+    if (snapshot.type === 'snapshot') {
+      expect(snapshot.snapshot.descriptor.title).toBe('电气健康')
+      expect(snapshot.snapshot.descriptor.measurements[0].id).toBe('c_volt')
+    }
+  })
+
+  it('rejects snapshots with an invalid configuration descriptor', () => {
+    expect(() => parseServerMessage(JSON.stringify({
+      v: 1,
+      type: 'snapshot',
+      seq: 4,
+      snapshot: { descriptor: { title: 'missing required fields' } },
+    }))).toThrow(/descriptor/i)
+  })
 })

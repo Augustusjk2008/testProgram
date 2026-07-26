@@ -1,3 +1,5 @@
+import type { TestMeasurementDescriptor } from '../../shared/protocol'
+
 export type ChartLayout = 'combined' | 'separate' | 'custom'
 
 export interface SeriesAssignment {
@@ -21,7 +23,12 @@ function defaultGroup(path: string): string {
   return 'system'
 }
 
-function enabledByDefault(path: string): boolean {
+function enabledByDefault(
+  path: string,
+  measurements: TestMeasurementDescriptor[],
+): boolean {
+  const descriptor = measurements.find(({ id }) => id === path)
+  if (descriptor) return descriptor.primary
   const normalized = path.toLowerCase()
   return normalized === 'cpu_usage' ||
     normalized === 'mem_usage' ||
@@ -32,6 +39,7 @@ function enabledByDefault(path: string): boolean {
 export function createAssignments(
   fields: string[],
   existing: SeriesAssignment[] = [],
+  measurements: TestMeasurementDescriptor[] = [],
 ): SeriesAssignment[] {
   const known = new Set(existing.map(({ path }) => path))
   return [
@@ -40,7 +48,7 @@ export function createAssignments(
       .filter((field) => !known.has(field))
       .map((path) => ({
         path,
-        enabled: enabledByDefault(path),
+        enabled: enabledByDefault(path, measurements),
         groupId: defaultGroup(path),
       })),
   ]

@@ -88,6 +88,18 @@
 
 `rawData` 使用 Qt 的 JSON-compatible QVariant 转换规则；其嵌套 map/list、布尔值、数值、字符串和空值保持对应 JSON 类型。
 
+`descriptor` 是后端从当前已验证测试配置投影出的展示元数据，前端不得读取或解析原始配置文件、协议 CSV 或 `executionConfig`：
+
+| JSON 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `configId`、`productModel`、`productName`、`configVersion` | string | 当前测试配置身份 |
+| `stepId`、`testItemId`、`algorithmId` | string | 当前唯一启用步骤身份 |
+| `title`、`description` | string | 当前测试的展示名称和说明 |
+| `supportedRunModes` | string[] | 当前配置声明的运行模式；元素只能是 `single`、`pc_periodic` 或 `device_stream` |
+| `measurements` | object[] | 待测量元数据；每项包含 `id`、`label`、`unit`、`primary` |
+
+`measurements` 只描述展示标签、单位和首页主指标候选，不改变算法判定或硬件安全语义。首条样本可能包含 descriptor 未列出的数值字段，前端仍应自动发现并显示该字段；descriptor 缺失时，兼容客户端可以使用空 descriptor 和样本字段回退。
+
 ### 4.5 样本事件
 
 ```json
@@ -118,7 +130,7 @@
 | `action` | `params` | 行为及 reply `data` |
 | --- | --- | --- |
 | `load` | `{}` | 使用进程启动时解析好的 `FrontendLaunchOptions` 调用 `configureController`；客户端不能提供或覆盖文件路径 |
-| `snapshot` | `{}` | 从 Web 层缓存读取；`data` 为 `{ "seq": n, "snapshot": { ... } }` |
+| `snapshot` | `{}` | 从 Web 层缓存读取；`data` 为 `{ "seq": n, "snapshot": { ... } }`，其中包含当前配置 descriptor |
 | `controls` | `{}` | 在控制器亲和线程读取；`data.controls` 为 `{resourceId, providerId}` 数组 |
 | `ports` | `{}` | 在控制器亲和线程读取；`data.ports` 为完整 `SerialPortInfo` 对象数组 |
 | `selectControl` | `{"resourceId":"CONTROL_SERIAL"}` | 调用 `selectControl`；`resourceId` 必须是非空字符串 |
