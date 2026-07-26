@@ -226,6 +226,10 @@ TEST(WebSocketFrontendServerTest, RejectsRemoteOriginButStillAcceptsLocalOrigin)
     ASSERT_TRUE(accepted.connectTo(server.webSocketUrl(),
                                    QStringLiteral("http://localhost:8080")));
     EXPECT_TRUE(accepted.waitForMessageCount(2));
+
+    test::WebSocketTestClient standalone;
+    ASSERT_TRUE(standalone.connectTo(server.webSocketUrl(), QStringLiteral("null")));
+    EXPECT_TRUE(standalone.waitForMessageCount(2));
 }
 
 TEST(WebSocketFrontendServerTest, RejectsSecondClientAsBusy)

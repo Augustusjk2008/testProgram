@@ -91,6 +91,13 @@ npm run dev
 - 日常依赖未变化时可省略 `npm ci`。浏览器访问 `http://127.0.0.1:5173/`，前端默认连接 `ws://127.0.0.1:18765/ws`。如用户手动改用其他后端端口，应在 `front/.env.local` 中设置 `VITE_HWTEST_WS_URL=ws://127.0.0.1:<端口>/ws`，再重新启动 Vite。
 - 两个服务都以前台方式运行；用户在各自终端按 `Ctrl+C` 即可关闭。自动化代理不得为了方便将它们改为后台常驻启动。
 
+### 前端单文件构建
+
+- 每次修改 `front/` 源码后，必须在 `front/` 目录运行 `npm test` 和 `npm run build`；不得把未重新打包的 `dist/` 当作前端交付物。
+- `npm run build` 在 TypeScript/Vite 构建后自动内联 JS、CSS 和 Geist 字体，并删除 `front/dist/assets/`，最终产物为可直接双击打开的 `front/dist/index.html`。
+- 单文件 HTML 不提供 WebSocket 后端；需要实时遥测时仍由用户按上方流程手动启动 `hwtest_web`，自动化代理不得因此启动常驻服务。
+- 单文件页面的浏览器 Origin 可能为 `null`；回环 WebSocket 契约应保留该文件来源白名单并由 WebSocket 回归测试锁定。
+
 ## 构建与验证
 
 ```powershell

@@ -23,7 +23,7 @@
 
 28 个测试定义源文件使用 `*_test.cpp` 命名。两个 HAL DLL fixture、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含测试定义，不计入该数量。
 
-浏览器前端当前有 4 个 `*.test.ts` 文件、15 条 Vitest，用于协议解析/请求、配置 descriptor 与测试配置白名单目录校验、配置测量标签/单位、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组。它们由 `npm test` 独立运行，不计入上述 195 条 CTest。
+浏览器前端当前有 6 个 `*.test.ts` 文件、20 条 Vitest，用于协议解析/请求、配置 descriptor 与测试配置白名单目录校验、默认配置选择、配置测量标签/单位、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组。它们由 `npm test` 独立运行，不计入上述 195 条 CTest。
 
 ## 2. 当前覆盖与条件资产
 
@@ -34,7 +34,7 @@
 | BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、专用 QThread 的 event dispatcher/计时器注册、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象；Qt 线程回归只证明同步任务具备 Qt dispatcher，不证明算法调用期间持续泵送事件、HAL actor 或跨线程取消；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
 | 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器、两个固定命令执行器的 Qt UDP/脚本传输路径、ELEC_HEALTH_STATUS 字段判定和两个算法拒绝设备流 | 当前只实现两个已知的独立单步算法；本机 UDP 模拟目标不等同于真实板端通讯；拒绝设备流不证明其他算法已实现设备持续回告 |
 | 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、测试配置目录发现及白名单 `configId` 切换、控制资源与会话串口选择、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影（含配置 descriptor）、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | 默认自动化中的串口选择只证明配置覆盖；下述 COM3 实机 smoke 独立于 CTest，不能外推到真实网口、其他 DUT 或长期稳定性 |
-| 浏览器前端 | Vitest 下的类型化协议、测试目录与 descriptor 校验、字段标签/单位、有界数据结构、字段发现、时间窗、降采样和图组；TypeScript/Vite 生产构建 | 不替代 WebSocket/UDP C++ 集成测试，也不证明真实硬件、长期浏览器稳定性或设备流算法 |
+| 浏览器前端 | Vitest 下的类型化协议、测试目录与 descriptor 校验、默认配置选择、字段标签/单位、有界数据结构、字段发现、时间窗、降采样和图组；TypeScript/Vite 单文件生产构建 | 不替代 WebSocket/UDP C++ 集成测试，也不证明真实硬件、长期浏览器稳定性或设备流算法 |
 
 下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
 

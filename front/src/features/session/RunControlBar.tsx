@@ -9,6 +9,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 
 import type { RunMode, TestRunOptions } from '../../shared/protocol'
+import { setLocalStorageValue } from '../../shared/storage'
 import { useSession } from './SessionProvider'
 
 const RUN_OPTIONS_KEY = 'hwtest.run-options.v1'
@@ -71,12 +72,12 @@ export function RunControlBar() {
     const mode = supportedModes[0] ?? 'single'
     const next = { ...options, mode }
     setOptions(next)
-    window.localStorage.setItem(RUN_OPTIONS_KEY, JSON.stringify(next))
+    setLocalStorageValue(RUN_OPTIONS_KEY, JSON.stringify(next))
   }, [options, supportedModes])
 
   function saveOptions(next: TestRunOptions) {
     setOptions(next)
-    window.localStorage.setItem(RUN_OPTIONS_KEY, JSON.stringify(next))
+    setLocalStorageValue(RUN_OPTIONS_KEY, JSON.stringify(next))
   }
 
   function execute(action: Parameters<typeof invoke>[0], params?: Record<string, unknown>) {

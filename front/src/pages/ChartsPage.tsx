@@ -12,6 +12,7 @@ import {
 import { useSession } from '../features/session/SessionProvider'
 import { DEFAULT_TIME_WINDOW_SECONDS } from '../shared/config'
 import { fieldLabel } from '../shared/format'
+import { setLocalStorageValue } from '../shared/storage'
 
 const STORAGE_KEY = 'hwtest.chart-workspace.v2'
 
@@ -52,7 +53,7 @@ export function ChartsPage() {
   }, [descriptor.measurements, fields])
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    setLocalStorageValue(STORAGE_KEY, JSON.stringify({
       layout,
       windowSeconds,
       assignments,

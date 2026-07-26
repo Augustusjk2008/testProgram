@@ -4,14 +4,14 @@
 
 本文定义 `hwtest_web` 与浏览器前端之间的版本 1 JSON 协议。`hwtest_web` 是与 TUI、Qt Widgets GUI 并列的独立应用进程；它只把 WebSocket 消息适配为 `TestApplicationController` 动作、快照和样本，不解释产品协议，也不直接访问 BIZ、算法、HAL 或 DUT 通讯对象。
 
-`[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；开发服务器或静态文件服务与 `hwtest_web` 分开启动，浏览器仍只连接回环 WebSocket。
+`[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；前端既可使用开发服务器，也可使用构建后的单文件 HTML，二者都与 `hwtest_web` 分开运行，浏览器仍只连接回环 WebSocket。
 
 ## 2. 连接规则
 
 - 连接地址为 `ws://127.0.0.1:<port>/ws`。
 - 服务器只允许一个活跃客户端。第二个已完成 WebSocket 握手的客户端先收到 `server_busy` 连接级错误，再以关闭码 `1008`（Policy Violation）关闭；当前客户端不受影响。
 - 请求路径不是 `/ws` 的连接以 `1008` 关闭，且不成为活跃客户端。
-- Origin 为空时允许连接。非空 Origin 必须是有效的 `http` 或 `https` URL，主机名必须为 `localhost` 或 `127.0.0.1`；比较主机名时不区分大小写。其他 Origin 在握手阶段被拒绝，因此没有 WebSocket 关闭帧。
+- Origin 为空或为浏览器从 `file://` 单文件页面发送的 opaque 值 `null` 时允许连接。其他非空 Origin 必须是有效的 `http` 或 `https` URL，主机名必须为 `localhost` 或 `127.0.0.1`；比较主机名时不区分大小写。其他 Origin 在握手阶段被拒绝，因此没有 WebSocket 关闭帧。
 - 单条文本消息以其 UTF-8 编码长度计不得超过 `16384` 字节。超限时服务器发送 `message_too_large` 连接级错误，并以 `1009`（Message Too Big）关闭。
 - 二进制消息不属于本协议。服务器发送 `invalid_envelope` 连接级错误，并以 `1003`（Unsupported Data）关闭。
 - 客户端执行 `disconnect` 后，服务器完成安全收尾并以 `1000`（Normal Closure）关闭该连接，随后继续监听新客户端。

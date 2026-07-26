@@ -31,7 +31,8 @@ ActionResult protocolError(const QString& code, const QString& message)
 bool isAllowedOrigin(const QString& origin)
 {
     const QString normalized = origin.trimmed();
-    if (normalized.isEmpty()) {
+    // Browsers use the opaque `null` origin for pages opened directly from file://.
+    if (normalized.isEmpty() || normalized == QStringLiteral("null")) {
         return true;
     }
 

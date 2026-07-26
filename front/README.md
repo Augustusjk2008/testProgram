@@ -37,4 +37,4 @@ npm test
 npm run build
 ```
 
-生产构建输出到已忽略的 `front/dist/`。前端协议字段和关闭语义以 [WebSocket 前端协议契约](../docs/design/contracts/websocket-frontend-protocol.md) 为准。
+`npm run build` 会生成已内联 JS、CSS 和 Geist 字体的 `front/dist/index.html`，可以直接双击打开；该单文件仍需可用的 `hwtest_web` WebSocket 后端才能显示实时数据。前端协议字段和关闭语义以 [WebSocket 前端协议契约](../docs/design/contracts/websocket-frontend-protocol.md) 为准。
