@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-timer-jitter",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF timer jitter",
+  "configVersion": "1.0.0",
+  "steps": [
+    {
+      "stepId": "TIMER_JITTER",
+      "testItemId": "timer_jitter",
+      "name": "定时器抖动",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.timer_jitter",
+      "parameters": {"protocol": {"requestValues": {"mode": 0}}},
+      "timeoutMs": 5000,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": [
+        {"metric": "status", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "err_code", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "avg_jitter", "op": "GreaterOrEqual", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "max_jitter", "op": "GreaterOrEqual", "ref": 0, "tol": 0, "passIfMatched": true}
+      ]
+    }
+  ],
+  "hardwareRequirements": [],
+  "protocolProfiles": [
+    {"id": "timer_jitter_start_request", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 5000}},
+    {"id": "timer_jitter_start_response", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 5000}},
+    {"id": "timer_jitter_stop_request", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 2000}},
+    {"id": "timer_jitter_stop_response", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 2000}}
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {"requestProfileId": "timer_jitter_start_request", "responseProfileId": "timer_jitter_start_response"},
+    "lifecycle": {"followUpRequestProfileId": "timer_jitter_stop_request", "followUpResponseProfileId": "timer_jitter_stop_response", "followUpCommandName": "TIMER_JITTER_STOP", "followUpTimeoutMs": 2000},
+    "transport": {"openTimeoutMs": 1000, "readChunkBytes": 260},
+    "initialSequence": 4660
+  },
+  "safetyPolicy": {"enterSafeStateOnStop": true, "enterSafeStateOnError": true},
+  "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 5000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
+  "reportFields": {
+    "title": "定时器抖动",
+    "description": "执行 250 us x 250 周期定时器抖动统计，并发送 STOP 清理确认。",
+    "supportedRunModes": ["single", "pc_periodic"],
+    "measurements": [
+      {"id": "status", "label": "设备状态", "unit": "", "primary": false},
+      {"id": "err_code", "label": "设备错误码", "unit": "", "primary": false},
+      {"id": "avg_jitter", "label": "平均抖动", "unit": "us", "primary": true},
+      {"id": "max_jitter", "label": "最大抖动", "unit": "us", "primary": true},
+      {"id": "buckets[0]", "label": "抖动桶 0", "unit": "count", "primary": false},
+      {"id": "buckets[1]", "label": "抖动桶 1", "unit": "count", "primary": false},
+      {"id": "buckets[2]", "label": "抖动桶 2", "unit": "count", "primary": false},
+      {"id": "buckets[3]", "label": "抖动桶 3", "unit": "count", "primary": false},
+      {"id": "buckets[4]", "label": "抖动桶 4", "unit": "count", "primary": false},
+      {"id": "buckets[5]", "label": "抖动桶 5", "unit": "count", "primary": false},
+      {"id": "buckets[6]", "label": "抖动桶 6", "unit": "count", "primary": false},
+      {"id": "buckets[7]", "label": "抖动桶 7", "unit": "count", "primary": false}
+    ]
+  }
+}

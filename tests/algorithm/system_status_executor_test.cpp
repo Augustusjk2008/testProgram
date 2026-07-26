@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm/elec_health_status_executor.h>
+#include <algorithm/mbddf_exchange_executor.h>
 #include <algorithm/mbddf_transport.h>
 #include <algorithm/system_status_executor.h>
 
@@ -14,6 +15,7 @@
 #include <hal/i_hal_service.h>
 
 #include <QFileInfo>
+#include <QDir>
 #include <QHostAddress>
 #include <QTemporaryDir>
 #include <QUdpSocket>
@@ -892,6 +894,205 @@ TEST(SystemStatusExecutorTest, HalControlTransportOpensAndClosesForEveryRetryAtt
     EXPECT_EQ(channel.writeAt(1), expectedSystemStatusRequest());
 
     ASSERT_TRUE(service->shutdown().ok());
+}
+
+TEST(MbdDfExchangeExecutorTest, SendsConfiguredTimerCleanupAfterStatistics)
+{
+    const QString assets = catalogDirectory();
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present: " << assets.toStdString();
+    }
+    qputenv("MB_DDF_PROTOCOL_CSV_DIR", assets.toUtf8());
+
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+
+    QVector<QString> requests;
+    auto transport = std::make_unique<ScriptedByteTransport>(
+        [&](const QByteArray& request, int) {
+            QByteArray requestPayload;
+            QString transportError;
+            if (!decodeFrame(request, &requestPayload, &transportError) ||
+                requestPayload.size() < 3) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       transportError.isEmpty()
+                                           ? QStringLiteral("invalid request frame")
+                                           : transportError};
+            }
+            const MessageDefinition* requestDefinition = catalog.findByCommand(
+                static_cast<quint8>(requestPayload.at(1)),
+                static_cast<quint8>(requestPayload.at(2)),
+                Direction::Request);
+            if (requestDefinition == nullptr) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       QStringLiteral("request definition is missing")};
+            }
+            requests.push_back(requestDefinition->name);
+
+            QVariantMap requestValues;
+            if (!decodePayload(*requestDefinition,
+                               requestPayload,
+                               &requestValues,
+                               &transportError)) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       transportError};
+            }
+            const QString responseName = requestDefinition->name ==
+                    QStringLiteral("timer_jitter_start_request")
+                ? QStringLiteral("timer_jitter_start_response")
+                : QStringLiteral("timer_jitter_stop_response");
+            const MessageDefinition* responseDefinition = catalog.findByName(responseName);
+            if (responseDefinition == nullptr) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       QStringLiteral("response definition is missing")};
+            }
+            QVariantMap responseValues{
+                {QStringLiteral("status"), 0},
+                {QStringLiteral("err_code"), 0},
+            };
+            if (responseName == QStringLiteral("timer_jitter_start_response")) {
+                for (int index = 0; index < 8; ++index) {
+                    responseValues.insert(QStringLiteral("buckets[%1]").arg(index), index + 1);
+                }
+                responseValues.insert(QStringLiteral("avg_jitter"), 1.25);
+                responseValues.insert(QStringLiteral("max_jitter"), 4.5);
+            }
+            QByteArray responsePayload;
+            if (!encodePayload(*responseDefinition,
+                               responseValues,
+                               static_cast<quint16>(requestValues.value(
+                                   QStringLiteral("seq")).toUInt()),
+                               &responsePayload,
+                               &transportError)) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       transportError};
+            }
+            QByteArray responseFrame;
+            if (!encodeFrame(responsePayload, &responseFrame, &transportError)) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       transportError};
+            }
+            return TransportResult{true, TransportResult::Error::None, responseFrame, {}};
+        });
+    ScriptedByteTransport* transportPtr = transport.get();
+    MbdDfExchangeAlgorithmExecutor executor(
+        std::move(transport),
+        QStringLiteral("mbddf.timer_jitter"),
+        QStringLiteral("timer_jitter_start_request"),
+        QStringLiteral("timer_jitter_start_response"),
+        QStringLiteral("TIMER_JITTER_START"));
+
+    RunServiceHandle service = makeRunService(&executor);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+    ResultCollector results;
+    StateCollector states;
+    connectCollectors(service.get(), &results, &states);
+    ASSERT_TRUE(service->loadConfiguration(
+                    QStringLiteral(HWTEST_MBDDF_TIMER_JITTER_CONFIG)).ok());
+    ASSERT_TRUE(service->startTest().ok());
+    ASSERT_TRUE(results.waitForResult(3000));
+    ASSERT_TRUE(states.waitForTerminal(3000));
+
+    const auto result = results.result();
+    EXPECT_EQ(result.verdict, hwtest::biz::TestVerdict::Pass);
+    EXPECT_EQ(result.errorCode, hwtest::biz::ErrorCode::Ok);
+    ASSERT_EQ(requests.size(), 2);
+    EXPECT_EQ(requests.at(0), QStringLiteral("timer_jitter_start_request"));
+    EXPECT_EQ(requests.at(1), QStringLiteral("timer_jitter_stop_request"));
+    EXPECT_EQ(transportPtr->transactionCount(), 2);
+    EXPECT_FALSE(result.rawData.value(QStringLiteral("followUpRequestFrameHex"))
+                     .toString()
+                     .isEmpty());
+    EXPECT_EQ(result.rawData.value(QStringLiteral("followUpResponseValues"))
+                  .toMap()
+                  .value(QStringLiteral("status"))
+                  .toInt(),
+              0);
+
+    ASSERT_TRUE(service->shutdown().ok());
+}
+
+TEST(MbdDfExchangeExecutorTest, AllAddedConfigsPrepareAgainstTheCurrentCatalog)
+{
+    const QString assets = catalogDirectory();
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present: " << assets.toStdString();
+    }
+    qputenv("MB_DDF_PROTOCOL_CSV_DIR", assets.toUtf8());
+
+    const QDir configDirectory(QFileInfo(
+        QStringLiteral(HWTEST_MBDDF_TIMER_JITTER_CONFIG)).absolutePath());
+    struct Case {
+        QString fileName;
+        QString algorithmId;
+        QString requestProfileId;
+        QString responseProfileId;
+        QString commandName;
+    };
+    const QVector<Case> cases{
+        {QStringLiteral("mbddf_memperf.testcfg.json"),
+         QStringLiteral("mbddf.memperf"),
+         QStringLiteral("memperf_test_request"),
+         QStringLiteral("memperf_test_response"),
+         QStringLiteral("MEMPERF_TEST")},
+        {QStringLiteral("mbddf_spi_flash.testcfg.json"),
+         QStringLiteral("mbddf.spi_flash"),
+         QStringLiteral("spi_flash_test_request"),
+         QStringLiteral("spi_flash_test_response"),
+         QStringLiteral("SPI_FLASH_TEST")},
+        {QStringLiteral("mbddf_dh_pulse_config.testcfg.json"),
+         QStringLiteral("mbddf.dh_pulse_config"),
+         QStringLiteral("dh_pulse_config_request"),
+         QStringLiteral("dh_pulse_config_response"),
+         QStringLiteral("DH_PULSE_CONFIG")},
+        {QStringLiteral("mbddf_timer_jitter.testcfg.json"),
+         QStringLiteral("mbddf.timer_jitter"),
+         QStringLiteral("timer_jitter_start_request"),
+         QStringLiteral("timer_jitter_start_response"),
+         QStringLiteral("TIMER_JITTER_START")},
+    };
+
+    hwtest::biz::TestConfigManager configManager;
+    for (const Case& testCase : cases) {
+        const QString configPath = configDirectory.filePath(testCase.fileName);
+        const auto loaded = configManager.load(configPath);
+        ASSERT_TRUE(loaded.ok()) << configPath.toStdString() << ": "
+                                 << loaded.status.error.message.toStdString();
+        ASSERT_EQ(loaded.value.steps.size(), 1);
+        EXPECT_EQ(loaded.value.steps.first().algorithmId, testCase.algorithmId);
+
+        auto transport = std::make_unique<ScriptedByteTransport>(
+            [](const QByteArray&, int) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       QStringLiteral("prepare-only transport")};
+            });
+        MbdDfExchangeAlgorithmExecutor executor(
+            std::move(transport),
+            testCase.algorithmId,
+            testCase.requestProfileId,
+            testCase.responseProfileId,
+            testCase.commandName);
+        const hwtest::biz::Status prepared = executor.prepare(
+            hwtest::biz::TestPlan{}, hwtest::biz::TestContext{}, loaded.value.executionConfig);
+        EXPECT_TRUE(prepared.ok()) << testCase.algorithmId.toStdString() << ": "
+                                   << prepared.error.message.toStdString();
+    }
 }
 
 TEST(SystemStatusUdpIntegrationTest, UdpPeerCompletesSystemStatusThroughHalAndBIZ)

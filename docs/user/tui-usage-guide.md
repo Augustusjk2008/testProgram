@@ -2,7 +2,7 @@
 
 本文面向第一次使用 `hwtest_tui` 的操作人员。TUI 是逐行输入命令的控制台界面；每输入一条命令并按 Enter，程序就返回一行或多行结果。
 
-> 当前能力边界：应用控制器只支持 `algorithmId = "mbddf.system_status"`，并要求测试配置中恰好有一个启用的 `SYSTEM_STATUS` 步骤。本文后半部分的“新增项目兼容规则”是后续接入约定，不表示当前已经可以运行任意测试项目。
+> 当前能力边界：应用控制器支持 `mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config` 和 `mbddf.timer_jitter`，每份测试配置仍要求恰好一个启用步骤。SPI Flash 只允许在已隔离且允许写入的目标板执行；新增四项尚无真实板端验收结论。
 
 ## 1. 最短上手流程
 
@@ -177,7 +177,7 @@ rawData={...}
 | `error control_not_serial ...` | 当前控制资源不是 `qt.serial` | 先执行 `use CONTROL_SERIAL`，再执行 `port COM7` |
 | `prepare` 报端口打开失败 | 端口名错误、被占用、驱动异常或设备不可用 | 确认 `status` 已回到 `configured`，修正 `port` 后重试；必要时先 `disconnect` |
 | `error run_timeout ...` | 等待期内未到达终态 | 执行 `status`；若仍在运行则 `stop 5000`，随后查看 `result` 并 `disconnect` |
-| `unsupported_algorithm` 或“Exactly one enabled...” | 配置超出当前控制器能力 | 改用当前 SYSTEM_STATUS 配置；不能通过换一条 TUI 命令绕过 |
+| `unsupported_algorithm` 或“Exactly one enabled...” | 配置超出当前控制器能力或启用步骤数量不正确 | 检查 `configs/` 中的六个受支持算法 ID；不能通过换一条 TUI 命令绕过 |
 
 启动脚本找不到协议 CSV 时，显式传入已批准的资产目录：
 

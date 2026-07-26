@@ -1,6 +1,7 @@
 #include <app/test_application_controller.h>
 
 #include <algorithm/elec_health_status_executor.h>
+#include <algorithm/mbddf_exchange_executor.h>
 #include <algorithm/mbddf_transport.h>
 #include <algorithm/system_status_executor.h>
 
@@ -498,6 +499,38 @@ ActionResult TestApplicationController::prepare()
     } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.elec_health_status")) {
         m_impl->executor = std::make_unique<
             hwtest::algorithm::mbddf::ElecHealthStatusAlgorithmExecutor>(std::move(transport));
+    } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.memperf")) {
+        m_impl->executor = std::make_unique<
+            hwtest::algorithm::mbddf::MbdDfExchangeAlgorithmExecutor>(
+                std::move(transport),
+                QStringLiteral("mbddf.memperf"),
+                QStringLiteral("memperf_test_request"),
+                QStringLiteral("memperf_test_response"),
+                QStringLiteral("MEMPERF_TEST"));
+    } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.spi_flash")) {
+        m_impl->executor = std::make_unique<
+            hwtest::algorithm::mbddf::MbdDfExchangeAlgorithmExecutor>(
+                std::move(transport),
+                QStringLiteral("mbddf.spi_flash"),
+                QStringLiteral("spi_flash_test_request"),
+                QStringLiteral("spi_flash_test_response"),
+                QStringLiteral("SPI_FLASH_TEST"));
+    } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.dh_pulse_config")) {
+        m_impl->executor = std::make_unique<
+            hwtest::algorithm::mbddf::MbdDfExchangeAlgorithmExecutor>(
+                std::move(transport),
+                QStringLiteral("mbddf.dh_pulse_config"),
+                QStringLiteral("dh_pulse_config_request"),
+                QStringLiteral("dh_pulse_config_response"),
+                QStringLiteral("DH_PULSE_CONFIG"));
+    } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.timer_jitter")) {
+        m_impl->executor = std::make_unique<
+            hwtest::algorithm::mbddf::MbdDfExchangeAlgorithmExecutor>(
+                std::move(transport),
+                QStringLiteral("mbddf.timer_jitter"),
+                QStringLiteral("timer_jitter_start_request"),
+                QStringLiteral("timer_jitter_start_response"),
+                QStringLiteral("TIMER_JITTER_START"));
     } else {
         const ActionResult result = failure(QStringLiteral("unsupported_algorithm"),
                                             QStringLiteral("Unsupported MB_DDF algorithm '%1'")

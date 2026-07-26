@@ -146,6 +146,11 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
     }
     m_request = nullptr;
     m_response = nullptr;
+    m_followUpRequest = nullptr;
+    m_followUpResponse = nullptr;
+    m_followUpCommandName.clear();
+    m_followUpRequestValues.clear();
+    m_followUpTimeoutMs = 0;
 
     if (context.tags.value(QStringLiteral("runMode")).toString() ==
         QStringLiteral("device_stream")) {
@@ -186,6 +191,55 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
                           QStringLiteral("%1 request/response profiles are missing or have wrong direction")
                               .arg(m_commandName),
                           QStringLiteral("mbddf.prepare"));
+    }
+
+    const QVariantMap lifecycle = nestedMap(executionConfig, QStringLiteral("lifecycle"));
+    const QString followUpRequestName = mapString(
+        lifecycle, QStringLiteral("followUpRequestProfileId"));
+    const QString followUpResponseName = mapString(
+        lifecycle, QStringLiteral("followUpResponseProfileId"));
+    if (followUpRequestName.isEmpty() != followUpResponseName.isEmpty()) {
+        return makeStatus(
+            ErrorCode::ConfigSchemaError,
+            QStringLiteral("%1 lifecycle follow-up request/response profiles must be provided together")
+                .arg(m_commandName),
+            QStringLiteral("mbddf.prepare"));
+    }
+    if (!followUpRequestName.isEmpty()) {
+        m_followUpRequest = m_catalog.findByName(followUpRequestName);
+        m_followUpResponse = m_catalog.findByName(followUpResponseName);
+        if (m_followUpRequest == nullptr || m_followUpResponse == nullptr ||
+            m_followUpRequest->direction != Direction::Request ||
+            m_followUpResponse->direction != Direction::Response) {
+            return makeStatus(
+                ErrorCode::ConfigSchemaError,
+                QStringLiteral("%1 lifecycle follow-up profiles are missing or have wrong direction")
+                    .arg(m_commandName),
+                QStringLiteral("mbddf.prepare"));
+        }
+        m_followUpCommandName = mapString(
+            lifecycle,
+            QStringLiteral("followUpCommandName"),
+            followUpRequestName);
+        if (m_followUpCommandName.trimmed().isEmpty()) {
+            return makeStatus(ErrorCode::ConfigSchemaError,
+                              QStringLiteral("%1 lifecycle followUpCommandName must not be empty")
+                                  .arg(m_commandName),
+                              QStringLiteral("mbddf.prepare"));
+        }
+        m_followUpRequestValues = nestedMap(
+            lifecycle, QStringLiteral("followUpRequestValues"));
+        bool followUpTimeoutOk = false;
+        const int configuredFollowUpTimeout = lifecycle
+            .value(QStringLiteral("followUpTimeoutMs"), 2000)
+            .toInt(&followUpTimeoutOk);
+        if (!followUpTimeoutOk || configuredFollowUpTimeout <= 0) {
+            return makeStatus(ErrorCode::ConfigSchemaError,
+                              QStringLiteral("%1 lifecycle followUpTimeoutMs must be positive")
+                                  .arg(m_commandName),
+                              QStringLiteral("mbddf.prepare"));
+        }
+        m_followUpTimeoutMs = configuredFollowUpTimeout;
     }
 
     const QVariantMap serial = nestedMap(executionConfig, QStringLiteral("serial"));
@@ -383,6 +437,98 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     }
     ++m_nextSequence;
 
+    QByteArray followUpRequestFrame;
+    QByteArray followUpResponseFrame;
+    QString followUpError;
+    QVariantMap followUpValues;
+    bool followUpSucceeded = true;
+    if (m_followUpRequest != nullptr) {
+        const quint16 followUpSequence = m_nextSequence;
+        QByteArray followUpPayload;
+        if (!encodePayload(*m_followUpRequest,
+                           m_followUpRequestValues,
+                           followUpSequence,
+                           &followUpPayload,
+                           &followUpError) ||
+            !encodeFrame(followUpPayload, &followUpRequestFrame, &followUpError)) {
+            followUpSucceeded = false;
+        } else {
+            observer.onProgress(step.stepId,
+                                 step.testItemId,
+                                 75,
+                                 QStringLiteral("follow-up request encoded"));
+            TransportResult followUpTransportResult;
+            {
+                std::lock_guard<std::mutex> locker(m_transportMutex);
+                QString transportError;
+                if (!m_transport->open(&transportError)) {
+                    followUpSucceeded = false;
+                    followUpError = QStringLiteral("Unable to open MB_DDF follow-up transport: %1")
+                                        .arg(transportError);
+                } else {
+                    TransportCloseGuard closeGuard(m_transport.get());
+                    followUpTransportResult = m_transport->transact(
+                        followUpRequestFrame, m_followUpTimeoutMs);
+                }
+            }
+            if (followUpSucceeded && !followUpTransportResult.ok) {
+                followUpSucceeded = false;
+                followUpError = QStringLiteral("%1 follow-up transport failed: %2")
+                                    .arg(m_followUpCommandName,
+                                         followUpTransportResult.error);
+            }
+            if (followUpSucceeded) {
+                QString followUpDecodeError;
+                QByteArray followUpResponsePayload;
+                if (!decodeFrame(followUpTransportResult.frame,
+                                 &followUpResponsePayload,
+                                 &followUpDecodeError)) {
+                    followUpSucceeded = false;
+                    followUpError = QStringLiteral("Cannot decode %1 follow-up frame: %2")
+                                        .arg(m_followUpCommandName,
+                                             followUpDecodeError);
+                } else if (followUpResponsePayload.size() < 3) {
+                    followUpSucceeded = false;
+                    followUpError = QStringLiteral("%1 follow-up response is shorter than command header")
+                                        .arg(m_followUpCommandName);
+                } else {
+                    const MessageDefinition* followUpResponseDefinition =
+                        m_catalog.findByCommand(
+                            static_cast<quint8>(followUpResponsePayload.at(1)),
+                            static_cast<quint8>(followUpResponsePayload.at(2)),
+                            Direction::Response);
+                    if (followUpResponseDefinition != m_followUpResponse) {
+                        followUpSucceeded = false;
+                        followUpError = QStringLiteral("Unexpected %1 follow-up response command")
+                                            .arg(m_followUpCommandName);
+                    } else if (!decodePayload(*followUpResponseDefinition,
+                                              followUpResponsePayload,
+                                              &followUpValues,
+                                              &followUpDecodeError)) {
+                        followUpSucceeded = false;
+                        followUpError = QStringLiteral("Cannot decode %1 follow-up payload: %2")
+                                            .arg(m_followUpCommandName,
+                                                 followUpDecodeError);
+                    } else if (followUpValues.value(QStringLiteral("seq")).toUInt() !=
+                               followUpSequence) {
+                        followUpSucceeded = false;
+                        followUpError = QStringLiteral("%1 follow-up response sequence does not echo request")
+                                            .arg(m_followUpCommandName);
+                    } else {
+                        followUpResponseFrame = followUpTransportResult.frame;
+                        ++m_nextSequence;
+                        if (followUpValues.value(QStringLiteral("status")).toInt() != 0 ||
+                            followUpValues.value(QStringLiteral("err_code")).toInt() != 0) {
+                            followUpSucceeded = false;
+                            followUpError = QStringLiteral("%1 follow-up reported a remote error")
+                                                .arg(m_followUpCommandName);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     TestResult result;
     result.stepId = step.stepId;
     result.testItemId = step.testItemId;
@@ -395,6 +541,13 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     result.rawData.insert(QStringLiteral("requestFrameHex"), QString::fromLatin1(frame.toHex()));
     result.rawData.insert(QStringLiteral("responseFrameHex"), QString::fromLatin1(transportResult.frame.toHex()));
     result.rawData.insert(QStringLiteral("responseValues"), values);
+    if (m_followUpRequest != nullptr) {
+        result.rawData.insert(QStringLiteral("followUpRequestFrameHex"),
+                             QString::fromLatin1(followUpRequestFrame.toHex()));
+        result.rawData.insert(QStringLiteral("followUpResponseFrameHex"),
+                             QString::fromLatin1(followUpResponseFrame.toHex()));
+        result.rawData.insert(QStringLiteral("followUpResponseValues"), followUpValues);
+    }
     for (auto iterator = values.cbegin(); iterator != values.cend(); ++iterator) {
         if (iterator.key() == QStringLiteral("sync[0]") || iterator.key() == QStringLiteral("sync[1]") ||
             iterator.key() == QStringLiteral("len") || iterator.key() == QStringLiteral("version") ||
@@ -416,6 +569,11 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
         result.verdict = TestVerdict::Error;
         result.errorCode = ErrorCode::RemoteCommandError;
         result.message = QStringLiteral("%1 reported a remote error").arg(m_commandName);
+    }
+    if (!followUpSucceeded) {
+        result.verdict = TestVerdict::Error;
+        result.errorCode = ErrorCode::RemoteCommandError;
+        result.message = followUpError;
     }
 
     hwtest::biz::RawSample sample;
@@ -463,6 +621,11 @@ Status SystemStatusAlgorithmExecutor::reset()
     m_prepared = false;
     m_request = nullptr;
     m_response = nullptr;
+    m_followUpRequest = nullptr;
+    m_followUpResponse = nullptr;
+    m_followUpCommandName.clear();
+    m_followUpRequestValues.clear();
+    m_followUpTimeoutMs = 0;
     m_nextSequence = 0;
     if (m_transport != nullptr) {
         const std::lock_guard<std::mutex> locker(m_transportMutex);
@@ -484,6 +647,13 @@ Status SystemStatusAlgorithmExecutor::shutdown(int timeoutMs)
         m_transport->close();
     }
     m_prepared = false;
+    m_request = nullptr;
+    m_response = nullptr;
+    m_followUpRequest = nullptr;
+    m_followUpResponse = nullptr;
+    m_followUpCommandName.clear();
+    m_followUpRequestValues.clear();
+    m_followUpTimeoutMs = 0;
     return Status{};
 }
 

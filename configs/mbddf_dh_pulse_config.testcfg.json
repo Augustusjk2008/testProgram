@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-dh-pulse-config",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF DH pulse configuration",
+  "configVersion": "1.0.0",
+  "steps": [
+    {
+      "stepId": "DH_PULSE_CONFIG",
+      "testItemId": "dh_pulse_config",
+      "name": "DH 脉宽配置",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.dh_pulse_config",
+      "parameters": {
+        "protocol": {
+          "requestValues": {
+            "config_enable": 1,
+            "pulse_width[0]": 80,
+            "pulse_width[1]": 63,
+            "pulse_width[2]": 63,
+            "pulse_width[3]": 63,
+            "pulse_width[4]": 63,
+            "pulse_width[5]": 63,
+            "pulse_width[6]": 63,
+            "pulse_width[7]": 63,
+            "pulse_width[8]": 63,
+            "pulse_width[9]": 63,
+            "pulse_width[10]": 63,
+            "pulse_width[11]": 63,
+            "pulse_width[12]": 63,
+            "pulse_width[13]": 63,
+            "pulse_width[14]": 63,
+            "pulse_width[15]": 63,
+            "pulse_width[16]": 63,
+            "pulse_width[17]": 63,
+            "pulse_width[18]": 63,
+            "pulse_width[19]": 63,
+            "pulse_width[20]": 63,
+            "pulse_width[21]": 63,
+            "pulse_width[22]": 63
+          }
+        }
+      },
+      "timeoutMs": 2000,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": [
+        {"metric": "status", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "err_code", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[0]", "op": "Equal", "ref": 80, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[1]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[2]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[3]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[4]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[5]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[6]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[7]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[8]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[9]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[10]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[11]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[12]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[13]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[14]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[15]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[16]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[17]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[18]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[19]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[20]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[21]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true},
+        {"metric": "pulse_width_readback[22]", "op": "Equal", "ref": 63, "tol": 0, "passIfMatched": true}
+      ]
+    }
+  ],
+  "hardwareRequirements": [],
+  "protocolProfiles": [
+    {"id": "dh_pulse_config_request", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 2000}},
+    {"id": "dh_pulse_config_response", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 2000}}
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {"requestProfileId": "dh_pulse_config_request", "responseProfileId": "dh_pulse_config_response"},
+    "transport": {"openTimeoutMs": 1000, "readChunkBytes": 260},
+    "initialSequence": 4660
+  },
+  "safetyPolicy": {"enterSafeStateOnStop": true, "enterSafeStateOnError": true},
+  "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 2000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
+  "reportFields": {
+    "title": "DH 脉宽配置",
+    "description": "写入 23 路 DH 脉宽并读取回读值。",
+    "supportedRunModes": ["single"],
+    "measurements": [
+      {"id": "status", "label": "设备状态", "unit": "", "primary": false},
+      {"id": "err_code", "label": "设备错误码", "unit": "", "primary": false},
+      {"id": "pulse_width_readback[0]", "label": "DH0 脉宽回读", "unit": "ms", "primary": true},
+      {"id": "pulse_width_readback[1]", "label": "DH1 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[2]", "label": "DH2 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[3]", "label": "DH3 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[4]", "label": "DH4 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[5]", "label": "DH5 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[6]", "label": "DH6 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[7]", "label": "DH7 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[8]", "label": "DH8 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[9]", "label": "DH9 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[10]", "label": "DH10 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[11]", "label": "DH11 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[12]", "label": "DH12 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[13]", "label": "DH13 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[14]", "label": "DH14 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[15]", "label": "DH15 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[16]", "label": "DH16 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[17]", "label": "DH17 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[18]", "label": "DH18 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[19]", "label": "DH19 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[20]", "label": "DH20 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[21]", "label": "DH21 脉宽回读", "unit": "ms", "primary": false},
+      {"id": "pulse_width_readback[22]", "label": "DH22 脉宽回读", "unit": "ms", "primary": false}
+    ]
+  }
+}

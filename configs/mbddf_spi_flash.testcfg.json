@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-spi-flash",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF SPI Flash test",
+  "configVersion": "1.0.0",
+  "steps": [
+    {
+      "stepId": "SPI_FLASH_TEST",
+      "testItemId": "spi_flash",
+      "name": "SPI Flash 擦写读回",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.spi_flash",
+      "parameters": {"protocol": {"requestValues": {}}},
+      "timeoutMs": 180000,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": [
+        {"metric": "status", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "err_code", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true}
+      ]
+    }
+  ],
+  "hardwareRequirements": [],
+  "protocolProfiles": [
+    {"id": "spi_flash_test_request", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 180000}},
+    {"id": "spi_flash_test_response", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 180000}}
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {"requestProfileId": "spi_flash_test_request", "responseProfileId": "spi_flash_test_response"},
+    "transport": {"openTimeoutMs": 1000, "readChunkBytes": 260},
+    "initialSequence": 4660
+  },
+  "safetyPolicy": {"enterSafeStateOnStop": true, "enterSafeStateOnError": true, "safeState": {"spiFlash": "isolated_fixed_test_area"}},
+  "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 180000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
+  "reportFields": {
+    "title": "SPI Flash 擦写读回",
+    "description": "擦除、写入并读回 DUT 固定隔离的 4 KiB 测试区；不备份、不恢复。",
+    "supportedRunModes": ["single"],
+    "measurements": [
+      {"id": "status", "label": "设备状态", "unit": "", "primary": false},
+      {"id": "err_code", "label": "设备错误码", "unit": "", "primary": false},
+      {"id": "sjl_result", "label": "固定测试区耗时", "unit": "s", "primary": true}
+    ]
+  }
+}

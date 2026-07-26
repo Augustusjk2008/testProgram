@@ -58,17 +58,29 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
         parser, QStringLiteral(HWTEST_PROJECT_SOURCE_DIR), defaults, &options);
 
     ASSERT_TRUE(result.ok) << result.message.toStdString();
-    ASSERT_EQ(options.testConfigs.size(), 2);
+    ASSERT_EQ(options.testConfigs.size(), 6);
     bool foundSystem = false;
     bool foundElectrical = false;
+    bool foundMemory = false;
+    bool foundSpiFlash = false;
+    bool foundDhPulse = false;
+    bool foundTimer = false;
     for (const FrontendTestConfigOption& option : options.testConfigs) {
         foundSystem = foundSystem || option.configId == QStringLiteral("mbddf-system-status");
         foundElectrical = foundElectrical || option.configId == QStringLiteral("mbddf-elec-health");
+        foundMemory = foundMemory || option.configId == QStringLiteral("mbddf-memperf");
+        foundSpiFlash = foundSpiFlash || option.configId == QStringLiteral("mbddf-spi-flash");
+        foundDhPulse = foundDhPulse || option.configId == QStringLiteral("mbddf-dh-pulse-config");
+        foundTimer = foundTimer || option.configId == QStringLiteral("mbddf-timer-jitter");
         EXPECT_FALSE(option.configPath.isEmpty());
         EXPECT_FALSE(option.title.isEmpty());
     }
     EXPECT_TRUE(foundSystem);
     EXPECT_TRUE(foundElectrical);
+    EXPECT_TRUE(foundMemory);
+    EXPECT_TRUE(foundSpiFlash);
+    EXPECT_TRUE(foundDhPulse);
+    EXPECT_TRUE(foundTimer);
 }
 
 TEST(FrontendLaunchOptionsTest, RequiresPathsForBatchRunner)

@@ -1,6 +1,6 @@
 # testProgram
 
-当前版本提供 MB_DDF_v2 `SYSTEM_STATUS` 的一次性 runner、分步 TUI、Qt Widgets GUI、本机 WebSocket 后端和浏览器遥测控制台。四个 C++ 入口共享同一个应用控制器和生命周期；BIZ 支持单次与 PC 主动周期测试，并保留设备主动持续回告的独立语义。板端当前通讯基线是串口，PC 端仍保留 UDP 控制资源，用于本机模拟和后续网口扩展。
+当前版本提供 MB_DDF_v2 的 `SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG` 和带 STOP 清理的 `TIMER_JITTER` 配置驱动测试，以及一次性 runner、分步 TUI、Qt Widgets GUI、本机 WebSocket 后端和浏览器遥测控制台。四个 C++ 入口共享同一个应用控制器和生命周期；BIZ 支持单次与 PC 主动周期测试，并保留设备主动持续回告的独立语义。板端当前通讯基线是串口，PC 端仍保留 UDP 控制资源，用于本机模拟和后续网口扩展。新增四项尚无真实板端验收证据，SPI Flash 仅可在已隔离且允许写入的目标板执行。
 
 从仓库根目录执行一条命令即可配置、构建和启动：
 

@@ -2,7 +2,7 @@
 
 > 适用项目：多产品通用硬件测试软件（Qt 5.15 兼容、Qt 6 Core/Network/SerialPort fallback / C++17 / Windows）
 > 本文定位：产品协议资产、当前 MB_DDF CSV 解析规则、帧编解码和算法运行期语义。
-> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/src/system_status_executor.cpp` 和 `src/algorithm/src/elec_health_status_executor.cpp`。
+> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/src/system_status_executor.cpp`、`src/algorithm/include/algorithm/mbddf_exchange_executor.h` 和 `src/algorithm/src/elec_health_status_executor.cpp`。
 > 状态标记：**当前**表示已实现或已由用户确认的资产基线，**目标**表示已确认但尚未实现。
 
 原始建模参考来自 `H:/WorkSpace/PythonWorkspace/openEulerEnvironment/docs/protocol_modeling_workbench_definition.md`。该外部绝对路径只作来源追溯，不是本仓库可复现的发布输入；本项目当前实现与该参考不一致时，以本节明确列出的“当前规则”为准。
@@ -22,7 +22,7 @@ BIZ -> IAlgorithmExecutor -> hwtest_algorithm_mbddf -> IByteTransport
                                                    -> HalSerialTransport -> hwtest_hal
 ```
 
-统一生产路径如下；当前 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 控制通道已按该边界落地，通用 Provider 架构仍未完成：
+统一生产路径如下；当前六个 MB_DDF 单步配置均经该边界进入控制通道，通用 Provider 架构仍未完成：
 
 ```text
 BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据）
@@ -53,13 +53,14 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 | `ProtocolCatalog` | 从目录加载并索引严格 MB_DDF CSV 定义 |
 | `encodePayload()` / `decodePayload()` | 按定义编解码 B4 至产品 payload 末尾 |
 | `encodeFrame()` / `decodeFrame()` | 处理 `55 AA + LEN + payload + CRC16/XMODEM` |
-| `SystemStatusAlgorithmExecutor` | 执行 `mbddf.system_status` 单步算法 |
+| `SystemStatusAlgorithmExecutor` | 执行 `mbddf.system_status`，并提供固定命令执行的共享生命周期 |
 | `ElecHealthStatusAlgorithmExecutor` | 执行 `mbddf.elec_health_status` 单步算法 |
+| `MbdDfExchangeAlgorithmExecutor` | 按配置执行 `MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG` 等单步请求/响应；可按配置追加一个清理请求（当前用于 `TIMER_JITTER_STOP`） |
 | `SystemStatusSimulator` | 协议级成功、超时、坏 CRC 和无效响应模拟 |
 | `HalControlTransport` | 经 `IControlChannel` 发送原始字节，并累积短读、搜索同步字、按长度分帧及保留剩余帧 |
 | `HalSerialTransport` | 将算法字节事务桥接到现有 `ISerialBus` |
 
-当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，分别完成 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 的单次及三轮 PC 周期。早期 SYSTEM_STATUS 实机执行每轮出现 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，两个测试项均再次成功，后端完整诊断未再出现该警告。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
+当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，分别完成 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 的单次及三轮 PC 周期。新增四项目前有配置/协议/脚本化执行器证据，但尚无真实板端结论。早期 SYSTEM_STATUS 实机执行每轮出现 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，两个既有测试项均再次成功，后端完整诊断未再出现该警告。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
 
 ---
 
@@ -85,7 +86,7 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 因此：
 
 - `ProtocolCatalog` 按一文件一定义加载，当前期望为 32 个定义；
-- `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 各自所需的两份 CSV 当前存在；
+- 六个当前配置所需的 12 份请求/响应 CSV 当前存在；
 - 原测试源码中的 36 项断言和 `ad_read_response` 引用是相对批准基线的陈旧预期，现已按当前定义修正；
 - 后续修改该目录时，必须同步协议测试和本节清单；测试结果应记录基线路径、观测时间和实际清单。
 
@@ -176,9 +177,9 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 ---
 
-## 7. `SYSTEM_STATUS` 与 `ELEC_HEALTH_STATUS` 配置与执行
+## 7. MB_DDF 单步配置与执行
 
-当前应用控制器接受两个已知的独立单步算法：`mbddf.system_status` 和 `mbddf.elec_health_status`。每份配置只能启用其中一个步骤；不支持把两个项目拼成一个多步骤生产测试。BIZ 将 `TestConfig.executionConfig` 原样传给对应的固定命令执行器；两个执行器共享一次有界请求-响应生命周期，PC 周期由 BIZ 调度。
+当前应用控制器接受六个已知的独立单步算法：`mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config` 和 `mbddf.timer_jitter`。每份配置只能启用其中一个步骤；不支持把两个项目拼成一个多步骤生产测试。BIZ 将 `TestConfig.executionConfig` 原样传给算法执行器；前三个新增项目使用同一份有界请求/响应生命周期，定时器在成功 START 后按配置再发送 STOP 清理请求，PC 周期由 BIZ 调度。
 
 `SYSTEM_STATUS` 的 `executionConfig` 形状为：
 
@@ -209,11 +210,22 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 `ELEC_HEALTH_STATUS` 使用独立的 `configs/mbddf_elec_health.testcfg.json`，配置只把 Profile 替换为 `elec_health_status_request` / `elec_health_status_response`。请求命令为 `type_group=0x05`、`sub_type=0x01`，其保留填充字节由 CSV 定义；响应解码为 `status`、`err_code`、`c_volt`、`b_volt`、`activate_bits`、`external_vol`、`core_vol`、`assist_vol`、`v28_5`、`js_5V`、`dyt_5V`、`power_24V` 和 `value_YX`。当前判定标准只有 `status == 0` 且 `err_code == 0`，电压和模拟量仅作为样本输出，不在配置中推导或增加未经批准的阈值。该命令没有设备侧 START/STOP 配对，因此支持单次和 PC 周期，不支持 `device_stream`。
 
-两个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes` 和 `measurements`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；缺少展示元数据时，前端回退到步骤身份和样本字段。
+新增配置的命令映射如下：
+
+| 配置 | algorithmId | 请求/响应 | 当前参数和收尾语义 |
+| --- | --- | --- | --- |
+| `configs/mbddf_memperf.testcfg.json` | `mbddf.memperf` | `memperf_test_request/response` | `memperf_type`、`length`、`seed` 由 `step.parameters.protocol.requestValues` 提供；响应 `error_count` 默认要求为 0 |
+| `configs/mbddf_spi_flash.testcfg.json` | `mbddf.spi_flash` | `spi_flash_test_request/response` | 空请求；DUT 擦写固定隔离 4 KiB 测试区，不备份、不恢复，配置仅支持单次 |
+| `configs/mbddf_dh_pulse_config.testcfg.json` | `mbddf.dh_pulse_config` | `dh_pulse_config_request/response` | `config_enable` 与 23 路 `pulse_width[]` 写入后逐项回读并判定 |
+| `configs/mbddf_timer_jitter.testcfg.json` | `mbddf.timer_jitter` | `timer_jitter_start_request/response`，随后 `timer_jitter_stop_request/response` | START 的 `mode` 当前默认为 0；`executionConfig.lifecycle` 声明 STOP Profile 和 deadline，STOP ACK 失败会使本轮失败 |
+
+`executionConfig.lifecycle` 只允许在需要清理 ACK 的单步中使用：请求/响应 Profile 必须成对提供，执行器先完成主请求/响应，再以递增序号发送 follow-up 请求并校验响应命令、序号、`status` 和 `err_code`。这不是设备持续回告能力；当前定时器 START 在 DUT 端同步完成 250 us x 250 周期统计，STOP 只负责幂等清理确认。
+
+六个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes` 和 `measurements`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；缺少展示元数据时，前端回退到步骤身份和样本字段。
 
 算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。
 
-当前 `ProtocolProfile` 列表由 BIZ 保存和透传，但 MB_DDF 固定命令执行器没有把它与 `executionConfig.protocol.*ProfileId`、CSV 命令键或 HAL 资源做完整交叉校验。该绑定仍是未实现项，不能仅凭两个同名 Profile 宣称映射已建立。
+当前 `ProtocolProfile` 列表由 BIZ 保存和透传，但 MB_DDF 执行器仍没有把它与 `executionConfig.protocol.*ProfileId`、CSV 命令键或 HAL 资源做完整交叉校验。该绑定仍是未实现项，不能仅凭同名 Profile 宣称映射已建立。
 
 目标映射应显式包含：
 
@@ -282,6 +294,8 @@ CAN/CANFD 的帧边界由总线提供，但 payload 内的 MB_DDF 字段、CRC�
 - 编解码：常量、保留字节、定标、符号扩展、F32、小端和 CRC16/XMODEM；
 - `SYSTEM_STATUS`：golden request、成功响应、坏 CRC、错误命令、序号不匹配和超时；
 - `ELEC_HEALTH_STATUS`：独立配置加载、`0x05/0x01` 请求、响应字段解码、`status/err_code` 判定和经 HAL 的 UDP/串口路径；
+- `MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`：配置驱动请求/响应、CSV 字段编解码、响应判定和错误路径；
+- `TIMER_JITTER_START/STOP`：START 统计响应、递增序号的 STOP 清理 ACK 和清理失败判定；
 - 纯协议单测可直连 Simulator；产品模拟和算法集成必须经过 HAL，并标明是 HAL Mock 或标准 Provider 隔离模拟目标；
 - 真实硬件协议测试单独标记，不进入默认 CI。
 

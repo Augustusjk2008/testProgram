@@ -25,6 +25,8 @@ file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mbddf_system_status.tes
      HWTEST_MBDDF_SYSTEM_STATUS_CONFIG)
 file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_elec_health.testcfg.json"
      HWTEST_MBDDF_ELEC_HEALTH_CONFIG)
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_timer_jitter.testcfg.json"
+     HWTEST_MBDDF_TIMER_JITTER_CONFIG)
 
 target_compile_features(hwtest_algorithm_tests PRIVATE cxx_std_17)
 
@@ -32,6 +34,7 @@ target_compile_definitions(hwtest_algorithm_tests
     PRIVATE
         HWTEST_MBDDF_SYSTEM_STATUS_CONFIG="${HWTEST_MBDDF_SYSTEM_STATUS_CONFIG}"
         HWTEST_MBDDF_ELEC_HEALTH_CONFIG="${HWTEST_MBDDF_ELEC_HEALTH_CONFIG}"
+        HWTEST_MBDDF_TIMER_JITTER_CONFIG="${HWTEST_MBDDF_TIMER_JITTER_CONFIG}"
 )
 
 target_link_libraries(hwtest_algorithm_tests

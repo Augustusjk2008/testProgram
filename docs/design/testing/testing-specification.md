@@ -15,15 +15,15 @@
 | tests/hal/ | hwtest_hal_tests | 9 | 31 | HAL 接口、资源、安全、Mock、Loader、宿主串口枚举、Qt 控制 Provider |
 | tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
 | tests/biz/ | hwtest_biz_tests | 6 | 41 | 配置、计划、单次/PC 周期/设备流调度、Qt 工作线程、样本、报告和架构边界 |
-| tests/algorithm/ | hwtest_algorithm_tests | 2 | 22 | MB_DDF CSV、流式控制传输、SYSTEM_STATUS、ELEC_HEALTH_STATUS 和设备流能力判定 |
-| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 84 | 共享启动/控制器、TUI/GUI/WebSocket、连续运行样本、异步停止与关闭、跨前端等价性、架构边界、配置 descriptor、测试配置白名单选择及经 HAL/Qt UDP 的两个独立测试闭环 |
-| 合计 | 7 个目标 | 28 | 185 | 当前源级 GoogleTest 清单 |
+| tests/algorithm/ | hwtest_algorithm_tests | 2 | 24 | MB_DDF CSV、流式控制传输、固定命令、配置驱动单步交换、定时器 START/STOP 清理和设备流能力判定 |
+| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 84 | 共享启动/控制器、TUI/GUI/WebSocket、连续运行样本、异步停止与关闭、跨前端等价性、架构边界、配置 descriptor、测试配置白名单选择及既有经 HAL/Qt UDP 的两个独立测试闭环 |
+| 合计 | 7 个目标 | 28 | 187 | 当前源级 GoogleTest 清单 |
 
-185 是当前测试源码中的 GoogleTest 定义数。完整构建后的 CTest 清单为 195 条：185 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试。2026-07-26 的 Debug 构建后 `ctest -N` 实际列出 195 条；清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
+187 是当前测试源码中的 GoogleTest 定义数。完整构建后的 CTest 清单为 197 条：187 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试。清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
 
 28 个测试定义源文件使用 `*_test.cpp` 命名。两个 HAL DLL fixture、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含测试定义，不计入该数量。
 
-浏览器前端当前有 6 个 `*.test.ts` 文件、20 条 Vitest，用于协议解析/请求、配置 descriptor 与测试配置白名单目录校验、默认配置选择、配置测量标签/单位、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组。它们由 `npm test` 独立运行，不计入上述 195 条 CTest。
+浏览器前端当前有 6 个 `*.test.ts` 文件、20 条 Vitest，用于协议解析/请求、配置 descriptor 与测试配置白名单目录校验、默认配置选择、配置测量标签/单位、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组。它们由 `npm test` 独立运行，不计入上述 197 条 CTest。
 
 ## 2. 当前覆盖与条件资产
 
@@ -32,13 +32,13 @@
 | HAL | 错误映射、资源映射、安全校验、会话、Mock AD/DA、DI/DO、宿主串口枚举、串口 echo、CANFD loopback、AdapterLoader fixture、控制资源路由、Qt UDP 回环和 timeout | 自动化测试中的串口枚举不打开设备；Qt UDP 仅是本机 Provider 证据；COM3 实机结果属于下述独立手工 smoke，不是默认 CTest 或厂家 SDK 证据 |
 | 日志 | LogService、JsonLineFileSink、HalLogEvent 到 LogEvent 桥接 | 不覆盖 UI 或真实设备日志链 |
 | BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、专用 QThread 的 event dispatcher/计时器注册、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象；Qt 线程回归只证明同步任务具备 Qt dispatcher，不证明算法调用期间持续泵送事件、HAL actor 或跨线程取消；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
-| 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器、两个固定命令执行器的 Qt UDP/脚本传输路径、ELEC_HEALTH_STATUS 字段判定和两个算法拒绝设备流 | 当前只实现两个已知的独立单步算法；本机 UDP 模拟目标不等同于真实板端通讯；拒绝设备流不证明其他算法已实现设备持续回告 |
+| 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器、固定命令执行器、配置驱动单步交换、定时器 START/STOP 清理、ELEC_HEALTH_STATUS 字段判定和设备流拒绝 | 新增四项目前只有协议/脚本化执行证据，尚无真实板端验收；本机 UDP 模拟目标不等同于真实板端通讯 |
 | 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、测试配置目录发现及白名单 `configId` 切换、控制资源与会话串口选择、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影（含配置 descriptor）、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | 默认自动化中的串口选择只证明配置覆盖；下述 COM3 实机 smoke 独立于 CTest，不能外推到真实网口、其他 DUT 或长期稳定性 |
 | 浏览器前端 | Vitest 下的类型化协议、测试目录与 descriptor 校验、默认配置选择、字段标签/单位、有界数据结构、字段发现、时间窗、降采样和图组；TypeScript/Vite 单文件生产构建 | 不替代 WebSocket/UDP C++ 集成测试，也不证明真实硬件、长期浏览器稳定性或设备流算法 |
 
 下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
 
-- 5 个 MB_DDF 协议测试和 33 个 MB_DDF 跨层/集成测试依赖 MB_DDF_PROTOCOL_CSV_DIR 指向的外部 CSV 资产目录；后者包含 25 个应用/TUI/GUI/Web UDP 运行、连续采样、停止、关闭或等价性测试。
+- 5 个 MB_DDF 协议测试和 35 个 MB_DDF 跨层/集成测试依赖 MB_DDF_PROTOCOL_CSV_DIR 指向的外部 CSV 资产目录；后者包含应用/TUI/GUI/Web UDP 运行、连续采样、停止、关闭或等价性测试。
 - BIZ 的导入附件样例测试依赖 tmp/hwtest_BIZ/configs/sample_product.testcfg；tmp 不是仓库实现事实。
 - 算法测试中有 9 个自包含的帧、传输、能力判定或临时 CSV 用例；其余 12 个依赖外部 MB_DDF CSV。
 
@@ -110,7 +110,7 @@
 
 面向操作人员的基础生命周期固定为 `load -> select -> prepare -> run -> terminal -> result -> disconnect`；TUI 中的 `use/port`、`wait/status` 分别承担 select 和 terminal 观察动作。用户操作说明见 [TUI 使用指南](../../user/tui-usage-guide.md)。
 
-当前 `TestApplicationController` 接受两个已知算法 ID（`mbddf.system_status`、`mbddf.elec_health_status`），并要求恰好一个启用的对应单步。以下规则是新增测试项目的合入门禁，不得据此宣称通用多项目执行器已经实现：
+当前 `TestApplicationController` 接受六个已知算法 ID（`mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config`、`mbddf.timer_jitter`），并要求恰好一个启用的对应单步。以下规则是新增测试项目的合入门禁，不得据此宣称任意产品协议都已实现：
 
 - 新项目必须通过现有 `-TestConfig`、`-HalConfig` 选择；不得用产品专用入口复制一套加载、准备、运行和收尾生命周期。
 - 既有 TUI 命令的前置状态、硬件副作用和语义不得改变：`load/use/port` 不打开设备，`prepare` 才建立硬件会话，`disconnect/quit` 执行有序收尾。

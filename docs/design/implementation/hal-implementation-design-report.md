@@ -284,9 +284,9 @@ createBackend() -> CAbiAdapter -> MockAdapter
 当前限制：
 
 - 传输对象不创建或拥有 `IHalService` / 设备会话，`hwtest_app_core::TestApplicationController` 负责按配置建立和收尾会话；`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web` 均复用该控制器；
-- MB_DDF 固定命令执行器每次 BIZ 重试都独立打开/关闭控制资源，并保持同一请求序号；当前命令为 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS`；
+- MB_DDF 执行器每次 BIZ 重试都独立打开/关闭控制资源，并保持同一请求序号；固定命令覆盖 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS`，配置驱动交换执行器覆盖 `MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`，并可按配置追加定时器 STOP 清理；
 - `configs/mbddf_pc_hal.json` 同时定义串口和 UDP 资源，`control.resourceId` 是 PC 每次运行前的唯一选择点；
-- 当前支持两个独立单步算法 `mbddf.system_status` 和 `mbddf.elec_health_status`；行式 TUI、Qt GUI 和 WebSocket 后端可在 configured 状态切换控制资源。浏览器遥测控制台已实现运行和观测，但当前未暴露控制资源/串口选择；已准备或运行期间的热切换仍未实现。
+- 当前支持六个独立单步算法 `mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config` 和 `mbddf.timer_jitter`；行式 TUI、Qt GUI 和 WebSocket 后端可在 configured 状态切换控制资源。浏览器遥测控制台已实现运行和观测，但当前未暴露控制资源/串口选择；已准备或运行期间的热切换仍未实现。新增四项尚无真实板端验收证据。
 
 Qt UDP 本机模拟目标闭环已经打通。2026-07-26 已通过 `hwtest_web -> TestApplicationController -> BIZ -> MB_DDF executor -> HalControlTransport -> HAL -> qt.serial -> COM3 -> MB_DDF_v2` 分别完成 `SYSTEM_STATUS` 与 `ELEC_HEALTH_STATUS` 的单次和三轮 PC 周期真实链路，两个测试项终态均为 `Pass/Ok`，各产生三个样本；早期 SYSTEM_STATUS 执行每轮都出现一次 `QObject::startTimer: Timers can only be used with threads started with QThread`。随后 BIZ worker 迁移为 `QThread` 并补 dispatcher/计时器自动回归，两个测试项在同一 COM3/板端链路再次完成单次和三轮 PC 周期，后端完整诊断中该警告出现次数均为 `0`；正常 `quit`、板端 `SIGTERM` 和 COM3 释放均完成。长时、拔插、超时、运行中停止和物理安全收尾仍未覆盖，因此不是全面 DUT 验收；现场网络端点仍无证据。
 

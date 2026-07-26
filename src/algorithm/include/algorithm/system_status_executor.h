@@ -9,6 +9,8 @@
 #include <memory>
 #include <mutex>
 
+#include <QVariantMap>
+
 namespace hwtest::algorithm::mbddf {
 
 class SystemStatusAlgorithmExecutor : public hwtest::biz::IAlgorithmExecutor {
@@ -61,10 +63,15 @@ private:
     hwtest::biz::TestContext m_context;
     const MessageDefinition* m_request = nullptr;
     const MessageDefinition* m_response = nullptr;
+    const MessageDefinition* m_followUpRequest = nullptr;
+    const MessageDefinition* m_followUpResponse = nullptr;
     QString m_algorithmId;
     QString m_requestProfileId;
     QString m_responseProfileId;
     QString m_commandName;
+    QString m_followUpCommandName;
+    QVariantMap m_followUpRequestValues;
+    int m_followUpTimeoutMs = 0;
     quint16 m_nextSequence = 0;
     std::atomic_bool m_stopRequested{false};
     mutable std::mutex m_transportMutex;

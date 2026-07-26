@@ -20,7 +20,7 @@
 
 ## 2. 边界模型
 
-`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法、共享应用控制器、一次性 runner、行式 TUI、Qt Widgets GUI、回环 WebSocket 后端和独立 React/Vite 浏览器遥测控制台。BIZ 已支持单次、PC 周期和设备持续回告三种调度语义；当前 `SYSTEM_STATUS` 与 `ELEC_HEALTH_STATUS` 支持前两者，并明确拒绝缺少产品协议命令的设备持续模式。Qt 串口已有受控 COM3 真实板端 smoke，BIZ worker 迁移为 QThread 后两个测试项均已成功复测单次和三周期且未再出现目标计时器警告；TCP Provider、真实厂家链和全面真实硬件验收仍未实现。
+`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法、共享应用控制器、一次性 runner、行式 TUI、Qt Widgets GUI、回环 WebSocket 后端和独立 React/Vite 浏览器遥测控制台。BIZ 已支持单次、PC 周期和设备持续回告三种调度语义；当前六个 MB_DDF 单步配置均支持单次，内存和定时器配置支持 PC 周期，设备持续回告仍按执行器能力校验。Qt 串口已有受控 COM3 真实板端 smoke，但仅覆盖既有 SYSTEM_STATUS/ELEC_HEALTH_STATUS；新增四项尚无真实硬件验收证据。TCP Provider、真实厂家链和全面真实硬件验收仍未实现。
 
 ```text
 front/ 浏览器控制台 -> ws://127.0.0.1:<port>/ws -> hwtest_web
@@ -62,7 +62,7 @@ TUI / Qt GUI / hwtest_web / 浏览器 Web UI
 | --- | --- | --- |
 | UI / 应用组合 | `[当前实现]` `hwtest_app_core` 统一组装 HAL、算法、BIZ 和日志；TUI、Qt GUI 与 `hwtest_web` 支持配置加载、控制口/串口选择、准备、启停和结果查看；浏览器控制台通过 WebSocket 消费快照/样本并提供全局连续运行条、总览、可配置曲线和诊断 | 解释产品协议、持有 DUT/生产 I/O Socket 或串口、绕过应用控制器或 BIZ 直接执行测试判定；`hwtest_web` 的 `QWebSocketServer/QWebSocket` 仅作前端传输 |
 | BIZ | 配置、计划、稳定拓扑排序、重试、通用运行模式、运行状态、样本/结果编排和报告 | 解释协议字段、执行单步判定、持有硬件或通讯对象、执行安全动作 |
-| 算法 | `[当前实现]` MB_DDF CSV、编解码、流式分帧、命令/序号匹配以及 `SYSTEM_STATUS`、`ELEC_HEALTH_STATUS` 判定 | BIZ 流程、UI、具体 Qt/厂家连接、物理 safe state |
+| 算法 | `[当前实现]` MB_DDF CSV、编解码、流式分帧、命令/序号匹配、固定命令判定，以及可配置单步交换和定时器 STOP 清理 | BIZ 流程、UI、具体 Qt/厂家连接、物理 safe state |
 | HAL | `[当前实现]` 提供资源、会话、安全 API 和控制通道原始 I/O；控制资源持有 Qt 串口/UDP 对象并执行操作 timeout | 业务调度、产品协议字段解释和测试判定 |
 | Provider / Adapter | `[当前实现]` 控制资源按 `providerId` 选择 `qt.serial` 或 `qt.udp`；既有硬件资源仍走 Mock/C ABI 兼容链；`[目标契约-未实现]` 通用 Qt/Vendor/Mock Router | UI、业务流程和产品判定 |
 
@@ -95,7 +95,7 @@ BIZ 编排 TestPlan / TestContext / executionConfig
 
 ## 6. 当前落地范围
 
-- `src/algorithm/` 已有 `hwtest_algorithm_mbddf`、协议目录加载、payload/物理帧编解码、流式 `HalControlTransport`、固定命令配置的 MB_DDF 执行器和 `SYSTEM_STATUS`/`ELEC_HEALTH_STATUS` 测试配置。
+- `src/algorithm/` 已有 `hwtest_algorithm_mbddf`、协议目录加载、payload/物理帧编解码、流式 `HalControlTransport`、固定命令执行器和配置驱动的 MB_DDF 单步交换执行器；配置目录覆盖 `SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG` 和带 STOP 清理的 `TIMER_JITTER`。
 - `src/app/` 的 `hwtest_app_core` 提供 `TestApplicationController` 和共享启动配置；`hwtest_tui_support`、`hwtest_gui_support`、`hwtest_web_support` 只承载各自前端适配，`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui`、`hwtest_web` 是四个独立进程入口。TUI、GUI 和 WebSocket 请求中的会话覆盖都只修改内存中的控制资源或串口属性；PC 可在串口和 UDP 间选择，DUT 端无需切换模式。
 - `front/` 是独立的 React 19、TypeScript、Vite、Tailwind CSS 和 uPlot 工程，不进入宿主 CMake，也不包含后端、数据库或 DUT I/O。它的三页共享同一个运行控制条；曲线使用有界缓冲、批量 Canvas 更新和 min/max 降采样。
 - 根 CMake 构建 HAL、日志、BIZ、算法、共享应用核心、TUI/GUI/Web 支持库和四个应用入口，并查找同一 Qt 主版本的 Core、Network、SerialPort、Widgets、WebSockets。
@@ -145,6 +145,6 @@ quit
 
 也可在启动时覆盖本次会话的端口：`.\hwtest.ps1 -Ui tui -Port COM7` 或 `.\hwtest.ps1 -Ui gui -Port COM7`；一次性运行使用 `.\hwtest.ps1 run -Port COM7`。端口覆盖不回写 HAL JSON；长期部署值仍由 `hardware.resources.<ResourceId>.properties.portName` 配置。`CONTROL_NETWORK`/`qt.udp` 保留用于现有本机模拟和后续板端网口扩展，但不能描述为已可与当前仅支持串口的 MB_DDF_v2 板端交互。
 
-`ports` 只枚举宿主串口，不打开设备；`load` 只读取并校验配置，不打开硬件；`use` 只在断开状态切换 PC 端逻辑控制资源；`port` 只在已加载且未连接时修改内存配置；`prepare` 才创建 HAL 会话、算法执行器和 BIZ 服务，并在 HAL 中尝试打开所选端口。`run` 当前只运行唯一启用的 `mbddf.system_status`。`pause`、`resume`、`stop [timeout-ms]` 也已接入 BIZ，成功停止后阶段为 `stopped`，可再次 `wait` 或 `run`；当前单项事务较短，暂停可能在到达检查点前已经结束。标准输入由独立线程读取，Qt 主事件循环持续处理 BIZ/HAL 的排队事件；交互模式在 `wait` 期间仍可接收 `status`/`stop`，管道模式则保持逐命令确认顺序。stdin/stdout 固定为 UTF-8，同一命令流可通过管道脚本执行。
+`ports` 只枚举宿主串口，不打开设备；`load` 只读取并校验配置，不打开硬件；`use` 只在断开状态切换 PC 端逻辑控制资源；`port` 只在已加载且未连接时修改内存配置；`prepare` 才创建 HAL 会话、算法执行器和 BIZ 服务，并在 HAL 中尝试打开所选端口。`run` 当前运行配置中唯一启用的受支持 MB_DDF 单步算法。`pause`、`resume`、`stop [timeout-ms]` 也已接入 BIZ，成功停止后阶段为 `stopped`，可再次 `wait` 或 `run`；当前单项事务较短，暂停可能在到达检查点前已经结束。标准输入由独立线程读取，Qt 主事件循环持续处理 BIZ/HAL 的排队事件；交互模式在 `wait` 期间仍可接收 `status`/`stop`，管道模式则保持逐命令确认顺序。stdin/stdout 固定为 UTF-8，同一命令流可通过管道脚本执行。
 
 `quit` 和 EOF 都会执行有序收尾；收尾失败会锁存在 `shutdown_failed` 快照中，TUI 以非零码退出。但现有 BIZ/算法停止仍是协作式的，`shutdown()` 最终会等待 worker；它不是进程级硬截止，强制杀进程也不能作为物理 safe state 已完成的证据。真实硬件使用前必须另行补进程监护和隔离安全验收。

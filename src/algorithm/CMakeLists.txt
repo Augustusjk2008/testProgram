@@ -1,5 +1,6 @@
 set(ALGORITHM_PUBLIC_HEADERS
     include/algorithm/elec_health_status_executor.h
+    include/algorithm/mbddf_exchange_executor.h
     include/algorithm/mbddf_protocol.h
     include/algorithm/mbddf_transport.h
     include/algorithm/system_status_executor.h

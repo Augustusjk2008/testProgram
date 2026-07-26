@@ -31,7 +31,11 @@ ActionResult failure(const QString& code, const QString& message)
 bool isSupportedAlgorithm(const QString& algorithmId)
 {
     return algorithmId == QStringLiteral("mbddf.system_status") ||
-        algorithmId == QStringLiteral("mbddf.elec_health_status");
+        algorithmId == QStringLiteral("mbddf.elec_health_status") ||
+        algorithmId == QStringLiteral("mbddf.memperf") ||
+        algorithmId == QStringLiteral("mbddf.spi_flash") ||
+        algorithmId == QStringLiteral("mbddf.dh_pulse_config") ||
+        algorithmId == QStringLiteral("mbddf.timer_jitter");
 }
 
 bool makeTestConfigOption(const QString& configPath,
