@@ -90,7 +90,7 @@ export function OverviewPage() {
           <div className="empty-state panel metric-grid__empty">
             <Pulse size={30} />
             <h3>等待第一条遥测样本</h3>
-            <p>在上方完成“加载配置 → 连接设备 → 开始测试”，这里会显示当前测试的主要测量量。</p>
+            <p>配置会在连接后自动加载；完成“连接设备 → 开始测试”后，这里会显示当前测试的主要测量量。</p>
           </div>
         )}
       </section>

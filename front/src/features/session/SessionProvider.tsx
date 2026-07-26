@@ -30,6 +30,7 @@ import {
   HwtestClient,
 } from '../../shared/ws/HwtestClient'
 import { SampleBuffer } from '../telemetry/sample-buffer'
+import { selectInitialTestConfig } from './config-selection'
 
 export interface DiagnosticEntry {
   id: number
@@ -46,6 +47,7 @@ interface SessionContextValue {
   connectionDetail: string
   snapshot: ApplicationSnapshot
   testConfigs: TestConfigOption[]
+  testConfigsReady: boolean
   selectedConfigId: string
   latestSample: ApplicationSample | null
   telemetry: SampleBuffer
@@ -71,11 +73,14 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const commitFrame = useRef<number | null>(null)
   const lastCommit = useRef(0)
   const descriptorConfigId = useRef('')
+  const snapshotRef = useRef<ApplicationSnapshot>(EMPTY_SNAPSHOT)
+  const autoLoadInFlight = useRef(false)
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected')
   const [connectionDetail, setConnectionDetail] = useState('')
   const [snapshot, setSnapshot] = useState<ApplicationSnapshot>(EMPTY_SNAPSHOT)
   const [testConfigs, setTestConfigs] = useState<TestConfigOption[]>([])
+  const [testConfigsReady, setTestConfigsReady] = useState(false)
   const [selectedConfigId, setSelectedConfigId] = useState('')
   const [latestSample, setLatestSample] = useState<ApplicationSample | null>(null)
   const [fields, setFields] = useState<string[]>([])
@@ -134,86 +139,6 @@ export function SessionProvider({ children }: PropsWithChildren) {
     setDataVersion((version) => version + 1)
   }, [])
 
-  useEffect(() => {
-    const client = new HwtestClient(HWTEST_WS_URL)
-    clientRef.current = client
-    const unsubscribe = client.subscribe((event) => {
-      if (event.type === 'connection') {
-        setConnectionState(event.state)
-        setConnectionDetail(event.detail ?? '')
-        pushDiagnostic(
-          event.state === 'error' ? 'error' : 'link',
-          `WebSocket ${event.state}`,
-          event.detail ?? HWTEST_WS_URL,
-        )
-        return
-      }
-
-      const message = event.message
-      if (message.type === 'snapshot') {
-        const nextConfigId = message.snapshot.descriptor.configId
-        if (nextConfigId && nextConfigId !== descriptorConfigId.current) {
-          if (descriptorConfigId.current) clearTelemetry()
-          descriptorConfigId.current = nextConfigId
-        }
-        setSnapshot({ ...EMPTY_SNAPSHOT, ...message.snapshot })
-        pushDiagnostic(
-          'snapshot',
-          `状态 · ${message.snapshot.phase}`,
-          message.snapshot.progressStep || `seq ${message.seq}`,
-          message,
-        )
-      } else if (message.type === 'sample') {
-        telemetryRef.current.append(message.sample)
-        pushDiagnostic(
-          'sample',
-          `样本 · #${message.sample.cycleIndex}`,
-          `${message.sample.channelId} · seq ${message.seq}`,
-          message,
-          true,
-        )
-        scheduleTelemetryCommit()
-      } else if (message.type === 'hello') {
-        pushDiagnostic(
-          'link',
-          `已连接 ${message.server}`,
-          `协议 v${message.protocolVersion}`,
-          message,
-        )
-        void client.request('testConfigs').then((reply) => {
-          if (!reply.ok) {
-            pushDiagnostic(
-              'error',
-              '测试配置目录不可用',
-              reply.message || reply.code,
-              reply,
-            )
-            return
-          }
-          try {
-            const catalog = parseTestConfigCatalog(reply.data)
-            setTestConfigs(catalog.configs)
-            setSelectedConfigId(catalog.selectedConfigId)
-          } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error)
-            pushDiagnostic('error', '测试配置目录格式错误', detail, reply)
-          }
-        }).catch((error) => {
-          const detail = error instanceof Error ? error.message : String(error)
-          pushDiagnostic('error', '读取测试配置目录失败', detail)
-        })
-      }
-    })
-
-    void client.connect().catch(() => undefined)
-    return () => {
-      unsubscribe()
-      client.close()
-      if (commitTimer.current !== null) window.clearTimeout(commitTimer.current)
-      if (commitFrame.current !== null) window.cancelAnimationFrame(commitFrame.current)
-    }
-  }, [clearTelemetry, pushDiagnostic, scheduleTelemetryCommit])
-
   const connect = useCallback(async (reconnecting = true) => {
     setActionError('')
     await clientRef.current?.connect(reconnecting)
@@ -248,6 +173,115 @@ export function SessionProvider({ children }: PropsWithChildren) {
     }
   }, [pushDiagnostic])
 
+  useEffect(() => {
+    const client = new HwtestClient(HWTEST_WS_URL)
+    clientRef.current = client
+    const unsubscribe = client.subscribe((event) => {
+      if (event.type === 'connection') {
+        setConnectionState(event.state)
+        setConnectionDetail(event.detail ?? '')
+        pushDiagnostic(
+          event.state === 'error' ? 'error' : 'link',
+          `WebSocket ${event.state}`,
+          event.detail ?? HWTEST_WS_URL,
+        )
+        return
+      }
+
+      const message = event.message
+      if (message.type === 'snapshot') {
+        const nextConfigId = message.snapshot.descriptor.configId
+        if (nextConfigId && nextConfigId !== descriptorConfigId.current) {
+          if (descriptorConfigId.current) clearTelemetry()
+          descriptorConfigId.current = nextConfigId
+        }
+        const nextSnapshot = { ...EMPTY_SNAPSHOT, ...message.snapshot }
+        snapshotRef.current = nextSnapshot
+        setSnapshot(nextSnapshot)
+        pushDiagnostic(
+          'snapshot',
+          `状态 · ${message.snapshot.phase}`,
+          message.snapshot.progressStep || `seq ${message.seq}`,
+          message,
+        )
+      } else if (message.type === 'sample') {
+        telemetryRef.current.append(message.sample)
+        pushDiagnostic(
+          'sample',
+          `样本 · #${message.sample.cycleIndex}`,
+          `${message.sample.channelId} · seq ${message.seq}`,
+          message,
+          true,
+        )
+        scheduleTelemetryCommit()
+      } else if (message.type === 'hello') {
+        setTestConfigsReady(false)
+        pushDiagnostic(
+          'link',
+          `已连接 ${message.server}`,
+          `协议 v${message.protocolVersion}`,
+          message,
+        )
+        void client.request('testConfigs').then((reply) => {
+          setTestConfigsReady(true)
+          if (!reply.ok) {
+            setActionError(reply.message || reply.code)
+            pushDiagnostic(
+              'error',
+              '测试配置目录不可用',
+              reply.message || reply.code,
+              reply,
+            )
+            return
+          }
+          try {
+            const catalog = parseTestConfigCatalog(reply.data)
+            const initialConfig = selectInitialTestConfig(catalog)
+            setTestConfigs(catalog.configs)
+            setSelectedConfigId(initialConfig?.configId ?? '')
+            if (!initialConfig) {
+              setActionError('没有可加载的测试配置')
+              pushDiagnostic('error', '测试配置目录为空', '没有发现可用测试配置', catalog)
+              return
+            }
+            if (snapshotRef.current.phase !== 'empty' || autoLoadInFlight.current) return
+
+            autoLoadInFlight.current = true
+            const action: ActionName = initialConfig.configId === catalog.selectedConfigId
+              ? 'load'
+              : 'selectTest'
+            const params = action === 'selectTest'
+              ? { configId: initialConfig.configId }
+              : {}
+            void invoke(action, params)
+              .catch(() => undefined)
+              .finally(() => {
+                autoLoadInFlight.current = false
+              })
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error)
+            setActionError(detail)
+            pushDiagnostic('error', '测试配置目录格式错误', detail, reply)
+          }
+        }).catch((error) => {
+          const detail = error instanceof Error ? error.message : String(error)
+          setTestConfigsReady(true)
+          setActionError(detail)
+          pushDiagnostic('error', '读取测试配置目录失败', detail)
+        })
+      }
+    })
+
+    void client.connect().catch(() => undefined)
+    return () => {
+      unsubscribe()
+      client.close()
+      if (commitTimer.current !== null) window.clearTimeout(commitTimer.current)
+      if (commitFrame.current !== null) window.cancelAnimationFrame(commitFrame.current)
+      autoLoadInFlight.current = false
+    }
+  }, [clearTelemetry, invoke, pushDiagnostic, scheduleTelemetryCommit])
+
   const start = useCallback(async (options: TestRunOptions) => {
     clearTelemetry()
     return invoke('start', { ...options })
@@ -259,6 +293,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
     connectionDetail,
     snapshot,
     testConfigs,
+    testConfigsReady,
     selectedConfigId,
     latestSample,
     telemetry: telemetryRef.current,
@@ -287,6 +322,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
     snapshot,
     start,
     testConfigs,
+    testConfigsReady,
   ])
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

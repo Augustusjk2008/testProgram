@@ -40,6 +40,7 @@ export function RunControlBar() {
     selectedConfigId,
     start,
     testConfigs,
+    testConfigsReady,
   } = useSession()
   const [options, setOptions] = useState<TestRunOptions>(loadRunOptions)
 
@@ -52,6 +53,7 @@ export function RunControlBar() {
     ? snapshot.descriptor.supportedRunModes
     : ['single', 'pc_periodic']
   const modeOptions = MODE_LABELS.filter(({ mode }) => supportedModes.includes(mode))
+  const loadingConfig = !testConfigsReady || busyAction === 'load' || busyAction === 'selectTest'
   const periodicError = useMemo(() => {
     if (options.mode !== 'pc_periodic') return ''
     if (!Number.isInteger(options.intervalMs) || options.intervalMs < 10 || options.intervalMs > 3_600_000) {
@@ -97,7 +99,7 @@ export function RunControlBar() {
           <label htmlFor="test-config-select">测试项目</label>
           <select
             aria-label="测试项目"
-            disabled={testChangeBlocked || busyAction !== null || testConfigs.length === 0}
+            disabled={testChangeBlocked || busyAction !== null || !testConfigsReady || testConfigs.length === 0}
             id="test-config-select"
             onChange={(event) => {
               if (event.target.value) execute('selectTest', { configId: event.target.value })
@@ -194,8 +196,8 @@ export function RunControlBar() {
             <ArrowClockwise size={17} />重连后端
           </button>
         ) : snapshot.phase === 'empty' ? (
-          <button className="button button--primary" disabled={busyAction !== null} onClick={() => execute('load')} type="button">
-            <Plug size={17} />加载配置
+          <button className="button button--primary" disabled={busyAction !== null || !testConfigsReady} onClick={() => execute('load')} type="button">
+            <Plug size={17} />{loadingConfig ? '加载配置中…' : '重试加载'}
           </button>
         ) : snapshot.phase === 'configured' ? (
           <button className="button button--primary" disabled={busyAction !== null} onClick={() => execute('prepare')} type="button">
