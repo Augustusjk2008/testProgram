@@ -6,7 +6,9 @@ import {
   Pulse,
   Thermometer,
 } from '@phosphor-icons/react'
+import { useMemo } from 'react'
 
+import { DigitalStimulusPanel } from '../features/digital-stimulus/DigitalStimulusPanel'
 import {
   fieldLabel,
   fieldUnit,
@@ -45,7 +47,13 @@ function MetricCard({
 }
 
 export function OverviewPage() {
-  const { connectionState, latestSample, snapshot } = useSession()
+  const {
+    connectionState,
+    latestSample,
+    resetDigitalStimulus,
+    setDigitalStimulus,
+    snapshot,
+  } = useSession()
   const values = latestSample?.values ?? {}
   const measurements = snapshot.descriptor.measurements
   const primaryFields = measurements.filter(({ primary }) => primary).map(({ id }) => id)
@@ -54,6 +62,17 @@ export function OverviewPage() {
     : Object.keys(values).filter((field) => typeof values[field] === 'number').slice(0, 6))
     .filter((field) => typeof values[field] === 'number')
   const testTitle = snapshot.descriptor.title || snapshot.testItemId || snapshot.algorithmId || '当前测试'
+  const digitalStimulus = snapshot.digitalStimulus
+  const showDigitalStimulus = digitalStimulus.available &&
+    digitalStimulus.switches.length === 16 &&
+    digitalStimulus.switches.every(({ dutBit }) => Number.isInteger(dutBit) && dutBit >= 0 && dutBit < 16)
+  const digitalStimulusTransport = useMemo(() => ({
+    set: setDigitalStimulus,
+    reset: resetDigitalStimulus,
+  }), [resetDigitalStimulus, setDigitalStimulus])
+  const digitalStimulusKey = `${snapshot.descriptor.configId}:${digitalStimulus.switches
+    .map(({ switchId, dutBit }) => `${switchId}:${dutBit}`)
+    .join('|')}`
 
   return (
     <div className="page-stack overview-page">
@@ -94,6 +113,15 @@ export function OverviewPage() {
           </div>
         )}
       </section>
+
+      {showDigitalStimulus && (
+        <DigitalStimulusPanel
+          key={digitalStimulusKey}
+          latestSample={latestSample}
+          stimulus={digitalStimulus}
+          transport={digitalStimulusTransport}
+        />
+      )}
 
       <div className="overview-columns">
         <section className="panel pipeline-panel">

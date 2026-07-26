@@ -33,6 +33,8 @@ bool isKnownAction(const QString& action)
         QStringLiteral("start"),
         QStringLiteral("pause"),
         QStringLiteral("resume"),
+        QStringLiteral("setDigitalStimulus"),
+        QStringLiteral("resetDigitalStimulus"),
         QStringLiteral("stop"),
         QStringLiteral("disconnect"),
         QStringLiteral("quit"),
@@ -101,10 +103,37 @@ QJsonObject snapshotObject(const ApplicationSnapshot& snapshot)
                   static_cast<double>(snapshot.sampleCount));
     object.insert(QStringLiteral("descriptor"),
                   descriptorObject(snapshot.descriptor));
+    object.insert(QStringLiteral("digitalStimulus"),
+                  digitalStimulusObject(snapshot.digitalStimulus));
     return object;
 }
 
 } // namespace
+
+QJsonObject digitalStimulusObject(const DigitalStimulusSnapshot& stimulus)
+{
+    QJsonArray switches;
+    for (const DigitalSwitchDescriptor& descriptor : stimulus.switches) {
+        switches.push_back(QJsonObject{
+            {QStringLiteral("switchId"), descriptor.switchId},
+            {QStringLiteral("dutBit"), descriptor.dutBit},
+            {QStringLiteral("label"), descriptor.label},
+            {QStringLiteral("activeLevel"), descriptor.activeLevel},
+        });
+    }
+    return QJsonObject{
+        {QStringLiteral("available"), stimulus.available},
+        {QStringLiteral("configured"), stimulus.configured},
+        {QStringLiteral("switches"), switches},
+        {QStringLiteral("appliedMask"), static_cast<double>(stimulus.appliedMask)},
+        {QStringLiteral("revision"), static_cast<double>(stimulus.revision)},
+        {QStringLiteral("lastWriteTimestampUs"),
+         static_cast<double>(stimulus.lastWriteTimestampUs)},
+        {QStringLiteral("settlingMs"), stimulus.settlingMs},
+        {QStringLiteral("errorCode"), stimulus.errorCode},
+        {QStringLiteral("message"), stimulus.message},
+    };
+}
 
 ProtocolParseResult parseRequest(const QString& text)
 {

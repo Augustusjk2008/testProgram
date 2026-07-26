@@ -3,7 +3,7 @@
 #include "hal/hal_types.h"
 #include "hal/i_hal_service.h"
 
-#include "c_abi_adapter.h"
+#include "adapter_router.h"
 #include "hal_device.h"
 #include "resource_mapper.h"
 
@@ -38,6 +38,7 @@ private:
     struct SessionEntry {
         std::shared_ptr<HalDevice> device;
         DeviceDescriptor descriptor;
+        AdapterId adapterId;
     };
 
     void emitLogEvent(const HalLogEvent& event);
@@ -53,14 +54,15 @@ private:
                           const SessionId& sessionId = {},
                           const QVariantMap& context = {});
 
-    std::unique_ptr<HardwareAdapter> createBackend(const QVariantMap& halConfig);
     HalDevice* sessionDevice(const SessionId& sessionId);
     const HalDevice* sessionDevice(const SessionId& sessionId) const;
 
     QVariantMap m_config;
     ResourceMapper m_mapper;
-    std::unique_ptr<HardwareAdapter> m_backend;
+    AdapterRouter m_router;
     QHash<SessionId, SessionEntry> m_sessions;
+    QVector<SessionId> m_sessionOrder;
+    quint64 m_nextSessionId = 0;
     bool m_initialized = false;
 };
 

@@ -14,27 +14,6 @@ static qint64 nowUs()
     return static_cast<qint64>(QDateTime::currentDateTimeUtc().toMSecsSinceEpoch()) * 1000;
 }
 
-static bool hasLibraryPath(const QVariantMap& config)
-{
-    const QVariantMap adapterConfig = config.value(QStringLiteral("adapter")).toMap();
-    if (adapterConfig.contains(QStringLiteral("libraryPath"))) {
-        return !adapterConfig.value(QStringLiteral("libraryPath")).toString().isEmpty();
-    }
-    return !config.value(QStringLiteral("adapterLibraryPath")).toString().isEmpty();
-}
-
-static QVariantMap adapterConfig(const QVariantMap& config)
-{
-    QVariantMap result = config.value(QStringLiteral("adapter")).toMap();
-    if (result.isEmpty()) {
-        const QString libraryPath = config.value(QStringLiteral("adapterLibraryPath")).toString();
-        if (!libraryPath.isEmpty()) {
-            result.insert(QStringLiteral("libraryPath"), libraryPath);
-        }
-    }
-    return result;
-}
-
 } // namespace
 
 HalService::HalService(QObject* parent)
@@ -142,13 +121,6 @@ void HalService::emitOperationLog(const QString& operation,
     emitLogEvent(event);
 }
 
-std::unique_ptr<HardwareAdapter> HalService::createBackend(const QVariantMap& halConfig)
-{
-    // Keep the default path in-process so the HAL remains usable without vendor binaries.
-    Q_UNUSED(halConfig)
-    return std::make_unique<CAbiAdapter>();
-}
-
 HalDevice* HalService::sessionDevice(const SessionId& sessionId)
 {
     const auto it = m_sessions.find(sessionId);
@@ -171,17 +143,15 @@ HalStatus HalService::initialize(const QVariantMap& halConfig)
 {
     shutdown();
     m_config = halConfig;
-    m_mapper.load(halConfig);
-    m_backend = createBackend(halConfig);
-    if (m_backend == nullptr) {
-        return makeError(HalStatusCode::InternalError,
+    if (!m_mapper.load(halConfig)) {
+        m_config.clear();
+        return makeError(HalStatusCode::InvalidArgument,
                          QStringLiteral("hal.initialize"),
-                         QStringLiteral("Unable to create backend adapter"));
+                         m_mapper.errorString());
     }
-
-    const HalStatus status = m_backend->initialize(halConfig);
+    const HalStatus status = m_router.configure(halConfig, m_mapper);
     if (!status.ok()) {
-        m_backend.reset();
+        m_config.clear();
         return status;
     }
 
@@ -195,19 +165,18 @@ HalStatus HalService::initialize(const QVariantMap& halConfig)
 
 HalStatus HalService::shutdown()
 {
-    for (auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
-        if (it.value().device) {
-            it.value().device->close();
-        }
+    HalStatus firstError;
+    while (!m_sessionOrder.isEmpty()) {
+        const HalStatus status = closeDevice(m_sessionOrder.last(), OperationOptions{});
+        if (!status.ok() && firstError.ok()) firstError = status;
     }
     m_sessions.clear();
-    if (m_backend != nullptr) {
-        m_backend->shutdown();
-        m_backend.reset();
-    }
+    m_sessionOrder.clear();
+    const HalStatus routerStatus = m_router.shutdown();
+    if (!routerStatus.ok() && firstError.ok()) firstError = routerStatus;
     m_initialized = false;
     m_config.clear();
-    return HalStatus{};
+    return firstError;
 }
 
 HalResult<QVector<DeviceDescriptor>> HalService::scanDevices(const OperationOptions& options)
@@ -263,15 +232,6 @@ HalResult<SessionId> HalService::openDevice(const DeviceId& deviceId,
         emitOperationLog(operation, options, timer.elapsed(), result.status, deviceId);
         return result;
     }
-    if (m_backend == nullptr) {
-        result.status = makeError(HalStatusCode::InternalError,
-                                  QStringLiteral("hal.openDevice"),
-                                  QStringLiteral("Backend adapter is missing"),
-                                  deviceId);
-        emitOperationLog(operation, options, timer.elapsed(), result.status, deviceId);
-        return result;
-    }
-
     const DeviceDescriptor descriptor = m_mapper.deviceDescriptor(deviceId);
     if (descriptor.deviceId.isEmpty()) {
         result.status = makeError(HalStatusCode::NotFound,
@@ -282,8 +242,19 @@ HalResult<SessionId> HalService::openDevice(const DeviceId& deviceId,
         return result;
     }
 
-    const HalResult<SessionId> backendSession = m_backend->openDevice(deviceId, m_config, options);
+    const HalResult<HardwareAdapter*> acquired = m_router.acquire(descriptor.adapterId);
+    if (!acquired.ok() || acquired.value == nullptr) {
+        result.status = acquired.status;
+        emitOperationLog(operation, options, timer.elapsed(), result.status, deviceId);
+        return result;
+    }
+    HardwareAdapter* const backend = acquired.value;
+    QVariantMap openOptions = descriptor.properties;
+    openOptions.insert(QStringLiteral("deviceId"), descriptor.deviceId);
+    openOptions.insert(QStringLiteral("adapterId"), descriptor.adapterId);
+    const HalResult<SessionId> backendSession = backend->openDevice(deviceId, openOptions, options);
     if (!backendSession.ok()) {
+        m_router.release(descriptor.adapterId);
         result.status = backendSession.status;
         emitOperationLog(operation, options, timer.elapsed(), result.status, deviceId);
         return result;
@@ -291,7 +262,8 @@ HalResult<SessionId> HalService::openDevice(const DeviceId& deviceId,
 
     SessionEntry entry;
     entry.descriptor = descriptor;
-    entry.device = std::make_unique<HalDevice>(m_backend.get(),
+    entry.adapterId = descriptor.adapterId;
+    entry.device = std::make_shared<HalDevice>(backend,
                                                backendSession.value,
                                                descriptor,
                                                m_mapper.capabilities(deviceId),
@@ -304,9 +276,12 @@ HalResult<SessionId> HalService::openDevice(const DeviceId& deviceId,
                                                    }
                                                    emitLogEvent(payload);
                                                });
-    m_sessions.insert(backendSession.value, std::move(entry));
+    const SessionId publicSession = QStringLiteral("hal-session-%1")
+                                        .arg(++m_nextSessionId);
+    m_sessions.insert(publicSession, std::move(entry));
+    m_sessionOrder.push_back(publicSession);
     emit deviceChanged(descriptor, QStringLiteral("opened"));
-    result.value = backendSession.value;
+    result.value = publicSession;
     emitOperationLog(operation,
                      options,
                      timer.elapsed(),
@@ -332,10 +307,13 @@ HalStatus HalService::closeDevice(const SessionId& sessionId,
         return status;
     }
     const DeviceDescriptor descriptor = it.value().descriptor;
+    const AdapterId adapterId = it.value().adapterId;
     const HalStatus status = it.value().device ? it.value().device->close(options) : HalStatus{};
     m_sessions.erase(it);
+    m_sessionOrder.removeAll(sessionId);
+    const HalStatus released = m_router.release(adapterId);
     emit deviceChanged(descriptor, QStringLiteral("closed"));
-    return status;
+    return !status.ok() ? status : released;
 }
 
 HalStatus HalService::resetDevice(const SessionId& sessionId,

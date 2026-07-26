@@ -20,6 +20,7 @@ struct ResourceBinding {
 class ResourceMapper {
 public:
     bool load(const QVariantMap& halConfig);
+    QString errorString() const;
 
     QVector<DeviceDescriptor> devices() const;
     QVector<ResourceBinding> bindingsForDevice(const DeviceId& deviceId) const;
@@ -42,6 +43,7 @@ private:
     QVector<ResourceBinding> m_bindings;
     QHash<QString, int> m_deviceIndexById;
     QVariantMap m_safeState;
+    QString m_errorString;
 };
 
 } // namespace hwtest::hal

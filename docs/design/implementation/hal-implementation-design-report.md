@@ -1,7 +1,9 @@
 # HAL 实现设计报告
 
+> **已被替代（2026-07-27）**：本文保留为 2026-07-25 的实现快照，其中“单 CAbiAdapter 委托 MockAdapter”等描述不再代表当前代码。现行事实以 [五层架构总览](../overview/five-layer-architecture.md)、[HAL 层接口协议](../contracts/hal-interface-protocol.md) 和 [测试规范](../testing/testing-specification.md) 为准。
+
 > 快照日期：2026-07-25
-> 本文定位：记录 `src/hal/` 的当前代码结构、真实调用路径、已知限制和向目标 Provider 架构的迁移顺序。
+> 本文定位：记录 `src/hal/` 在该日期的历史代码结构、调用路径、已知限制和迁移顺序。
 > 稳定接口与目标语义见 [HAL 层接口协议](../contracts/hal-interface-protocol.md)；测试规则见 [测试规范](../testing/testing-specification.md)。
 > 本报告不重复公共头声明、稳定错误码、日志字段映射或全局测试命令。
 

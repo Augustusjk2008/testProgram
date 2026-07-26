@@ -8,6 +8,18 @@
   "logging": {
     "filePath": "../logs/mbddf_pc.jsonl"
   },
+  "adapters": {
+    "ni.daqmx": {
+      "providerId": "vendor.cabi",
+      "libraryPath": "${HWTEST_NI_DAQMX_ADAPTER_PATH}",
+      "settings": {
+        "deviceName": "Dev1",
+        "expectedProductType": "USB-6259",
+        "serialNumber": "CONFIGURE_ME",
+        "timeoutSeconds": 1.0
+      }
+    }
+  },
   "hardware": {
     "devices": [
       {
@@ -15,6 +27,13 @@
         "adapterId": "mock.adapter.v1",
         "vendor": "MB_DDF",
         "model": "MB_DDF_v2"
+      },
+      {
+        "alias": "ni6259_stimulus",
+        "adapterId": "ni.daqmx",
+        "vendor": "NI",
+        "model": "USB-6259",
+        "serialNumber": "CONFIGURE_ME"
       }
     ],
     "resources": {
@@ -45,8 +64,41 @@
           "remoteAddress": "127.0.0.1",
           "remotePort": 3003
         }
-      }
+      },
+      "DUT_DI0_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 0, "properties": {"portNumber": 0, "lineNumber": 0}},
+      "DUT_DI1_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 1, "properties": {"portNumber": 0, "lineNumber": 1}},
+      "DUT_DI2_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 2, "properties": {"portNumber": 0, "lineNumber": 2}},
+      "DUT_DI3_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 3, "properties": {"portNumber": 0, "lineNumber": 3}},
+      "DUT_DI4_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 4, "properties": {"portNumber": 0, "lineNumber": 4}},
+      "DUT_DI5_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 5, "properties": {"portNumber": 0, "lineNumber": 5}},
+      "DUT_DI6_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 6, "properties": {"portNumber": 0, "lineNumber": 6}},
+      "DUT_DI7_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 7, "properties": {"portNumber": 0, "lineNumber": 7}},
+      "DUT_DI8_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 8, "properties": {"portNumber": 0, "lineNumber": 8}},
+      "DUT_DI9_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 9, "properties": {"portNumber": 0, "lineNumber": 9}},
+      "DUT_DI10_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 10, "properties": {"portNumber": 0, "lineNumber": 10}},
+      "DUT_DI11_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 11, "properties": {"portNumber": 0, "lineNumber": 11}},
+      "DUT_DI12_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 12, "properties": {"portNumber": 0, "lineNumber": 12}},
+      "DUT_DI13_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 13, "properties": {"portNumber": 0, "lineNumber": 13}},
+      "DUT_DI14_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 14, "properties": {"portNumber": 0, "lineNumber": 14}},
+      "DUT_DI15_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 15, "properties": {"portNumber": 0, "lineNumber": 15}}
     }
   },
-  "safeState": {}
+  "safeState": {
+    "DUT_DI0_STIM": "Low",
+    "DUT_DI1_STIM": "Low",
+    "DUT_DI2_STIM": "Low",
+    "DUT_DI3_STIM": "Low",
+    "DUT_DI4_STIM": "Low",
+    "DUT_DI5_STIM": "Low",
+    "DUT_DI6_STIM": "Low",
+    "DUT_DI7_STIM": "Low",
+    "DUT_DI8_STIM": "High",
+    "DUT_DI9_STIM": "Low",
+    "DUT_DI10_STIM": "Low",
+    "DUT_DI11_STIM": "Low",
+    "DUT_DI12_STIM": "Low",
+    "DUT_DI13_STIM": "Low",
+    "DUT_DI14_STIM": "Low",
+    "DUT_DI15_STIM": "Low"
+  }
 }

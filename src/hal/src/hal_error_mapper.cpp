@@ -4,6 +4,17 @@
 
 namespace hwtest::hal {
 
+namespace {
+
+QString boundedUtf8(const char* value, int capacity)
+{
+    int length = 0;
+    while (length < capacity && value[length] != '\0') ++length;
+    return QString::fromUtf8(value, length);
+}
+
+} // namespace
+
 HalStatusCode mapAdapterStatus(int adapterStatusCode)
 {
     switch (adapterStatusCode) {
@@ -51,7 +62,8 @@ HalStatus fromAdapterStatus(const HalAdapterStatus& status,
     const HalStatusCode code = mapAdapterStatus(status.code);
     return makeError(code,
                      operation,
-                     QString::fromUtf8(status.message),
+                     boundedUtf8(status.message,
+                                 static_cast<int>(sizeof(status.message))),
                      deviceId,
                      resourceId,
                      QString::number(status.vendorCode),

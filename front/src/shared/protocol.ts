@@ -39,6 +39,25 @@ export interface TestConfigCatalog {
   configs: TestConfigOption[]
 }
 
+export interface DigitalSwitchDescriptor {
+  switchId: string
+  dutBit: number
+  label: string
+  activeLevel: 'High' | 'Low'
+}
+
+export interface DigitalStimulusSnapshot {
+  available: boolean
+  configured: boolean
+  switches: DigitalSwitchDescriptor[]
+  appliedMask: number
+  revision: number
+  lastWriteTimestampUs: number
+  settlingMs: number
+  errorCode: string
+  message: string
+}
+
 export type ActionName =
   | 'load'
   | 'testConfigs'
@@ -52,6 +71,8 @@ export type ActionName =
   | 'start'
   | 'pause'
   | 'resume'
+  | 'setDigitalStimulus'
+  | 'resetDigitalStimulus'
   | 'stop'
   | 'disconnect'
   | 'quit'
@@ -80,6 +101,7 @@ export interface ApplicationSnapshot {
   cycleIndex: number
   sampleCount: number
   descriptor: TestDescriptor
+  digitalStimulus: DigitalStimulusSnapshot
 }
 
 export interface ApplicationSample {
@@ -113,6 +135,10 @@ export interface SampleMessage {
   sample: ApplicationSample
 }
 
+export type ReplyData = Record<string, unknown> & {
+  digitalStimulus?: DigitalStimulusSnapshot
+}
+
 export interface ReplyMessage {
   v: 1
   type: 'reply'
@@ -120,7 +146,7 @@ export interface ReplyMessage {
   ok: boolean
   code: string
   message: string
-  data: Record<string, unknown>
+  data: ReplyData
 }
 
 export type ServerMessage = HelloMessage | SnapshotMessage | SampleMessage | ReplyMessage
@@ -152,6 +178,18 @@ export const EMPTY_TEST_DESCRIPTOR: TestDescriptor = {
   measurements: [],
 }
 
+export const EMPTY_DIGITAL_STIMULUS: DigitalStimulusSnapshot = {
+  available: false,
+  configured: false,
+  switches: [],
+  appliedMask: 0,
+  revision: 0,
+  lastWriteTimestampUs: 0,
+  settlingMs: 0,
+  errorCode: '',
+  message: '',
+}
+
 export const EMPTY_SNAPSHOT: ApplicationSnapshot = {
   phase: 'empty',
   testState: 'Uninitialized',
@@ -176,4 +214,5 @@ export const EMPTY_SNAPSHOT: ApplicationSnapshot = {
   cycleIndex: 0,
   sampleCount: 0,
   descriptor: EMPTY_TEST_DESCRIPTOR,
+  digitalStimulus: EMPTY_DIGITAL_STIMULUS,
 }

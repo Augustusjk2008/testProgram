@@ -216,6 +216,67 @@ TEST(WebSocketControllerIntegrationTest, RejectsClientSuppliedConfigurationPaths
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
 }
 
+TEST(WebSocketControllerIntegrationTest, ValidatesDigitalStimulusActionWhitelist)
+{
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    WebSocketFrontendServer server(&controller, launchOptions(), options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+
+    const QJsonObject leaked = sendAndWait(
+        &client,
+        QStringLiteral("stimulus-leak"),
+        QStringLiteral("setDigitalStimulus"),
+        QJsonObject{{QStringLiteral("switchId"), QStringLiteral("di0")},
+                    {QStringLiteral("active"), true},
+                    {QStringLiteral("expectedRevision"), 0},
+                    {QStringLiteral("resourceId"), QStringLiteral("DUT_DI0_STIM")}});
+    EXPECT_FALSE(leaked.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(leaked.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+
+    const QJsonObject wrongType = sendAndWait(
+        &client,
+        QStringLiteral("stimulus-type"),
+        QStringLiteral("setDigitalStimulus"),
+        QJsonObject{{QStringLiteral("switchId"), QStringLiteral("di0")},
+                    {QStringLiteral("active"), QStringLiteral("true")},
+                    {QStringLiteral("expectedRevision"), 0}});
+    EXPECT_FALSE(wrongType.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(wrongType.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+
+    const QJsonObject resetWithParams = sendAndWait(
+        &client,
+        QStringLiteral("stimulus-reset"),
+        QStringLiteral("resetDigitalStimulus"),
+        QJsonObject{{QStringLiteral("adapterId"), QStringLiteral("ni.daqmx")}});
+    EXPECT_FALSE(resetWithParams.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(resetWithParams.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+
+    const QJsonObject unavailable = sendAndWait(
+        &client,
+        QStringLiteral("stimulus-unavailable"),
+        QStringLiteral("setDigitalStimulus"),
+        QJsonObject{{QStringLiteral("switchId"), QStringLiteral("di0")},
+                    {QStringLiteral("active"), true},
+                    {QStringLiteral("expectedRevision"), 0}});
+    EXPECT_FALSE(unavailable.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(unavailable.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_state"));
+    const QJsonObject authoritative = unavailable
+        .value(QStringLiteral("data"))
+        .toObject()
+        .value(QStringLiteral("digitalStimulus"))
+        .toObject();
+    EXPECT_FALSE(authoritative.isEmpty());
+    EXPECT_FALSE(authoritative.value(QStringLiteral("available")).toBool());
+    EXPECT_EQ(authoritative.value(QStringLiteral("revision")).toDouble(), 0.0);
+}
+
 TEST(WebSocketControllerIntegrationTest, DisconnectShutsDownSessionAndKeepsListening)
 {
     TestApplicationController controller;

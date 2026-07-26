@@ -666,6 +666,105 @@ TEST(ElecHealthStatusExecutorTest, ConfigBIZScriptedTransportProducesReadOnlyExc
     ASSERT_TRUE(service->shutdown().ok());
 }
 
+TEST(DiReadExecutorTest, ProducesOneBitmapSampleWithMatchingSequenceAndCrc)
+{
+    const QString assets = catalogDirectory();
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present: " << assets.toStdString();
+    }
+    qputenv("MB_DDF_PROTOCOL_CSV_DIR", assets.toUtf8());
+
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+    const MessageDefinition* responseDefinition =
+        catalog.findByName(QStringLiteral("di_read_response"));
+    ASSERT_NE(responseDefinition, nullptr);
+
+    QByteArray capturedRequest;
+    auto transport = std::make_unique<ScriptedByteTransport>(
+        [&](const QByteArray& request, int) {
+            capturedRequest = request;
+            QByteArray payload;
+            QString exchangeError;
+            if (!decodeFrame(request, &payload, &exchangeError)) {
+                return TransportResult{false, TransportResult::Error::Io, {}, exchangeError};
+            }
+            const MessageDefinition* requestDefinition = catalog.findByName(
+                QStringLiteral("di_read_request"));
+            QVariantMap requestValues;
+            if (requestDefinition == nullptr ||
+                !decodePayload(*requestDefinition, payload, &requestValues, &exchangeError)) {
+                return TransportResult{false, TransportResult::Error::Io, {}, exchangeError};
+            }
+            QByteArray responsePayload;
+            if (!encodePayload(*responseDefinition,
+                               QVariantMap{{QStringLiteral("status"), 0},
+                                           {QStringLiteral("err_code"), 0},
+                                           {QStringLiteral("di_state[0]"), 0xA581u},
+                                           {QStringLiteral("di_state[1]"), 0u}},
+                               static_cast<quint16>(requestValues.value(
+                                   QStringLiteral("seq")).toUInt()),
+                               &responsePayload,
+                               &exchangeError)) {
+                return TransportResult{false, TransportResult::Error::Io, {}, exchangeError};
+            }
+            QByteArray responseFrame;
+            if (!encodeFrame(responsePayload, &responseFrame, &exchangeError)) {
+                return TransportResult{false, TransportResult::Error::Io, {}, exchangeError};
+            }
+            return TransportResult{true, TransportResult::Error::None, responseFrame, {}};
+        });
+    MbdDfExchangeAlgorithmExecutor executor(
+        std::move(transport),
+        QStringLiteral("mbddf.di_read"),
+        QStringLiteral("di_read_request"),
+        QStringLiteral("di_read_response"),
+        QStringLiteral("DI_READ"));
+    RunServiceHandle service = makeRunService(&executor);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+    ResultCollector results;
+    StateCollector states;
+    QVector<hwtest::biz::RawSample> samples;
+    connectCollectors(service.get(), &results, &states);
+    QObject::connect(service.get(),
+                     &hwtest::biz::ITestRunService::sampleProduced,
+                     [&samples](const hwtest::biz::TaskId&,
+                                const hwtest::biz::StepId&,
+                                const hwtest::biz::RawSample& sample) {
+                         samples.push_back(sample);
+                     });
+
+    ASSERT_TRUE(service->loadConfiguration(QStringLiteral(HWTEST_MBDDF_DI_CONFIG)).ok());
+    ASSERT_TRUE(service->startTest().ok());
+    ASSERT_TRUE(results.waitForResult(3000));
+    ASSERT_TRUE(states.waitForTerminal(3000));
+    const hwtest::biz::TestResult result = results.result();
+    EXPECT_EQ(result.algorithmId, QStringLiteral("mbddf.di_read"));
+    EXPECT_EQ(result.verdict, hwtest::biz::TestVerdict::Pass);
+    EXPECT_EQ(result.rawData.value(QStringLiteral("responseValues")).toMap()
+                  .value(QStringLiteral("di_state[0]")).toUInt(),
+              0xA581u);
+    ASSERT_EQ(samples.size(), 1);
+    EXPECT_EQ(samples.first().channelId, QStringLiteral("DI_READ"));
+
+    QByteArray requestPayload;
+    ASSERT_TRUE(decodeFrame(capturedRequest, &requestPayload, &error));
+    EXPECT_EQ(static_cast<quint8>(requestPayload.at(1)), 0x04u);
+    EXPECT_EQ(static_cast<quint8>(requestPayload.at(2)), 0x01u);
+    const MessageDefinition* requestDefinition = catalog.findByName(
+        QStringLiteral("di_read_request"));
+    ASSERT_NE(requestDefinition, nullptr);
+    QVariantMap requestValues;
+    ASSERT_TRUE(decodePayload(*requestDefinition,
+                              requestPayload,
+                              &requestValues,
+                              &error));
+    EXPECT_EQ(requestValues.value(QStringLiteral("seq")).toUInt(), 0x1234u);
+    ASSERT_TRUE(service->shutdown().ok());
+}
+
 TEST(SystemStatusExecutorTest, RejectsDeviceManagedStreamingBeforeOpeningTransport)
 {
     ProtocolCatalog catalog;
@@ -1064,6 +1163,11 @@ TEST(MbdDfExchangeExecutorTest, AllAddedConfigsPrepareAgainstTheCurrentCatalog)
          QStringLiteral("timer_jitter_start_request"),
          QStringLiteral("timer_jitter_start_response"),
          QStringLiteral("TIMER_JITTER_START")},
+        {QStringLiteral("mbddf_di.testcfg.json"),
+         QStringLiteral("mbddf.di_read"),
+         QStringLiteral("di_read_request"),
+         QStringLiteral("di_read_response"),
+         QStringLiteral("DI_READ")},
     };
 
     hwtest::biz::TestConfigManager configManager;

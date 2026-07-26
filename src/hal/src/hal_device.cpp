@@ -127,14 +127,16 @@ HalStatus HalDevice::close(const OperationOptions& options)
     }
     const HalStatus controlStatus = m_controlChannels.closeAll(options);
     const HalStatus safeStatus = applySafeState();
+    HalStatus backendStatus;
     if (m_backend != nullptr) {
-        const HalStatus backendStatus = m_backend->closeDevice(m_sessionId, options);
-        if (!backendStatus.ok()) {
-            emitOperationLog(operation, options, timer.elapsed(), backendStatus);
-            return backendStatus;
-        }
+        backendStatus = m_backend->closeDevice(m_sessionId, options);
     }
+    // Adapter ABI close consumes the backend session even when cleanup fails.
     m_open = false;
+    if (!backendStatus.ok()) {
+        emitOperationLog(operation, options, timer.elapsed(), backendStatus);
+        return backendStatus;
+    }
     const HalStatus status = !controlStatus.ok()
         ? controlStatus
         : (safeStatus.ok() ? HalStatus{} : safeStatus);
@@ -282,6 +284,7 @@ HalStatus HalDevice::applySafeState()
     }
 
     HalStatus firstError;
+    QMap<int, DigitalLevel> digitalValues;
     for (auto it = m_safeState.constBegin(); it != m_safeState.constEnd(); ++it) {
         const ResourceId resourceId = it.key();
         const ResourceBinding* binding = bindingFor(resourceId);
@@ -299,12 +302,16 @@ HalStatus HalDevice::applySafeState()
             }
         } else if (binding->module == QStringLiteral("digital") && binding->direction == QStringLiteral("output")) {
             const DigitalLevel level = digitalLevelFromVariant(it.value());
-            const HalStatus status = m_backend->writeDigital(m_sessionId,
-                                                             binding->physicalIndex,
-                                                             level,
-                                                             DigitalWriteOptions{});
-            if (!status.ok() && firstError.ok()) {
-                firstError = status;
+            if (level == DigitalLevel::Unknown) {
+                if (firstError.ok()) {
+                    firstError = makeError(HalStatusCode::InvalidArgument,
+                                           QStringLiteral("hal.safeState"),
+                                           QStringLiteral("Invalid digital safe level"),
+                                           binding->deviceId,
+                                           binding->resourceId);
+                }
+            } else {
+                digitalValues.insert(binding->physicalIndex, level);
             }
         } else if (binding->module == QStringLiteral("serial")) {
             const HalStatus status = m_backend->closeSerial(m_sessionId,
@@ -320,6 +327,13 @@ HalStatus HalDevice::applySafeState()
             if (!status.ok() && firstError.ok()) {
                 firstError = status;
             }
+        }
+    }
+    if (!digitalValues.isEmpty()) {
+        const HalStatus status = m_backend->writeDigitalBatch(
+            m_sessionId, digitalValues, DigitalWriteOptions{});
+        if (!status.ok() && firstError.ok()) {
+            firstError = status;
         }
     }
     return firstError;
@@ -720,13 +734,48 @@ HalStatus HalDevice::writeDo(const ResourceId& channel,
 HalStatus HalDevice::writeDoBatch(const QMap<ResourceId, DigitalLevel>& values,
                                   const DigitalWriteOptions& options)
 {
+    QElapsedTimer timer;
+    timer.start();
+    const QString operation = QStringLiteral("digital.writeDoBatch");
+    const HalStatus openStatus = ensureOpen(QStringLiteral("digital.writeDoBatch"));
+    if (!openStatus.ok()) {
+        emitOperationLog(operation, options.op, timer.elapsed(), openStatus);
+        return openStatus;
+    }
+    if (m_backend == nullptr) {
+        const HalStatus status = makeError(HalStatusCode::InternalError,
+                                           QStringLiteral("digital.writeDoBatch"),
+                                           QStringLiteral("Backend adapter is missing"),
+                                           m_descriptor.deviceId);
+        emitOperationLog(operation, options.op, timer.elapsed(), status);
+        return status;
+    }
+
+    QMap<int, DigitalLevel> physicalValues;
     for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
-        const HalStatus status = writeDo(it.key(), it.value(), options);
-        if (!status.ok()) {
+        HalStatus status;
+        const ResourceBinding* binding = bindingFor(
+            it.key(), QStringLiteral("digital"), QStringLiteral("output"), &status);
+        if (binding == nullptr) {
+            emitOperationLog(operation, options.op, timer.elapsed(), status);
             return status;
         }
+        status = m_safetyGuard.validateDigitalWrite(*binding, it.value(), options);
+        if (!status.ok()) {
+            emitOperationLog(operation, options.op, timer.elapsed(), status, binding);
+            return status;
+        }
+        physicalValues.insert(binding->physicalIndex, it.value());
     }
-    return HalStatus{};
+    const HalStatus status = m_backend->writeDigitalBatch(
+        m_sessionId, physicalValues, options);
+    emitOperationLog(operation,
+                     options.op,
+                     timer.elapsed(),
+                     status,
+                     nullptr,
+                     {{QStringLiteral("channelCount"), physicalValues.size()}});
+    return status;
 }
 
 HalResult<DigitalSample> HalDevice::waitEdge(const ResourceId& channel,

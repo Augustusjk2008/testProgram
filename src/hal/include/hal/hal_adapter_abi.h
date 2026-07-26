@@ -1,7 +1,5 @@
 #pragma once
 
-#include "hal_global.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -88,6 +86,7 @@ typedef HalAdapterStatus (HAL_ADAPTER_CALL *HalAdapterOpenDeviceFn)(HalAdapterHa
                                                                     const char* deviceId,
                                                                     const char* openOptionsJson,
                                                                     HalAdapterDeviceHandle* outDevice);
+/* A close call always consumes the device handle, including when cleanup reports an error. */
 typedef HalAdapterStatus (HAL_ADAPTER_CALL *HalAdapterCloseDeviceFn)(HalAdapterDeviceHandle device);
 typedef HalAdapterStatus (HAL_ADAPTER_CALL *HalAdapterResetDeviceFn)(HalAdapterDeviceHandle device,
                                                                      int timeoutMs);

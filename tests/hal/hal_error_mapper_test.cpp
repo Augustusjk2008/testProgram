@@ -2,6 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <iterator>
+
 using namespace hwtest::hal;
 
 TEST(HalErrorMapperTest, MapsAdapterStatusAndCopiesContext)
@@ -27,6 +30,21 @@ TEST(HalErrorMapperTest, MapsAdapterStatusAndCopiesContext)
 TEST(HalErrorMapperTest, MapsUnknownAdapterStatusToAdapterError)
 {
     EXPECT_EQ(mapAdapterStatus(999), HalStatusCode::AdapterError);
+}
+
+TEST(HalErrorMapperTest, BoundsVendorMessageWithoutRequiringNullTermination)
+{
+    HalAdapterStatus adapterStatus{};
+    adapterStatus.code = HAL_ADAPTER_IO_ERROR;
+    std::fill(std::begin(adapterStatus.message),
+              std::end(adapterStatus.message),
+              'x');
+
+    const HalStatus status = fromAdapterStatus(
+        adapterStatus, QStringLiteral("adapter.digitalWrite"));
+
+    EXPECT_EQ(status.error.message.size(), HAL_ADAPTER_MAX_TEXT);
+    EXPECT_EQ(status.error.message, QString(HAL_ADAPTER_MAX_TEXT, QLatin1Char('x')));
 }
 
 TEST(HalErrorMapperTest, MakeErrorPopulatesTopLevelAndNestedCode)

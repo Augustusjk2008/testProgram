@@ -20,6 +20,7 @@ import {
   type ActionName,
   type ApplicationSample,
   type ApplicationSnapshot,
+  type DigitalStimulusSnapshot,
   type ReplyMessage,
   type TestConfigOption,
   type TestRunOptions,
@@ -59,6 +60,12 @@ interface SessionContextValue {
   connect: (reconnecting?: boolean) => Promise<void>
   invoke: (action: ActionName, params?: Record<string, unknown>) => Promise<ReplyMessage>
   start: (options: TestRunOptions) => Promise<ReplyMessage>
+  setDigitalStimulus: (
+    switchId: string,
+    active: boolean,
+    expectedRevision: number,
+  ) => Promise<DigitalStimulusSnapshot>
+  resetDigitalStimulus: () => Promise<DigitalStimulusSnapshot>
   clearTelemetry: () => void
 }
 
@@ -150,7 +157,9 @@ export function SessionProvider({ children }: PropsWithChildren) {
   ): Promise<ReplyMessage> => {
     const client = clientRef.current
     if (!client) throw new Error('WebSocket client is unavailable')
-    setBusyAction(action)
+    const tracksGlobalBusy = action !== 'setDigitalStimulus' &&
+      action !== 'resetDigitalStimulus'
+    if (tracksGlobalBusy) setBusyAction(action)
     setActionError('')
     pushDiagnostic('command', `发送 · ${action}`, JSON.stringify(params), params)
     try {
@@ -169,7 +178,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
       pushDiagnostic('error', `失败 · ${action}`, message)
       throw error
     } finally {
-      setBusyAction(null)
+      if (tracksGlobalBusy) setBusyAction(null)
     }
   }, [pushDiagnostic])
 
@@ -287,6 +296,52 @@ export function SessionProvider({ children }: PropsWithChildren) {
     return invoke('start', { ...options })
   }, [clearTelemetry, invoke])
 
+  const applyDigitalStimulusReply = useCallback((
+    action: 'setDigitalStimulus' | 'resetDigitalStimulus',
+    reply: ReplyMessage,
+    requestConfigId: string,
+  ): DigitalStimulusSnapshot => {
+    const digitalStimulus = reply.data.digitalStimulus
+    const currentSnapshot = snapshotRef.current
+    if (digitalStimulus &&
+        currentSnapshot.descriptor.configId === requestConfigId &&
+        digitalStimulus.revision >= currentSnapshot.digitalStimulus.revision) {
+      const nextSnapshot = { ...currentSnapshot, digitalStimulus }
+      snapshotRef.current = nextSnapshot
+      setSnapshot(nextSnapshot)
+    }
+
+    if (!reply.ok) {
+      throw new Error(reply.message || reply.code || `${action} was rejected`)
+    }
+    if (digitalStimulus) return digitalStimulus
+
+    const message = `${action} reply is missing data.digitalStimulus`
+    setActionError(message)
+    pushDiagnostic('error', `失败 · ${action}`, message, reply)
+    throw new Error(message)
+  }, [pushDiagnostic])
+
+  const setDigitalStimulus = useCallback(async (
+    switchId: string,
+    active: boolean,
+    expectedRevision: number,
+  ) => {
+    const requestConfigId = snapshotRef.current.descriptor.configId
+    const reply = await invoke('setDigitalStimulus', {
+      switchId,
+      active,
+      expectedRevision,
+    })
+    return applyDigitalStimulusReply('setDigitalStimulus', reply, requestConfigId)
+  }, [applyDigitalStimulusReply, invoke])
+
+  const resetDigitalStimulus = useCallback(async () => {
+    const requestConfigId = snapshotRef.current.descriptor.configId
+    const reply = await invoke('resetDigitalStimulus')
+    return applyDigitalStimulusReply('resetDigitalStimulus', reply, requestConfigId)
+  }, [applyDigitalStimulusReply, invoke])
+
   const value = useMemo<SessionContextValue>(() => ({
     wsUrl: HWTEST_WS_URL,
     connectionState,
@@ -305,9 +360,12 @@ export function SessionProvider({ children }: PropsWithChildren) {
     connect,
     invoke,
     start,
+    setDigitalStimulus,
+    resetDigitalStimulus,
     clearTelemetry,
   }), [
     actionError,
+    applyDigitalStimulusReply,
     busyAction,
     clearTelemetry,
     connect,
@@ -318,7 +376,9 @@ export function SessionProvider({ children }: PropsWithChildren) {
     fields,
     invoke,
     latestSample,
+    resetDigitalStimulus,
     selectedConfigId,
+    setDigitalStimulus,
     snapshot,
     start,
     testConfigs,

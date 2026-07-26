@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-di-read",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF digital input",
+  "configVersion": "1.0.0",
+  "steps": [
+    {
+      "stepId": "DI_READ",
+      "testItemId": "di_read",
+      "name": "数字量输入回读",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.di_read",
+      "parameters": {"protocol": {"requestValues": {}}},
+      "timeoutMs": 2000,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": [
+        {"metric": "status", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "err_code", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true}
+      ]
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "requirementId": "ni6259.digital_stimulus",
+      "deviceId": "ni6259_stimulus",
+      "adapterId": "ni.daqmx",
+      "requiredModules": ["digital"],
+      "requiredResources": [
+        "DUT_DI0_STIM", "DUT_DI1_STIM", "DUT_DI2_STIM", "DUT_DI3_STIM",
+        "DUT_DI4_STIM", "DUT_DI5_STIM", "DUT_DI6_STIM", "DUT_DI7_STIM",
+        "DUT_DI8_STIM", "DUT_DI9_STIM", "DUT_DI10_STIM", "DUT_DI11_STIM",
+        "DUT_DI12_STIM", "DUT_DI13_STIM", "DUT_DI14_STIM", "DUT_DI15_STIM"
+      ],
+      "priority": 0,
+      "match": {"vendor": "NI", "model": "USB-6259"}
+    }
+  ],
+  "protocolProfiles": [
+    {"id": "di_read_request", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 2000}},
+    {"id": "di_read_response", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 2000}}
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {"requestProfileId": "di_read_request", "responseProfileId": "di_read_response"},
+    "transport": {"openTimeoutMs": 1000, "readChunkBytes": 260},
+    "initialSequence": 4660,
+    "digitalStimulus": {
+      "deviceId": "ni6259_stimulus",
+      "settlingMs": 20,
+      "channels": [
+        {"switchId": "di0", "dutBit": 0, "resourceId": "DUT_DI0_STIM", "label": "DI0", "activeLevel": "High"},
+        {"switchId": "di1", "dutBit": 1, "resourceId": "DUT_DI1_STIM", "label": "DI1", "activeLevel": "High"},
+        {"switchId": "di2", "dutBit": 2, "resourceId": "DUT_DI2_STIM", "label": "DI2", "activeLevel": "High"},
+        {"switchId": "di3", "dutBit": 3, "resourceId": "DUT_DI3_STIM", "label": "DI3", "activeLevel": "High"},
+        {"switchId": "di4", "dutBit": 4, "resourceId": "DUT_DI4_STIM", "label": "DI4", "activeLevel": "High"},
+        {"switchId": "di5", "dutBit": 5, "resourceId": "DUT_DI5_STIM", "label": "DI5", "activeLevel": "High"},
+        {"switchId": "di6", "dutBit": 6, "resourceId": "DUT_DI6_STIM", "label": "DI6", "activeLevel": "High"},
+        {"switchId": "di7", "dutBit": 7, "resourceId": "DUT_DI7_STIM", "label": "DI7", "activeLevel": "High"},
+        {"switchId": "di8", "dutBit": 8, "resourceId": "DUT_DI8_STIM", "label": "DI8", "activeLevel": "Low"},
+        {"switchId": "di9", "dutBit": 9, "resourceId": "DUT_DI9_STIM", "label": "DI9", "activeLevel": "High"},
+        {"switchId": "di10", "dutBit": 10, "resourceId": "DUT_DI10_STIM", "label": "DI10", "activeLevel": "High"},
+        {"switchId": "di11", "dutBit": 11, "resourceId": "DUT_DI11_STIM", "label": "DI11", "activeLevel": "High"},
+        {"switchId": "di12", "dutBit": 12, "resourceId": "DUT_DI12_STIM", "label": "DI12", "activeLevel": "High"},
+        {"switchId": "di13", "dutBit": 13, "resourceId": "DUT_DI13_STIM", "label": "DI13", "activeLevel": "High"},
+        {"switchId": "di14", "dutBit": 14, "resourceId": "DUT_DI14_STIM", "label": "DI14", "activeLevel": "High"},
+        {"switchId": "di15", "dutBit": 15, "resourceId": "DUT_DI15_STIM", "label": "DI15", "activeLevel": "High"}
+      ]
+    }
+  },
+  "safetyPolicy": {"enterSafeStateOnStop": true, "enterSafeStateOnError": true},
+  "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 2000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
+  "reportFields": {
+    "title": "数字量输入",
+    "description": "通过 NI USB-6259 数字输出刺激 16 路 DUT DI，并读取板端位图。",
+    "supportedRunModes": ["single", "pc_periodic"],
+    "measurements": [
+      {"id": "status", "label": "设备状态", "unit": "", "primary": false},
+      {"id": "err_code", "label": "设备错误码", "unit": "", "primary": false},
+      {"id": "di_state[0]", "label": "DI0..DI31 回读位图", "unit": "bitmask", "primary": true},
+      {"id": "di_state[1]", "label": "DI32..DI63 诊断位图", "unit": "bitmask", "primary": false}
+    ]
+  }
+}

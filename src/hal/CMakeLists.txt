@@ -17,6 +17,7 @@ set(HAL_PRIVATE_HEADERS
     src/mock_adapter.h
     src/c_abi_adapter.h
     src/adapter_loader.h
+    src/adapter_router.h
     src/control_io_provider.h
     src/qt_serial_control_provider.h
     src/qt_udp_control_provider.h
@@ -38,6 +39,7 @@ set(HAL_SOURCES
     src/mock_adapter.cpp
     src/c_abi_adapter.cpp
     src/adapter_loader.cpp
+    src/adapter_router.cpp
     src/hal_device.cpp
     src/hal_service.cpp
     src/hal_factory.cpp

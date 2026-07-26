@@ -22,23 +22,23 @@ docs/design/
 | 接口契约 | `contracts/log-interface-protocol.md` | 日志模型、来源、追踪链和 HAL/Adapter 日志映射的唯一主定义 |
 | 接口契约 | `contracts/device-communication-protocol.md` | 测试设备与 DUT 底层通讯协议、CSV 建模和字段布局 |
 | 接口契约 | `contracts/websocket-frontend-protocol.md` | `hwtest_web` 的回环 WebSocket JSON、动作、错误、顺序和关闭语义 |
-| 实现设计 | `implementation/hal-implementation-design-report.md` | 当前 HAL 实现、限制和扩展点 |
+| 实现设计 | `implementation/hal-implementation-design-report.md` | 2026-07-25 HAL 历史快照；已被现行 HAL 契约与总览替代 |
 | 实现设计 | `implementation/logging-implementation-design-report.md` | 当前 `src/logging/` 的缓存、sink 和桥接落地 |
 | 测试 | `testing/testing-specification.md` | 分层测试规范和运行方式 |
-| 测试 | `testing/hal-test-design-report.md` | 当前 HAL 测试结构、覆盖矩阵和缺口 |
+| 测试 | `testing/hal-test-design-report.md` | HAL 历史测试快照；当前清单以测试规范为准 |
 
 ## 当前实现入口
 
 | 范围 | 入口 | 说明 |
 | --- | --- | --- |
 | BIZ | `src/biz/` | `hwtest_biz`；公共头仅直接依赖 Qt Core 和 `hwtest_log_types` |
-| 算法 | `src/algorithm/` | `hwtest_algorithm_mbddf`，包含 MB_DDF 协议 CSV、编解码、两个固定命令执行器和配置驱动的单步交换执行器 |
-| HAL | `src/hal/` | `hwtest_hal`；控制资源可走 `qt.serial`/`qt.udp`，其他资源仍为 `CAbiAdapter -> MockAdapter` 兼容路径 |
+| 算法 | `src/algorithm/` | `hwtest_algorithm_mbddf`，包含 MB_DDF 协议 CSV、编解码、两个固定命令执行器、配置驱动单步交换和 DI 刺激控制器 |
+| HAL | `src/hal/` | `hwtest_hal`；控制资源走 `qt.serial`/`qt.udp`，其他设备按 `adapterId` 惰性路由到 Mock 或真实 C ABI v1，另有默认关闭的可选 NI-DAQmx Adapter |
 | 日志 | `src/logging/` | `hwtest_log_types` 与 `hwtest_log` |
 | 应用 | `src/app/`、`front/` | `hwtest_app_core` 统一组合生命周期；`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与回环 `hwtest_web` 是独立 C++ 入口；`front/` 是独立 React/Vite 遥测控制台 |
 | 测试 | `tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/`、`tests/app/` | 七个 GoogleTest 目标，经 CTest 注册 |
 
-`[当前实现]` 仓库已有行式 TUI、Qt Widgets GUI、WebSocket 后端和浏览器遥测控制台。浏览器通过现有配置选择一个独立单步测试；应用层把配置中的展示元数据投影为 WebSocket descriptor，前端据此显示测试名称、支持的运行模式、首页主指标及测量标签/单位，并自动发现样本新增字段。当前配置目录包含 `SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG` 和带 STOP 清理的 `TIMER_JITTER`；新增四项复用配置驱动的 MB_DDF 单步交换执行器，尚无真实板端验收证据。电气健康仅判定设备 `status`/`err_code`，不解释电压阈值；SPI Flash 配置明确写入固定隔离测试区且不恢复。BIZ 任务 worker 已迁移为带 Qt dispatcher 的 `QThread` 并有自动化回归。TCP Provider、真实厂家链和全面真实硬件验收仍未实现。Qt UDP 已有本机模拟目标闭环；Qt 串口已有既有两个测试项的短时 COM3 smoke，新增项目尚未扩展真实硬件证据。测试目标、源码清单、实机证据和限制统一见 `testing/testing-specification.md`。
+`[当前实现]` 仓库已有行式 TUI、Qt Widgets GUI、WebSocket 后端和浏览器遥测控制台。浏览器通过现有配置选择一个独立单步测试；应用层把配置中的展示元数据投影为 WebSocket descriptor，前端据此显示测试名称、支持的运行模式、首页主指标、测量标签/单位及 16 路 DI 刺激/回读，并自动发现样本新增字段。当前配置目录包含七项：`SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`、带 STOP 清理的 `TIMER_JITTER` 和 `DI_READ`。电气健康仅判定设备 `status`/`err_code`，不解释电压阈值；SPI Flash 配置明确写入固定隔离测试区且不恢复。BIZ 任务 worker 已迁移为带 Qt dispatcher 的 `QThread` 并有自动化回归。通用 C ABI、多 Adapter 和可选 NI-DAQmx 软件路径已实现，但 NI 自动化仍是 Fake，USB-6259 真机未验收；TCP Provider 和全面真实硬件验收仍未实现。Qt UDP 已有本机模拟目标闭环；Qt 串口已有既有两个测试项的短时 COM3 smoke，后续五项尚未扩展真实硬件证据。测试目标、源码清单、实机证据和限制统一见 `testing/testing-specification.md`。
 
 外部目录 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容已批准为 MB_DDF 协议 CSV 基线；`dut/` 已同步来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 及其中 32 份 CSV，但尚无 manifest、内容哈希和不可变快照自动机制。宿主运行期仍显式使用外部资产目录，当前清单和约束统一见 `contracts/device-communication-protocol.md`。
 

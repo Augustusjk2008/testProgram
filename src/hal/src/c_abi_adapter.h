@@ -1,13 +1,14 @@
 #pragma once
 
+#include "adapter_loader.h"
 #include "hardware_adapter.h"
-#include "mock_adapter.h"
+
+#include <QHash>
+
+#include <mutex>
 
 namespace hwtest::hal {
 
-// Compatibility seam for the adapter layer.
-// The current development path delegates to the mock backend so the HAL stays usable
-// without vendor binaries, while keeping a single place for a future C ABI bridge.
 class CAbiAdapter final : public HardwareAdapter {
 public:
     CAbiAdapter();
@@ -115,7 +116,23 @@ public:
                                                    const OperationOptions& options) override;
 
 private:
-    MockAdapter m_mockAdapter;
+    HalStatus ensureInitialized(const QString& operation) const;
+    HalAdapterDeviceHandle deviceHandle(const SessionId& sessionId,
+                                        const QString& operation,
+                                        HalStatus* status = nullptr) const;
+    HalStatus unsupported(const QString& operation,
+                          const DeviceId& deviceId = {}) const;
+
+    AdapterLoader m_loader;
+    HalAdapterApiV1 m_api {};
+    HalAdapterHandle m_handle = nullptr;
+    QHash<SessionId, HalAdapterDeviceHandle> m_devices;
+    QHash<SessionId, DeviceId> m_deviceIds;
+    QVariantMap m_config;
+    QString m_adapterId;
+    quint64 m_sessionCounter = 0;
+    bool m_initialized = false;
+    mutable std::recursive_mutex m_apiMutex;
 };
 
 } // namespace hwtest::hal

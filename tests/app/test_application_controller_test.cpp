@@ -5,6 +5,11 @@
 
 #include <gtest/gtest.h>
 
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QTemporaryDir>
+
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -55,6 +60,42 @@ QCoreApplication& ensureQtApplication()
     return application;
 }
 
+bool selectDigitalAdapterFixture(const QString& halPath, QString* error)
+{
+    QFile source(halPath);
+    if (!source.open(QIODevice::ReadOnly)) {
+        if (error != nullptr) *error = source.errorString();
+        return false;
+    }
+    QJsonDocument document = QJsonDocument::fromJson(source.readAll());
+    source.close();
+    if (!document.isObject()) {
+        if (error != nullptr) *error = QStringLiteral("HAL fixture is not a JSON object");
+        return false;
+    }
+    QJsonObject root = document.object();
+    QJsonObject adapters = root.value(QStringLiteral("adapters")).toObject();
+    QJsonObject ni = adapters.value(QStringLiteral("ni.daqmx")).toObject();
+    ni.insert(QStringLiteral("libraryPath"),
+              QString::fromLatin1(HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH));
+    QJsonObject settings = ni.value(QStringLiteral("settings")).toObject();
+    settings.insert(QStringLiteral("deviceName"), QStringLiteral("fixture_device"));
+    settings.insert(QStringLiteral("serialNumber"), QStringLiteral("62590001"));
+    ni.insert(QStringLiteral("settings"), settings);
+    adapters.insert(QStringLiteral("ni.daqmx"), ni);
+    root.insert(QStringLiteral("adapters"), adapters);
+
+    QFile output(halPath);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (error != nullptr) *error = output.errorString();
+        return false;
+    }
+    const QByteArray json = QJsonDocument(root).toJson();
+    const bool written = output.write(json) == json.size();
+    if (!written && error != nullptr) *error = output.errorString();
+    return written;
+}
+
 TEST(TestApplicationControllerTest, RejectsPreparationBeforeConfigurationsAreLoaded)
 {
     TestApplicationController controller;
@@ -64,6 +105,212 @@ TEST(TestApplicationControllerTest, RejectsPreparationBeforeConfigurationsAreLoa
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.code, QStringLiteral("invalid_state"));
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+}
+
+TEST(TestApplicationControllerTest, LoadsDiSwitchDescriptorsWithoutOpeningHardware)
+{
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_DI_CONFIG),
+        QStringLiteral(HWTEST_APP_HAL_CONFIG));
+    ASSERT_TRUE(loaded.ok) << loaded.message.toStdString();
+    const DigitalStimulusSnapshot stimulus = controller.snapshot().digitalStimulus;
+    EXPECT_TRUE(stimulus.available);
+    EXPECT_FALSE(stimulus.configured);
+    ASSERT_EQ(stimulus.switches.size(), 16);
+    EXPECT_EQ(stimulus.switches.at(8).switchId, QStringLiteral("di8"));
+    EXPECT_EQ(stimulus.switches.at(8).activeLevel, QStringLiteral("Low"));
+
+    const ActionResult rejected = controller.setDigitalStimulus(
+        QStringLiteral("di0"), true, 0);
+    EXPECT_FALSE(rejected.ok);
+    EXPECT_EQ(rejected.code, QStringLiteral("invalid_state"));
+}
+
+TEST(TestApplicationControllerTest, RejectsDiSafeStateThatDisagreesWithInactiveLevel)
+{
+    QFile source(QStringLiteral(HWTEST_APP_HAL_CONFIG));
+    ASSERT_TRUE(source.open(QIODevice::ReadOnly));
+    QJsonDocument document = QJsonDocument::fromJson(source.readAll());
+    ASSERT_TRUE(document.isObject());
+    QJsonObject root = document.object();
+    QJsonObject safeState = root.value(QStringLiteral("safeState")).toObject();
+    safeState.insert(QStringLiteral("DUT_DI0_STIM"), QStringLiteral("High"));
+    root.insert(QStringLiteral("safeState"), safeState);
+
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString halPath = directory.filePath(QStringLiteral("unsafe-di-hal.json"));
+    QFile output(halPath);
+    ASSERT_TRUE(output.open(QIODevice::WriteOnly));
+    const QByteArray json = QJsonDocument(root).toJson();
+    ASSERT_EQ(output.write(json), json.size());
+    output.close();
+
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_DI_CONFIG), halPath);
+
+    EXPECT_FALSE(loaded.ok);
+    EXPECT_EQ(loaded.code, QStringLiteral("stimulus_safe_state_mismatch"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+}
+
+TEST(TestApplicationControllerTest, DiPreparationOpensStimulusAndUsesRevisionedActions)
+{
+    QFile source(QStringLiteral(HWTEST_APP_HAL_CONFIG));
+    ASSERT_TRUE(source.open(QIODevice::ReadOnly));
+    QJsonDocument document = QJsonDocument::fromJson(source.readAll());
+    ASSERT_TRUE(document.isObject());
+    QJsonObject root = document.object();
+    QJsonObject adapters = root.value(QStringLiteral("adapters")).toObject();
+    QJsonObject ni = adapters.value(QStringLiteral("ni.daqmx")).toObject();
+    ni.insert(QStringLiteral("libraryPath"),
+              QString::fromLatin1(HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH));
+    QJsonObject settings = ni.value(QStringLiteral("settings")).toObject();
+    settings.insert(QStringLiteral("deviceName"), QStringLiteral("fixture_device"));
+    settings.insert(QStringLiteral("serialNumber"), QStringLiteral("62590001"));
+    ni.insert(QStringLiteral("settings"), settings);
+    adapters.insert(QStringLiteral("ni.daqmx"), ni);
+    root.insert(QStringLiteral("adapters"), adapters);
+
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString halPath = directory.filePath(QStringLiteral("di-hal.json"));
+    QFile output(halPath);
+    ASSERT_TRUE(output.open(QIODevice::WriteOnly));
+    ASSERT_GT(output.write(QJsonDocument(root).toJson()), 0);
+    output.close();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_DI_CONFIG), halPath).ok);
+    const ActionResult prepared = controller.prepare();
+    ASSERT_TRUE(prepared.ok) << prepared.code.toStdString() << ": "
+                             << prepared.message.toStdString();
+    DigitalStimulusSnapshot stimulus = controller.snapshot().digitalStimulus;
+    EXPECT_TRUE(stimulus.configured);
+    EXPECT_EQ(stimulus.appliedMask, 0u);
+    EXPECT_EQ(stimulus.revision, 1u);
+
+    const ActionResult set = controller.setDigitalStimulus(
+        QStringLiteral("di0"), true, stimulus.revision);
+    ASSERT_TRUE(set.ok) << set.message.toStdString();
+    stimulus = controller.snapshot().digitalStimulus;
+    EXPECT_EQ(stimulus.appliedMask, 1u);
+    EXPECT_EQ(stimulus.revision, 2u);
+
+    const ActionResult stale = controller.setDigitalStimulus(
+        QStringLiteral("di1"), true, 1);
+    EXPECT_FALSE(stale.ok);
+    EXPECT_EQ(stale.code, QStringLiteral("DataMismatch"));
+    EXPECT_EQ(controller.snapshot().digitalStimulus.appliedMask, 1u);
+
+    ASSERT_TRUE(controller.resetDigitalStimulus().ok);
+    EXPECT_EQ(controller.snapshot().digitalStimulus.appliedMask, 0u);
+    EXPECT_EQ(controller.snapshot().digitalStimulus.revision, 3u);
+    ASSERT_TRUE(controller.shutdown().ok);
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("configured"));
+}
+
+TEST(TestApplicationControllerTest, AsyncStopReturnsDiStimulusToSafeState)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString error;
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halPath,
+                                    &error))
+        << error.toStdString();
+
+    ASSERT_TRUE(selectDigitalAdapterFixture(halPath, &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_DI_CONFIG), halPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    const quint64 revision = controller.snapshot().digitalStimulus.revision;
+    ASSERT_TRUE(controller.setDigitalStimulus(
+        QStringLiteral("di0"), true, revision).ok);
+    ASSERT_EQ(controller.snapshot().digitalStimulus.appliedMask, 1u);
+    ASSERT_TRUE(controller.start().ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    ActionResult completion;
+    bool completed = false;
+    QObject::connect(&controller,
+                     &TestApplicationController::stopCompleted,
+                     &loop,
+                     [&](const ActionResult& result) {
+                         completion = result;
+                         completed = true;
+                         loop.quit();
+                     });
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+
+    ASSERT_TRUE(controller.stopAsync(5000).ok);
+    timeout.start(5000);
+    loop.exec();
+
+    ASSERT_TRUE(completed);
+    ASSERT_TRUE(completion.ok) << completion.message.toStdString();
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("stopped"));
+    EXPECT_EQ(controller.snapshot().digitalStimulus.appliedMask, 0u);
+    EXPECT_EQ(controller.snapshot().digitalStimulus.revision, revision + 2);
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, SynchronousStopReturnsDiStimulusToSafeState)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString error;
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halPath,
+                                    &error))
+        << error.toStdString();
+    ASSERT_TRUE(selectDigitalAdapterFixture(halPath, &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_DI_CONFIG), halPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    const quint64 revision = controller.snapshot().digitalStimulus.revision;
+    ASSERT_TRUE(controller.setDigitalStimulus(
+        QStringLiteral("di0"), true, revision).ok);
+    ASSERT_TRUE(controller.start().ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+
+    const ActionResult stopped = controller.stop(5000);
+
+    ASSERT_TRUE(stopped.ok) << stopped.message.toStdString();
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("stopped"));
+    EXPECT_EQ(controller.snapshot().digitalStimulus.appliedMask, 0u);
+    EXPECT_EQ(controller.snapshot().digitalStimulus.revision, revision + 2);
+    EXPECT_TRUE(controller.shutdown().ok);
 }
 
 TEST(TestApplicationControllerTest, RejectsActionsFromOutsideTheControllerAffinityThread)

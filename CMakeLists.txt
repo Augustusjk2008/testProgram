@@ -14,6 +14,8 @@ endif()
 
 include(CTest)
 
+option(HWTEST_ENABLE_NI_DAQMX "Build the NI-DAQmx vendor adapter" OFF)
+
 find_package(Qt5 5.15 QUIET COMPONENTS Core Network SerialPort Widgets)
 if (Qt5_FOUND)
     find_package(Qt5 5.15 REQUIRED COMPONENTS WebSockets)
@@ -36,6 +38,7 @@ set(HAL_QT_CORE_TARGET ${HWTEST_QT_CORE_TARGET})
 set(HAL_QT_NETWORK_TARGET ${HWTEST_QT_NETWORK_TARGET})
 set(HAL_QT_SERIALPORT_TARGET ${HWTEST_QT_SERIALPORT_TARGET})
 
+add_subdirectory(src/adapters)
 add_subdirectory(src/hal)
 add_subdirectory(src/logging)
 add_subdirectory(src/biz)

@@ -348,11 +348,16 @@ HalStatus MockAdapter::writeDigitalBatch(const SessionId& sessionId,
                                          const QMap<int, DigitalLevel>& values,
                                          const DigitalWriteOptions& options)
 {
+    Q_UNUSED(options)
+    DeviceState* state = deviceForSession(sessionId);
+    if (state == nullptr) {
+        return makeError(HalStatusCode::NotFound,
+                         QStringLiteral("adapter.writeDigitalBatch"),
+                         QStringLiteral("Session not found"),
+                         {}, {}, {}, {{QStringLiteral("sessionId"), sessionId}});
+    }
     for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
-        const HalStatus status = writeDigital(sessionId, it.key(), it.value(), options);
-        if (!status.ok()) {
-            return status;
-        }
+        state->digitalOutputs.insert(it.key(), it.value());
     }
     return HalStatus{};
 }

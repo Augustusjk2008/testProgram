@@ -6,6 +6,8 @@
 
 `[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；前端既可使用开发服务器，也可使用构建后的单文件 HTML，二者都与 `hwtest_web` 分开运行，浏览器仍只连接回环 WebSocket。
 
+`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider 和 `DigitalStimulusPanel` 接入总览页。面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。此浏览器控制面实现不等价于 USB-6259 真机已连接或已验收。
+
 ## 2. 连接规则
 
 - 连接地址为 `ws://127.0.0.1:<port>/ws`。
@@ -27,6 +29,7 @@
 - 字段名区分大小写。协议未定义的顶层字段应被忽略，以便尾部扩展；已定义字段的类型必须严格符合本文。
 - 服务器发送紧凑 JSON，不依赖空白或对象成员顺序。
 - 每个有效请求恰好产生一个相同 `id` 的 reply。快照和样本是独立异步事件，可以出现在请求与 reply 之间。
+- `setDigitalStimulus`、`resetDigitalStimulus` 和快照中的 `digitalStimulus` 是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。
 
 ## 4. 消息结构
 
@@ -52,7 +55,7 @@
 {"v":1,"type":"reply","id":"req-1","ok":true,"code":"","message":"","data":{}}
 ```
 
-`ok`、`code` 和 `message` 直接投影 `ActionResult`。成功时 `code`、`message` 通常为空；控制器失败时错误码和消息原样返回。协议层错误使用第 5 节的固定错误码。`data` 总是对象；没有附加数据时为空对象。
+`ok`、`code` 和 `message` 直接投影 `ActionResult`。成功时 `code`、`message` 通常为空；控制器失败时错误码和消息原样返回。协议层错误使用第 5 节的固定错误码。`data` 总是对象；没有附加数据时为空对象。`setDigitalStimulus` 和 `resetDigitalStimulus` 的 reply 无论成功或控制器失败都附带 `data.digitalStimulus`，其形状与快照字段相同。
 
 ### 4.3 握手问候
 
@@ -85,6 +88,7 @@
 | `runMode` | string；`single`、`pc_periodic` 或 `device_stream` |
 | `intervalMs` | integer |
 | `maxCycles`、`cycleIndex`、`sampleCount` | non-negative integer |
+| `digitalStimulus` | object；当前数字刺激状态，字段见下表 |
 
 `rawData` 使用 Qt 的 JSON-compatible QVariant 转换规则；其嵌套 map/list、布尔值、数值、字符串和空值保持对应 JSON 类型。
 
@@ -99,6 +103,16 @@
 | `measurements` | object[] | 待测量元数据；每项包含 `id`、`label`、`unit`、`primary` |
 
 `measurements` 只描述展示标签、单位和首页主指标候选，不改变算法判定或硬件安全语义。首条样本可能包含 descriptor 未列出的数值字段，前端仍应自动发现并显示该字段；descriptor 缺失时，兼容客户端可以使用空 descriptor 和样本字段回退。
+
+`digitalStimulus` 是应用 DTO 的完整公开投影，不暴露 `resourceId`、设备 alias、`adapterId`、端口、厂家设置或 DLL 路径：
+
+| JSON 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `available`、`configured` | boolean | 已加载配置声明刺激 / 已完成 DI 准备和控制器配置 |
+| `switches` | object[] | 每项只含 `switchId`、`dutBit`、`label`、`activeLevel`（`High` 或 `Low`） |
+| `appliedMask`、`revision` | number | 逻辑激活位图与当前乐观并发版本；写入成功后 revision 递增 |
+| `lastWriteTimestampUs`、`settlingMs` | number | 最近一次成功写入的 UTC epoch 微秒与配置的稳定等待毫秒 |
+| `errorCode`、`message` | string | 最近一次刺激操作的 HAL 归一化错误或诊断；成功时为空 |
 
 ### 4.5 样本事件
 
@@ -126,6 +140,8 @@
 
 能够安全读取请求 `id` 时，协议错误 reply 使用该 id；否则使用空字符串。错误输入不得触发控制器动作。
 
+数字刺激参数的类型、缺失或未知字段都属于 `invalid_envelope`，不会进入控制器。通过协议校验后，DI 未准备时的 `invalid_state`、未知配置开关的 `NotFound`、陈旧 revision 的 `DataMismatch` 等是控制器/HAL 归一化 `ActionResult`，不是新增的 WebSocket 协议错误码；协议中没有 `revision_conflict` 码。
+
 ## 6. 动作
 
 | `action` | `params` | 行为及 reply `data` |
@@ -142,20 +158,23 @@
 | `start` | `{}` 或 `{"mode":"pc_periodic","intervalMs":500,"maxCycles":0}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`；`intervalMs` 为 `10..3600000` 的整数；`maxCycles` 为 `0..1000000000` 的整数，`0` 表示 PC 周期不限轮数 |
 | `pause` | `{}` | 调用 `pause` |
 | `resume` | `{}` | 调用 `resume` |
+| `setDigitalStimulus` | `{"switchId":"di0","active":true,"expectedRevision":0}` | 必须且只能包含这三个字段；`switchId` 为非空 string，`active` 为 boolean，`expectedRevision` 为 0..9007199254740991 的非负安全整数。未知字段（包括 `resourceId`、`adapterId`、端口或路径）一律 `invalid_envelope`；控制器再按已加载配置白名单验证 `switchId`。reply 的 `data.digitalStimulus` 返回当前状态 |
+| `resetDigitalStimulus` | `{}` | 只能使用空对象；任何参数均为 `invalid_envelope`。调用控制器复位，reply 的 `data.digitalStimulus` 返回当前状态 |
 | `stop` | `{}` | 调用 `stopAsync`；发起成功时只在 `stopCompleted` 后发送 reply，初始调用失败时立即回复且不等待不存在的完成信号 |
 | `disconnect` | `{}` | 必要时先异步停止，再调用 `shutdown`；最后回复并关闭当前连接，服务器继续监听 |
 | `quit` | `{}` | 执行与 `disconnect` 相同的安全收尾，随后关闭服务器并退出进程 |
 
-除 `start`、`selectTest`、`selectControl` 和 `selectSerialPort` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`start` 只接受上表三个可选字段，未知字段按 `invalid_envelope` 拒绝。
+除 `start`、`selectTest`、`selectControl`、`selectSerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`start` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知字段按 `invalid_envelope` 拒绝。
 
 ## 7. 异步、线程与安全收尾
 
 - WebSocket 回调不得直接跨线程调用控制器。所有控制器动作和读取都通过 queued invocation 投递到控制器的 QObject 亲和线程；禁止 `BlockingQueuedConnection`。
 - Web 层不得调用 `waitForTerminal()`。运行进度和终态只通过 `snapshotChanged` 观察。
 - `sampleReceived` 直接形成 sample 事件；Web 层不解释、聚合或绘制字段，也不为连续测试建立定时器。
+- `setDigitalStimulus` 和 `resetDigitalStimulus` 只在控制器处于 `ready`、`running`、`paused`、`finished` 或 `stopped`，且 DI 已准备时才会执行；Web 层不持有或传递物理资源/Adapter 参数。
 - `stop` 保存请求 id，调用 `stopAsync()` 后保持事件循环运行；发起成功后收到 `stopCompleted` 才回复。若 `stopAsync()` 因状态、超时参数或已有停止而立即失败，则直接返回该控制器错误并清除 Web 层 pending 状态。
 - 异步停止或断开收尾期间，`snapshot`、`controls` 和 `ports` 三个只读动作仍允许；其他新动作回复 `command_in_progress`，不得再次触发控制器写动作。
-- `disconnect`、`quit` 和异常掉线在状态为 `running` 或 `paused` 时按 `stopAsync -> stopCompleted -> shutdown` 顺序执行；其他状态直接尝试 `shutdown`。
+- `disconnect`、`quit` 和异常掉线在状态为 `running` 或 `paused` 时按 `stopAsync -> stopCompleted -> shutdown` 顺序执行；其他状态直接尝试 `shutdown`。DI 配置的停止/收尾会在 BIZ 停止后尽力 `resetDigitalStimulus`，随后按刺激设备会话、DUT 会话、HAL 的顺序释放；这不是进程崩溃、主机掉电或未验证台架的物理安全保证。
 - `shutdown` 的失败必须通过对应 reply 返回；异常掉线时没有 reply，但服务器仍清理会话并恢复到可接纳下一客户端的状态。
 - 服务器停止监听或客户端对象销毁，不得先于已经排队的安全收尾。
 
@@ -163,6 +182,6 @@
 
 1. 活跃连接建立后依次发送 `hello`、当前完整 `snapshot`。
 2. 同一事件循环队列中的普通请求按接收顺序投递；每个请求最多一个 reply。
-3. `snapshotChanged` 和 `sampleReceived` 分别立即形成完整 snapshot/sample 消息，因此它们可以先于触发该变化的动作 reply 到达；客户端必须按 `type` 分流，不能假定 start reply 是运行后的第一条消息。
+3. `snapshotChanged` 和 `sampleReceived` 分别立即形成完整 snapshot/sample 消息，因此它们可以先于触发该变化的动作 reply 到达；`setDigitalStimulus`/`resetDigitalStimulus` 的 reply 也携带当时的 `data.digitalStimulus`。客户端必须按 `type` 分流，不能假定 reply 先于相应 snapshot，且应以序号更高的后续完整 snapshot 更新状态。
 4. `stop`、`disconnect`、`quit` 的 reply 必须晚于 `stopCompleted`（若需要停止）和 `shutdown`（若需要收尾）。
 5. `disconnect`/`quit` 的最终 reply 必须先于正常关闭帧；`quit` 的关闭帧必须先于进程退出。

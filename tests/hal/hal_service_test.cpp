@@ -10,6 +10,54 @@
 
 using namespace hwtest::hal;
 
+namespace {
+
+QVariantMap multiAdapterConfig(const QString& libraryPath)
+{
+    QVariantMap config;
+    QVariantMap adapters;
+    adapters.insert(QStringLiteral("fixture.digital.v1"),
+                    QVariantMap{{QStringLiteral("providerId"), QStringLiteral("vendor.cabi")},
+                                {QStringLiteral("libraryPath"), libraryPath},
+                                {QStringLiteral("settings"),
+                                 QVariantMap{{QStringLiteral("deviceName"),
+                                              QStringLiteral("fixture_device")}}}});
+    config.insert(QStringLiteral("adapters"), adapters);
+
+    QVariantMap hardware;
+    QVariantList devices;
+    devices.push_back(QVariantMap{{QStringLiteral("alias"), QStringLiteral("mock_device")},
+                                  {QStringLiteral("adapterId"), QStringLiteral("mock.adapter.v1")}});
+    devices.push_back(QVariantMap{{QStringLiteral("alias"), QStringLiteral("fixture_device")},
+                                  {QStringLiteral("adapterId"), QStringLiteral("fixture.digital.v1")}});
+    hardware.insert(QStringLiteral("devices"), devices);
+    QVariantMap resources;
+    resources.insert(QStringLiteral("DO_MOCK"),
+                     testsupport::makeResource(QStringLiteral("mock_device"),
+                                               QStringLiteral("digital"),
+                                               QStringLiteral("output"),
+                                               0));
+    QVariantMap vendorOutput = testsupport::makeResource(
+        QStringLiteral("fixture_device"),
+        QStringLiteral("digital"),
+        QStringLiteral("output"),
+        0);
+    vendorOutput.insert(QStringLiteral("adapterId"), QStringLiteral("fixture.digital.v1"));
+    resources.insert(QStringLiteral("DO_VENDOR"), vendorOutput);
+    QVariantMap vendorInput = testsupport::makeResource(
+        QStringLiteral("fixture_device"),
+        QStringLiteral("digital"),
+        QStringLiteral("input"),
+        0);
+    vendorInput.insert(QStringLiteral("adapterId"), QStringLiteral("fixture.digital.v1"));
+    resources.insert(QStringLiteral("DI_VENDOR"), vendorInput);
+    hardware.insert(QStringLiteral("resources"), resources);
+    config.insert(QStringLiteral("hardware"), hardware);
+    return config;
+}
+
+} // namespace
+
 TEST(HalServiceTest, ScanDevicesRequiresInitialize)
 {
     std::unique_ptr<IHalService> service(createHalService());
@@ -141,4 +189,42 @@ TEST(HalServiceTest, ReportsMissingSessionAndSupportsFactoryPair)
     IHalService* raw = createHalService();
     ASSERT_NE(raw, nullptr);
     destroyHalService(raw);
+}
+
+TEST(HalServiceTest, LoadsVendorAdapterLazilyAndRoutesSessionsByDeviceAdapter)
+{
+    std::unique_ptr<IHalService> service(createHalService());
+    QVariantMap lazyConfig = multiAdapterConfig(
+        QStringLiteral("Z:/missing/vendor-adapter.dll"));
+    ASSERT_TRUE(service->initialize(lazyConfig).ok());
+    const auto mockOnly = service->openDevice(QStringLiteral("mock_device"),
+                                              OperationOptions{});
+    ASSERT_TRUE(mockOnly.ok());
+    EXPECT_TRUE(service->closeDevice(mockOnly.value, OperationOptions{}).ok());
+    const auto missingVendor = service->openDevice(QStringLiteral("fixture_device"),
+                                                   OperationOptions{});
+    EXPECT_FALSE(missingVendor.ok());
+    EXPECT_EQ(missingVendor.status.code, HalStatusCode::AdapterLoadFailed);
+
+    ASSERT_TRUE(service->shutdown().ok());
+    ASSERT_TRUE(service->initialize(multiAdapterConfig(
+        QString::fromLatin1(HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH))).ok());
+    const auto mockSession = service->openDevice(QStringLiteral("mock_device"),
+                                                 OperationOptions{});
+    const auto vendorSession = service->openDevice(QStringLiteral("fixture_device"),
+                                                   OperationOptions{});
+    ASSERT_TRUE(mockSession.ok());
+    ASSERT_TRUE(vendorSession.ok());
+    EXPECT_NE(mockSession.value, vendorSession.value);
+
+    const auto vendorDevice = service->device(vendorSession.value);
+    ASSERT_TRUE(vendorDevice.ok());
+    ASSERT_TRUE(vendorDevice.value->digitalIo()->writeDo(
+        QStringLiteral("DO_VENDOR"), DigitalLevel::High, DigitalWriteOptions{}).ok());
+    const auto readback = vendorDevice.value->digitalIo()->readDi(
+        QStringLiteral("DI_VENDOR"), OperationOptions{});
+    ASSERT_TRUE(readback.ok());
+    EXPECT_EQ(readback.value.level, DigitalLevel::High);
+    EXPECT_TRUE(service->closeDevice(vendorSession.value, OperationOptions{}).ok());
+    EXPECT_TRUE(service->closeDevice(mockSession.value, OperationOptions{}).ok());
 }

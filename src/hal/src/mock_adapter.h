@@ -8,7 +8,7 @@
 
 namespace hwtest::hal {
 
-class MockAdapter final : public HardwareAdapter {
+class MockAdapter : public HardwareAdapter {
 public:
     MockAdapter();
     ~MockAdapter() override;

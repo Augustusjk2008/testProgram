@@ -64,3 +64,53 @@ TEST(ResourceMapperTest, ReturnsSafeState)
 
     EXPECT_EQ(mapper.safeState().value(QStringLiteral("DA_MAIN_0")).toDouble(), 1.25);
 }
+
+TEST(ResourceMapperTest, InheritsDeviceAdapterForResources)
+{
+    QVariantMap config = testsupport::defaultHalConfig();
+    QVariantMap hardware = config.value(QStringLiteral("hardware")).toMap();
+    QVariantList devices = hardware.value(QStringLiteral("devices")).toList();
+    QVariantMap device = devices.first().toMap();
+    device.insert(QStringLiteral("adapterId"), QStringLiteral("vendor.fixture"));
+    devices[0] = device;
+    hardware.insert(QStringLiteral("devices"), devices);
+    config.insert(QStringLiteral("hardware"), hardware);
+
+    ResourceMapper mapper;
+    ASSERT_TRUE(mapper.load(config));
+    EXPECT_EQ(mapper.binding(QStringLiteral("DO_POWER_EN")).adapterId,
+              QStringLiteral("vendor.fixture"));
+}
+
+TEST(ResourceMapperTest, RejectsUnknownDeviceAdapterMismatchAndDuplicatePhysicalChannel)
+{
+    QVariantMap unknown = testsupport::defaultHalConfig();
+    QVariantMap hardware = unknown.value(QStringLiteral("hardware")).toMap();
+    QVariantMap resources = hardware.value(QStringLiteral("resources")).toMap();
+    QVariantMap output = resources.value(QStringLiteral("DO_POWER_EN")).toMap();
+    output.insert(QStringLiteral("device"), QStringLiteral("missing-device"));
+    resources.insert(QStringLiteral("DO_POWER_EN"), output);
+    hardware.insert(QStringLiteral("resources"), resources);
+    unknown.insert(QStringLiteral("hardware"), hardware);
+    ResourceMapper mapper;
+    EXPECT_FALSE(mapper.load(unknown));
+
+    QVariantMap mismatch = testsupport::defaultHalConfig();
+    hardware = mismatch.value(QStringLiteral("hardware")).toMap();
+    resources = hardware.value(QStringLiteral("resources")).toMap();
+    output = resources.value(QStringLiteral("DO_POWER_EN")).toMap();
+    output.insert(QStringLiteral("adapterId"), QStringLiteral("wrong.adapter"));
+    resources.insert(QStringLiteral("DO_POWER_EN"), output);
+    hardware.insert(QStringLiteral("resources"), resources);
+    mismatch.insert(QStringLiteral("hardware"), hardware);
+    EXPECT_FALSE(mapper.load(mismatch));
+
+    QVariantMap duplicate = testsupport::defaultHalConfig();
+    hardware = duplicate.value(QStringLiteral("hardware")).toMap();
+    resources = hardware.value(QStringLiteral("resources")).toMap();
+    resources.insert(QStringLiteral("DO_POWER_EN_COPY"),
+                     resources.value(QStringLiteral("DO_POWER_EN")));
+    hardware.insert(QStringLiteral("resources"), resources);
+    duplicate.insert(QStringLiteral("hardware"), hardware);
+    EXPECT_FALSE(mapper.load(duplicate));
+}

@@ -37,6 +37,8 @@ TEST(WebProtocolTest, AcceptsEveryVersionOneAction)
         QStringLiteral("start"),
         QStringLiteral("pause"),
         QStringLiteral("resume"),
+        QStringLiteral("setDigitalStimulus"),
+        QStringLiteral("resetDigitalStimulus"),
         QStringLiteral("stop"),
         QStringLiteral("disconnect"),
         QStringLiteral("quit"),
@@ -171,6 +173,16 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     snapshot.maxCycles = 0;
     snapshot.cycleIndex = 17;
     snapshot.sampleCount = 42;
+    snapshot.digitalStimulus.available = true;
+    snapshot.digitalStimulus.configured = true;
+    snapshot.digitalStimulus.appliedMask = 0x81u;
+    snapshot.digitalStimulus.revision = 7;
+    snapshot.digitalStimulus.lastWriteTimestampUs = 123456;
+    snapshot.digitalStimulus.settlingMs = 20;
+    snapshot.digitalStimulus.switches = {
+        DigitalSwitchDescriptor{QStringLiteral("di0"), 0, QStringLiteral("DI0"), QStringLiteral("High")},
+        DigitalSwitchDescriptor{QStringLiteral("di8"), 8, QStringLiteral("DI8"), QStringLiteral("Low")},
+    };
     snapshot.descriptor.configId = QStringLiteral("mbddf-system-status");
     snapshot.descriptor.title = QStringLiteral("系统状态");
     snapshot.descriptor.supportedRunModes = {
@@ -188,7 +200,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(envelope.value(QStringLiteral("seq")).toInt(), 12);
 
     const QJsonObject json = envelope.value(QStringLiteral("snapshot")).toObject();
-    EXPECT_EQ(json.size(), 23);
+    EXPECT_EQ(json.size(), 24);
     EXPECT_EQ(json.value(QStringLiteral("phase")).toString(), snapshot.phase);
     EXPECT_EQ(json.value(QStringLiteral("testState")).toString(), snapshot.testState);
     EXPECT_EQ(json.value(QStringLiteral("controlResourceId")).toString(),
@@ -215,6 +227,18 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
               static_cast<double>(snapshot.cycleIndex));
     EXPECT_EQ(json.value(QStringLiteral("sampleCount")).toDouble(),
               static_cast<double>(snapshot.sampleCount));
+    const QJsonObject stimulus = json.value(QStringLiteral("digitalStimulus")).toObject();
+    EXPECT_TRUE(stimulus.value(QStringLiteral("available")).toBool());
+    EXPECT_TRUE(stimulus.value(QStringLiteral("configured")).toBool());
+    EXPECT_EQ(stimulus.value(QStringLiteral("appliedMask")).toDouble(), 0x81);
+    EXPECT_EQ(stimulus.value(QStringLiteral("revision")).toDouble(), 7);
+    EXPECT_EQ(stimulus.value(QStringLiteral("lastWriteTimestampUs")).toDouble(), 123456);
+    EXPECT_EQ(stimulus.value(QStringLiteral("settlingMs")).toInt(), 20);
+    const QJsonArray switches = stimulus.value(QStringLiteral("switches")).toArray();
+    ASSERT_EQ(switches.size(), 2);
+    EXPECT_EQ(switches.at(1).toObject().value(QStringLiteral("switchId")).toString(),
+              QStringLiteral("di8"));
+    EXPECT_FALSE(switches.at(1).toObject().contains(QStringLiteral("resourceId")));
     const QJsonObject descriptor = json.value(QStringLiteral("descriptor")).toObject();
     EXPECT_EQ(descriptor.value(QStringLiteral("configId")).toString(),
               snapshot.descriptor.configId);

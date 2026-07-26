@@ -58,13 +58,14 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
         parser, QStringLiteral(HWTEST_PROJECT_SOURCE_DIR), defaults, &options);
 
     ASSERT_TRUE(result.ok) << result.message.toStdString();
-    ASSERT_EQ(options.testConfigs.size(), 6);
+    ASSERT_EQ(options.testConfigs.size(), 7);
     bool foundSystem = false;
     bool foundElectrical = false;
     bool foundMemory = false;
     bool foundSpiFlash = false;
     bool foundDhPulse = false;
     bool foundTimer = false;
+    bool foundDiRead = false;
     for (const FrontendTestConfigOption& option : options.testConfigs) {
         foundSystem = foundSystem || option.configId == QStringLiteral("mbddf-system-status");
         foundElectrical = foundElectrical || option.configId == QStringLiteral("mbddf-elec-health");
@@ -72,6 +73,7 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
         foundSpiFlash = foundSpiFlash || option.configId == QStringLiteral("mbddf-spi-flash");
         foundDhPulse = foundDhPulse || option.configId == QStringLiteral("mbddf-dh-pulse-config");
         foundTimer = foundTimer || option.configId == QStringLiteral("mbddf-timer-jitter");
+        foundDiRead = foundDiRead || option.configId == QStringLiteral("mbddf-di-read");
         EXPECT_FALSE(option.configPath.isEmpty());
         EXPECT_FALSE(option.title.isEmpty());
     }
@@ -81,6 +83,31 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
     EXPECT_TRUE(foundSpiFlash);
     EXPECT_TRUE(foundDhPulse);
     EXPECT_TRUE(foundTimer);
+    EXPECT_TRUE(foundDiRead);
+}
+
+TEST(FrontendLaunchOptionsTest, EveryDiscoveredConfigurationCanBeLoadedByController)
+{
+    const FrontendOptionDefaults defaults{
+        QStringLiteral("configs/mbddf_system_status.testcfg.json"),
+        QStringLiteral("configs/mbddf_pc_hal.json"),
+        false};
+    QCommandLineParser parser;
+    parseFrontendArguments(&parser, defaults, {QStringLiteral("frontend")});
+
+    FrontendLaunchOptions options;
+    const ActionResult discovered = readFrontendOptions(
+        parser, QStringLiteral(HWTEST_PROJECT_SOURCE_DIR), defaults, &options);
+    ASSERT_TRUE(discovered.ok) << discovered.message.toStdString();
+
+    TestApplicationController controller;
+    for (const FrontendTestConfigOption& option : options.testConfigs) {
+        const ActionResult loaded = controller.loadConfigurations(
+            option.configPath, QStringLiteral(HWTEST_APP_HAL_CONFIG));
+        EXPECT_TRUE(loaded.ok)
+            << option.algorithmId.toStdString() << ": "
+            << loaded.code.toStdString() << " " << loaded.message.toStdString();
+    }
 }
 
 TEST(FrontendLaunchOptionsTest, RequiresPathsForBatchRunner)

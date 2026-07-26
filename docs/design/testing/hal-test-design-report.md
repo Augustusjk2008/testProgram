@@ -1,6 +1,8 @@
 # HAL 测试设计报告
 
-> 范围：tests/hal/ 的当前测试覆盖快照。
+> **已被替代（2026-07-27）**：本文保留为早期 HAL 测试快照，其中数量、CAbiAdapter/AdapterLoader 覆盖和 Vendor Adapter 缺口已经过时。当前唯一清单、统计、覆盖与证据边界以 [测试规范](testing-specification.md) 为准。
+
+> 范围：tests/hal/ 的历史测试覆盖快照。
 >
 > 本文不定义全局构建命令、CTest 规则、测试准入或硬件证据等级；这些唯一以 [测试规范](testing-specification.md) 为准。
 

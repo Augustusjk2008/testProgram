@@ -34,6 +34,44 @@ add_library(hal_adapter_missing_symbol_fixture SHARED
     fixtures/adapter_loader_missing_symbol_fixture.cpp
 )
 
+add_library(hal_adapter_digital_fixture SHARED
+    fixtures/digital_adapter_fixture.cpp
+)
+
+add_library(hal_adapter_ni_daqmx_fixture SHARED
+    ${PROJECT_SOURCE_DIR}/src/adapters/ni_daqmx/ni_daqmx_adapter.cpp
+)
+
+set_target_properties(hal_adapter_ni_daqmx_fixture PROPERTIES
+    AUTOMOC OFF
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+
+target_include_directories(hal_adapter_ni_daqmx_fixture
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/adapters/ni_daqmx/tests/fake
+        ${PROJECT_SOURCE_DIR}/src/hal/include
+)
+
+target_link_libraries(hal_adapter_ni_daqmx_fixture
+    PRIVATE
+        hwtest_fake_nidaqmx
+)
+
+set_target_properties(hal_adapter_digital_fixture PROPERTIES
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+
+target_include_directories(hal_adapter_digital_fixture
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/hal/include
+)
+
+target_link_libraries(hal_adapter_digital_fixture
+    PRIVATE
+        ${HAL_QT_CORE_TARGET}
+)
+
 set_target_properties(hal_adapter_missing_symbol_fixture PROPERTIES
     WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
@@ -50,6 +88,7 @@ target_link_libraries(hal_adapter_missing_symbol_fixture
 
 add_executable(hwtest_hal_tests
     adapter_loader_test.cpp
+    c_abi_adapter_test.cpp
     control_channel_test.cpp
     hal_device_test.cpp
     hal_error_mapper_test.cpp
@@ -71,6 +110,8 @@ target_compile_definitions(hwtest_hal_tests
     PRIVATE
         HAL_TEST_ADAPTER_FIXTURE_PATH="$<TARGET_FILE:hal_adapter_fixture>"
         HAL_TEST_ADAPTER_MISSING_SYMBOL_FIXTURE_PATH="$<TARGET_FILE:hal_adapter_missing_symbol_fixture>"
+        HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH="$<TARGET_FILE:hal_adapter_digital_fixture>"
+        HAL_TEST_NI_DAQMX_ADAPTER_FIXTURE_PATH="$<TARGET_FILE:hal_adapter_ni_daqmx_fixture>"
 )
 
 target_link_libraries(hwtest_hal_tests
@@ -83,6 +124,8 @@ target_link_libraries(hwtest_hal_tests
 add_dependencies(hwtest_hal_tests
     hal_adapter_fixture
     hal_adapter_missing_symbol_fixture
+    hal_adapter_digital_fixture
+    hal_adapter_ni_daqmx_fixture
 )
 
 include(GoogleTest)

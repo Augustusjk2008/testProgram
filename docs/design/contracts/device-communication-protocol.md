@@ -2,7 +2,7 @@
 
 > 适用项目：多产品通用硬件测试软件（Qt 5.15 兼容、Qt 6 Core/Network/SerialPort fallback / C++17 / Windows）
 > 本文定位：产品协议资产、当前 MB_DDF CSV 解析规则、帧编解码和算法运行期语义。
-> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/src/system_status_executor.cpp`、`src/algorithm/include/algorithm/mbddf_exchange_executor.h` 和 `src/algorithm/src/elec_health_status_executor.cpp`。
+> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/src/system_status_executor.cpp`、`src/algorithm/include/algorithm/mbddf_exchange_executor.h`、`src/algorithm/src/elec_health_status_executor.cpp` 和 `src/algorithm/src/di_stimulus_controller.cpp`。
 > 状态标记：**当前**表示已实现或已由用户确认的资产基线，**目标**表示已确认但尚未实现。
 
 原始建模参考来自 `H:/WorkSpace/PythonWorkspace/openEulerEnvironment/docs/protocol_modeling_workbench_definition.md`。该外部绝对路径只作来源追溯，不是本仓库可复现的发布输入；本项目当前实现与该参考不一致时，以本节明确列出的“当前规则”为准。
@@ -22,16 +22,16 @@ BIZ -> IAlgorithmExecutor -> hwtest_algorithm_mbddf -> IByteTransport
                                                    -> HalSerialTransport -> hwtest_hal
 ```
 
-统一生产路径如下；当前六个 MB_DDF 单步配置均经该边界进入控制通道，通用 Provider 架构仍未完成：
+统一协议生产路径如下；当前七个 MB_DDF 单步配置均经该边界进入控制通道：
 
 ```text
 BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据）
     -> HAL（逻辑资源、连接、原始 I/O、deadline、传输错误和物理安全态）
-    -> providerId 路由
-         -> Qt 标准 API Provider
-         -> Vendor Adapter Provider
-         -> Mock Provider
+    -> 控制资源 providerId 路由（qt.serial / qt.udp）
+    -> 或设备 adapterId 路由（MockAdapter / 通用 C ABI DLL / 可选 NI-DAQmx DLL）
 ```
+
+`mbddf.di_read` 的 `DI_READ` 帧交换仍走上述控制通道；其外部 DI 刺激不是产品协议字段，而是独立的应用动作链：`TestApplicationController -> DiStimulusController -> IHalDevice / IDigitalIo::writeDoBatch -> 设备 adapterId 后端`。`DiStimulusController` 不含 NI 类型或 SDK；BIZ 只保存和透传不透明 `executionConfig`，不解析刺激通道，也不直接访问 HAL。严格 WebSocket 输入格式与动作时序见 [WebSocket 前端协议](websocket-frontend-protocol.md)。
 
 明确禁止：
 
@@ -56,11 +56,12 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 | `SystemStatusAlgorithmExecutor` | 执行 `mbddf.system_status`，并提供固定命令执行的共享生命周期 |
 | `ElecHealthStatusAlgorithmExecutor` | 执行 `mbddf.elec_health_status` 单步算法 |
 | `MbdDfExchangeAlgorithmExecutor` | 按配置执行 `MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG` 等单步请求/响应；可按配置追加一个清理请求（当前用于 `TIMER_JITTER_STOP`） |
+| `DiStimulusController` | 解析 `executionConfig.digitalStimulus`，按配置白名单和 revision 构造完整 DI 输出批次；不调用厂家 SDK |
 | `SystemStatusSimulator` | 协议级成功、超时、坏 CRC 和无效响应模拟 |
 | `HalControlTransport` | 经 `IControlChannel` 发送原始字节，并累积短读、搜索同步字、按长度分帧及保留剩余帧 |
 | `HalSerialTransport` | 将算法字节事务桥接到现有 `ISerialBus` |
 
-当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，分别完成 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 的单次及三轮 PC 周期。新增四项目前有配置/协议/脚本化执行器证据，但尚无真实板端结论。早期 SYSTEM_STATUS 实机执行每轮出现 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，两个既有测试项均再次成功，后端完整诊断未再出现该警告。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
+当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，分别完成 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 的单次及三轮 PC 周期。其余五项目前有配置、协议、脚本化执行器、Mock/Fake 或本机模拟证据；NI-DAQmx 专用 Adapter 已有源码、可选 CMake 与 Fake SDK 回归，但没有真实板端、NI 或 USB-6259 结论。早期 SYSTEM_STATUS 实机执行每轮出现 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，两个既有测试项均再次成功，后端完整诊断未再出现该警告。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
 
 ---
 
@@ -86,7 +87,7 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 因此：
 
 - `ProtocolCatalog` 按一文件一定义加载，当前期望为 32 个定义；
-- 六个当前配置所需的 12 份请求/响应 CSV 当前存在；
+- 七个当前配置所需的 14 份请求/响应 CSV 当前存在；
 - 原测试源码中的 36 项断言和 `ad_read_response` 引用是相对批准基线的陈旧预期，现已按当前定义修正；
 - 后续修改该目录时，必须同步协议测试和本节清单；测试结果应记录基线路径、观测时间和实际清单。
 
@@ -179,7 +180,7 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 ## 7. MB_DDF 单步配置与执行
 
-当前应用控制器接受六个已知的独立单步算法：`mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config` 和 `mbddf.timer_jitter`。每份配置只能启用其中一个步骤；不支持把两个项目拼成一个多步骤生产测试。BIZ 将 `TestConfig.executionConfig` 原样传给算法执行器；前三个新增项目使用同一份有界请求/响应生命周期，定时器在成功 START 后按配置再发送 STOP 清理请求，PC 周期由 BIZ 调度。
+当前应用控制器通过统一注册表接受七个已知的独立单步算法：`mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config`、`mbddf.timer_jitter` 和 `mbddf.di_read`。每份配置只能启用其中一个步骤；不支持把两个项目拼成一个多步骤生产测试。前两项使用专用执行器，其余五项使用同一份有界请求/响应交换执行器；`TIMER_JITTER` 在成功 START 后按配置再发送 STOP 清理请求，PC 周期由 BIZ 调度。
 
 `SYSTEM_STATUS` 的 `executionConfig` 形状为：
 
@@ -218,10 +219,15 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 | `configs/mbddf_spi_flash.testcfg.json` | `mbddf.spi_flash` | `spi_flash_test_request/response` | 空请求；DUT 擦写固定隔离 4 KiB 测试区，不备份、不恢复，配置仅支持单次 |
 | `configs/mbddf_dh_pulse_config.testcfg.json` | `mbddf.dh_pulse_config` | `dh_pulse_config_request/response` | `config_enable` 与 23 路 `pulse_width[]` 写入后逐项回读并判定 |
 | `configs/mbddf_timer_jitter.testcfg.json` | `mbddf.timer_jitter` | `timer_jitter_start_request/response`，随后 `timer_jitter_stop_request/response` | START 的 `mode` 当前默认为 0；`executionConfig.lifecycle` 声明 STOP Profile 和 deadline，STOP ACK 失败会使本轮失败 |
+| `configs/mbddf_di.testcfg.json` | `mbddf.di_read` | `di_read_request/response`（`DI_READ`） | 读取 `di_state[0]`、`di_state[1]`；当前配置支持 `single` 和 `pc_periodic`，判定只检查 `status == 0` 与 `err_code == 0` |
+
+`mbddf.di_read` 的 `executionConfig.digitalStimulus` 是算法层消费的执行配置，不进入 CSV 或产品帧。`DiStimulusController` 要求 1..64 个通道、唯一且非空的 `switchId`/`resourceId`、唯一的 0..63 `dutBit`、合法的 `High`/`Low` `activeLevel` 与 0..60000 ms 的 `settlingMs`。设置时必须带与当前状态精确相等的 revision；陈旧 revision 返回既有 HAL `DataMismatch`，未知 `switchId` 返回 `NotFound`，二者都不得触发输出写入。每次成功设置或复位都为全部已配置资源构造完整 `writeDoBatch()` 映射；复位的逻辑 mask 为 0，低有效通道仍写其 inactive 物理电平。写成功后才递增 revision、更新 applied mask 和写入时间，写失败保留已应用状态并记录 HAL 错误。
+
+当前 DI 配置声明 16 路 `DUT_DI*_STIM`、`di0` 至 `di15` 以及 `di_state[0]`/`di_state[1]` 展示字段。控制器加载时还要求每个刺激资源属于配置的 stimulus 设备、是数字输出，且 HAL `safeState` 等于该通道的逻辑 inactive 电平；不一致会以 `stimulus_safe_state_mismatch` 拒绝，尚未打开硬件。刺激与 DUT 回读不一致不是该测试的产品判定条件；产品判定仍只依据 `status` 和 `err_code`。配置中的 `ni.daqmx` 已对应可选原生 NI-DAQmx Adapter；但 `HWTEST_NI_DAQMX_ADAPTER_PATH`、`Dev1` 和 `CONFIGURE_ME` 仍是部署模板，必须填入真实 DLL/身份才可初始化，因此不能推导出真实输出或真实回读已验证。
 
 `executionConfig.lifecycle` 只允许在需要清理 ACK 的单步中使用：请求/响应 Profile 必须成对提供，执行器先完成主请求/响应，再以递增序号发送 follow-up 请求并校验响应命令、序号、`status` 和 `err_code`。这不是设备持续回告能力；当前定时器 START 在 DUT 端同步完成 250 us x 250 周期统计，STOP 只负责幂等清理确认。
 
-六个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes` 和 `measurements`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；缺少展示元数据时，前端回退到步骤身份和样本字段。
+七个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes` 和 `measurements`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；缺少展示元数据时，前端回退到步骤身份和样本字段。
 
 算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。
 
@@ -296,7 +302,9 @@ CAN/CANFD 的帧边界由总线提供，但 payload 内的 MB_DDF 字段、CRC�
 - `ELEC_HEALTH_STATUS`：独立配置加载、`0x05/0x01` 请求、响应字段解码、`status/err_code` 判定和经 HAL 的 UDP/串口路径；
 - `MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`：配置驱动请求/响应、CSV 字段编解码、响应判定和错误路径；
 - `TIMER_JITTER_START/STOP`：START 统计响应、递增序号的 STOP 清理 ACK 和清理失败判定；
+- `DI_READ`：`0x04/0x01` 请求、响应字段 `di_state[0]`/`di_state[1]`、序号/CRC、单样本与 `status`/`err_code` 判定；
+- 数字刺激：配置白名单、重复/范围拒绝、active-low 映射、完整批量写、revision 冲突无写入、写失败状态保留和复位；这些用 `IHalDevice` Fake 或 Mock 验证，不是厂商 Adapter 或真机证据；
 - 纯协议单测可直连 Simulator；产品模拟和算法集成必须经过 HAL，并标明是 HAL Mock 或标准 Provider 隔离模拟目标；
 - 真实硬件协议测试单独标记，不进入默认 CI。
 
-当前验收限制：`dut/` 已保存来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 的 32 份 CSV 同步副本，但宿主运行期仍使用仓库外批准基线，且尚无 manifest/hash 自动机制；控制通道 Mock Provider 未实现。Qt UDP 本机模拟目标和流式分帧已有自动化证据；BIZ QThread dispatcher 回归已补齐，真实 COM3/DUT 也已有迁移后成功且无目标计时器警告的短时复测，但长时、自动化异常路径和物理安全收尾尚未完成。完整证据等级和执行命令统一见 [测试规范](../testing/testing-specification.md)。
+当前验收限制：`dut/` 已保存来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 的 32 份 CSV 同步副本，但宿主运行期仍使用仓库外批准基线，且尚无 manifest/hash 自动机制；控制通道 Mock Provider 未实现。Qt UDP 本机模拟目标和流式分帧已有自动化证据；BIZ QThread dispatcher 回归已补齐，真实 COM3/DUT 也已有迁移后成功且无目标计时器警告的短时复测，但长时、自动化异常路径和物理安全收尾尚未完成。通用 C ABI、多 Adapter 和原生 NI-DAQmx Adapter 的自动化都只使用 Fake/fixture；NI-DAQmx 路径已实现但 USB-6259 真机未验收。完整证据等级和执行命令统一见 [测试规范](../testing/testing-specification.md)。

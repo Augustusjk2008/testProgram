@@ -1,6 +1,9 @@
 #include <app/test_application_controller.h>
 
+#include "mbddf_algorithm_registry.h"
+
 #include <algorithm/elec_health_status_executor.h>
+#include <algorithm/di_stimulus_controller.h>
 #include <algorithm/mbddf_exchange_executor.h>
 #include <algorithm/mbddf_transport.h>
 #include <algorithm/system_status_executor.h>
@@ -18,6 +21,7 @@
 #include <logging/log_service.h>
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -98,7 +102,68 @@ ActionResult bizFailure(const hwtest::biz::Status& status, const QString& fallba
 ActionResult halFailure(const hwtest::hal::HalStatus& status, const QString& fallback)
 {
     return failure(hwtest::hal::toString(status.code),
-                   status.error.message.isEmpty() ? fallback : status.error.message);
+                    status.error.message.isEmpty() ? fallback : status.error.message);
+}
+
+QString canonicalDigitalLevel(const QVariant& value)
+{
+    const QString text = value.toString().trimmed();
+    if (text.compare(QStringLiteral("High"), Qt::CaseInsensitive) == 0 ||
+        text == QStringLiteral("1")) {
+        return QStringLiteral("High");
+    }
+    if (text.compare(QStringLiteral("Low"), Qt::CaseInsensitive) == 0 ||
+        text == QStringLiteral("0")) {
+        return QStringLiteral("Low");
+    }
+    return {};
+}
+
+ActionResult validateDigitalStimulusSafeState(const QVariantMap& executionConfig,
+                                              const QVariantMap& halConfig)
+{
+    const QVariantMap stimulus = executionConfig
+                                     .value(QStringLiteral("digitalStimulus"))
+                                     .toMap();
+    const QString deviceId = stimulus.value(QStringLiteral("deviceId"))
+                                 .toString().trimmed();
+    const QVariantList channels = stimulus.value(QStringLiteral("channels")).toList();
+    const QVariantMap resources = halConfig.value(QStringLiteral("hardware")).toMap()
+                                      .value(QStringLiteral("resources")).toMap();
+    const QVariantMap safeState = halConfig.value(QStringLiteral("safeState")).toMap();
+    if (deviceId.isEmpty() || channels.isEmpty()) {
+        return failure(QStringLiteral("stimulus_safe_state_mismatch"),
+                       QStringLiteral("DI digitalStimulus requires a deviceId and channels"));
+    }
+    for (const QVariant& value : channels) {
+        const QVariantMap channel = value.toMap();
+        const QString resourceId = channel.value(QStringLiteral("resourceId"))
+                                       .toString().trimmed();
+        const QVariantMap resource = resources.value(resourceId).toMap();
+        const QString activeLevel = canonicalDigitalLevel(
+            channel.value(QStringLiteral("activeLevel")));
+        const QString inactiveLevel = activeLevel == QStringLiteral("High")
+            ? QStringLiteral("Low")
+            : (activeLevel == QStringLiteral("Low")
+                   ? QStringLiteral("High")
+                   : QString{});
+        const QString configuredSafe = canonicalDigitalLevel(
+            safeState.value(resourceId));
+        if (resourceId.isEmpty() || resource.isEmpty() ||
+            resource.value(QStringLiteral("device")).toString().trimmed() != deviceId ||
+            resource.value(QStringLiteral("module")).toString().trimmed() !=
+                QStringLiteral("digital") ||
+            resource.value(QStringLiteral("direction")).toString().trimmed() !=
+                QStringLiteral("output") ||
+            inactiveLevel.isEmpty() || configuredSafe != inactiveLevel) {
+            return failure(
+                QStringLiteral("stimulus_safe_state_mismatch"),
+                QStringLiteral(
+                    "Digital stimulus '%1' must map to an output on '%2' whose HAL safeState equals its inactive level '%3'")
+                    .arg(resourceId, deviceId, inactiveLevel));
+        }
+    }
+    return {};
 }
 
 QString serialPortNameFor(const QVariantMap& halConfig, const QString& resourceId)
@@ -189,6 +254,60 @@ TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
     return descriptor;
 }
 
+DigitalStimulusSnapshot digitalStimulusDescriptor(const QVariantMap& executionConfig)
+{
+    DigitalStimulusSnapshot snapshot;
+    const QVariantMap stimulus = executionConfig.value(QStringLiteral("digitalStimulus")).toMap();
+    const QVariantList channels = stimulus.value(QStringLiteral("channels")).toList();
+    if (channels.isEmpty()) return snapshot;
+    snapshot.available = true;
+    snapshot.settlingMs = stimulus.value(QStringLiteral("settlingMs"), 0).toInt();
+    for (const QVariant& value : channels) {
+        const QVariantMap channel = value.toMap();
+        snapshot.switches.push_back(DigitalSwitchDescriptor{
+            channel.value(QStringLiteral("switchId")).toString().trimmed(),
+            channel.value(QStringLiteral("dutBit"), -1).toInt(),
+            channel.value(QStringLiteral("label")).toString().trimmed(),
+            channel.value(QStringLiteral("activeLevel")).toString().trimmed(),
+        });
+    }
+    return snapshot;
+}
+
+DigitalStimulusSnapshot digitalStimulusSnapshot(
+    const hwtest::algorithm::mbddf::DiStimulusState& state)
+{
+    DigitalStimulusSnapshot snapshot;
+    snapshot.available = true;
+    snapshot.configured = state.configured;
+    snapshot.appliedMask = state.appliedMask;
+    snapshot.revision = state.revision;
+    snapshot.lastWriteTimestampUs = state.lastWriteTimestampUs;
+    snapshot.settlingMs = state.settlingMs;
+    snapshot.errorCode = state.lastError.ok()
+        ? QString{}
+        : hwtest::hal::toString(state.lastError.code);
+    snapshot.message = state.lastError.error.message;
+    for (const auto& channel : state.channels) {
+        snapshot.switches.push_back(DigitalSwitchDescriptor{
+            channel.switchId,
+            channel.dutBit,
+            channel.label,
+            hwtest::hal::toString(channel.activeLevel),
+        });
+    }
+    return snapshot;
+}
+
+bool stimulusActionPhase(const QString& phase)
+{
+    return phase == QStringLiteral("ready") ||
+        phase == QStringLiteral("running") ||
+        phase == QStringLiteral("paused") ||
+        phase == QStringLiteral("finished") ||
+        phase == QStringLiteral("stopped");
+}
+
 } // namespace
 
 class TestApplicationController::Impl {
@@ -201,12 +320,16 @@ public:
     QString testConfigPath;
     QString halConfigPath;
     QVariantMap halConfig;
+    QVariantMap executionConfig;
     QVector<ControlResource> controls;
     ApplicationSnapshot snapshot;
     int runTimeoutMs = 5000;
     HalServicePtr hal{nullptr, &hwtest::hal::destroyHalService};
-    hwtest::hal::SessionId sessionId;
+    hwtest::hal::SessionId dutSessionId;
+    hwtest::hal::SessionId stimulusSessionId;
     hwtest::hal::IHalDevice* device = nullptr;
+    hwtest::hal::IHalDevice* stimulusDevice = nullptr;
+    std::unique_ptr<hwtest::algorithm::mbddf::DiStimulusController> stimulusController;
     std::unique_ptr<hwtest::biz::IAlgorithmExecutor> executor;
     QString selectedAlgorithmId;
     TestDescriptor descriptor;
@@ -232,6 +355,8 @@ TestApplicationController::TestApplicationController(QObject* parent)
     qRegisterMetaType<TestDescriptor>();
     qRegisterMetaType<TestMeasurementDescriptor>();
     qRegisterMetaType<TestRunOptions>();
+    qRegisterMetaType<DigitalSwitchDescriptor>();
+    qRegisterMetaType<DigitalStimulusSnapshot>();
     qRegisterMetaType<QVector<SerialPortInfo>>();
 }
 
@@ -272,8 +397,7 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
         if (!step.enabled) {
             continue;
         }
-        if (step.algorithmId != QStringLiteral("mbddf.system_status") &&
-            step.algorithmId != QStringLiteral("mbddf.elec_health_status")) {
+        if (!isSupportedMbdDfAlgorithm(step.algorithmId)) {
             return failure(QStringLiteral("unsupported_algorithm"),
                            QStringLiteral("Unsupported MB_DDF algorithm '%1'")
                                .arg(step.algorithmId));
@@ -291,6 +415,11 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     const ActionResult loadedHal = loadJsonMap(absoluteHalPath, &halConfig);
     if (!loadedHal.ok) {
         return loadedHal;
+    }
+    if (selectedAlgorithmId == QStringLiteral("mbddf.di_read")) {
+        const ActionResult safeState = validateDigitalStimulusSafeState(
+            testConfig.value.executionConfig, halConfig);
+        if (!safeState.ok) return safeState;
     }
 
     const QVariantMap control = halConfig.value(QStringLiteral("control")).toMap();
@@ -330,12 +459,14 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     m_impl->selectedAlgorithmId = selectedAlgorithmId;
     m_impl->descriptor = makeTestDescriptor(testConfig.value, *selectedStep);
     m_impl->halConfig = halConfig;
+    m_impl->executionConfig = testConfig.value.executionConfig;
     m_impl->controls = controls;
     m_impl->runTimeoutMs = timeoutMs;
     m_impl->snapshot = {};
     m_impl->suppressedResultTaskId.clear();
     m_impl->snapshot.phase = QStringLiteral("configured");
     m_impl->snapshot.descriptor = m_impl->descriptor;
+    m_impl->snapshot.digitalStimulus = digitalStimulusDescriptor(m_impl->executionConfig);
     m_impl->snapshot.controlResourceId = selected->resourceId;
     m_impl->snapshot.providerId = selected->providerId;
     m_impl->snapshot.serialPortName = serialPortNameFor(halConfig, selected->resourceId);
@@ -471,6 +602,54 @@ ActionResult TestApplicationController::prepare()
         return result;
     }
 
+    if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.di_read")) {
+        const QString stimulusDeviceId = m_impl->executionConfig
+                                             .value(QStringLiteral("digitalStimulus")).toMap()
+                                             .value(QStringLiteral("deviceId")).toString().trimmed();
+        if (stimulusDeviceId.isEmpty()) {
+            const ActionResult result = failure(
+                QStringLiteral("hal_config"),
+                QStringLiteral("digitalStimulus.deviceId is required for mbddf.di_read"));
+            shutdown();
+            return result;
+        }
+        const auto openedStimulus = m_impl->hal->openDevice(
+            stimulusDeviceId, hwtest::hal::OperationOptions{});
+        if (!openedStimulus.ok()) {
+            const ActionResult result = halFailure(
+                openedStimulus.status, QStringLiteral("Unable to open digital stimulus device"));
+            shutdown();
+            return result;
+        }
+        m_impl->stimulusSessionId = openedStimulus.value;
+        const auto stimulusDevice = m_impl->hal->device(m_impl->stimulusSessionId);
+        if (!stimulusDevice.ok() || stimulusDevice.value == nullptr) {
+            const ActionResult result = stimulusDevice.ok()
+                ? failure(QStringLiteral("hal_device"),
+                          QStringLiteral("HAL returned a null stimulus device"))
+                : halFailure(stimulusDevice.status,
+                             QStringLiteral("Unable to get digital stimulus device"));
+            shutdown();
+            return result;
+        }
+        m_impl->stimulusDevice = stimulusDevice.value;
+        m_impl->stimulusController = std::make_unique<
+            hwtest::algorithm::mbddf::DiStimulusController>(m_impl->stimulusDevice);
+        hwtest::hal::HalStatus stimulusStatus =
+            m_impl->stimulusController->configure(m_impl->executionConfig);
+        if (stimulusStatus.ok()) {
+            stimulusStatus = m_impl->stimulusController->resetDigitalStimulus();
+        }
+        if (!stimulusStatus.ok()) {
+            const ActionResult result = halFailure(
+                stimulusStatus, QStringLiteral("Unable to enter digital stimulus safe state"));
+            shutdown();
+            return result;
+        }
+        m_impl->snapshot.digitalStimulus = digitalStimulusSnapshot(
+            m_impl->stimulusController->state());
+    }
+
     const QVariantMap control = m_impl->halConfig.value(QStringLiteral("control")).toMap();
     const QString deviceId = control.value(QStringLiteral("deviceId")).toString().trimmed();
     const auto opened = m_impl->hal->openDevice(deviceId, hwtest::hal::OperationOptions{});
@@ -479,9 +658,9 @@ ActionResult TestApplicationController::prepare()
         shutdown();
         return result;
     }
-    m_impl->sessionId = opened.value;
+    m_impl->dutSessionId = opened.value;
 
-    const auto device = m_impl->hal->device(m_impl->sessionId);
+    const auto device = m_impl->hal->device(m_impl->dutSessionId);
     if (!device.ok() || device.value == nullptr) {
         const ActionResult result = device.ok()
             ? failure(QStringLiteral("hal_device"), QStringLiteral("HAL returned a null device"))
@@ -493,45 +672,9 @@ ActionResult TestApplicationController::prepare()
 
     auto transport = std::make_unique<hwtest::algorithm::mbddf::HalControlTransport>(
         m_impl->device, m_impl->snapshot.controlResourceId);
-    if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.system_status")) {
-        m_impl->executor = std::make_unique<
-            hwtest::algorithm::mbddf::SystemStatusAlgorithmExecutor>(std::move(transport));
-    } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.elec_health_status")) {
-        m_impl->executor = std::make_unique<
-            hwtest::algorithm::mbddf::ElecHealthStatusAlgorithmExecutor>(std::move(transport));
-    } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.memperf")) {
-        m_impl->executor = std::make_unique<
-            hwtest::algorithm::mbddf::MbdDfExchangeAlgorithmExecutor>(
-                std::move(transport),
-                QStringLiteral("mbddf.memperf"),
-                QStringLiteral("memperf_test_request"),
-                QStringLiteral("memperf_test_response"),
-                QStringLiteral("MEMPERF_TEST"));
-    } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.spi_flash")) {
-        m_impl->executor = std::make_unique<
-            hwtest::algorithm::mbddf::MbdDfExchangeAlgorithmExecutor>(
-                std::move(transport),
-                QStringLiteral("mbddf.spi_flash"),
-                QStringLiteral("spi_flash_test_request"),
-                QStringLiteral("spi_flash_test_response"),
-                QStringLiteral("SPI_FLASH_TEST"));
-    } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.dh_pulse_config")) {
-        m_impl->executor = std::make_unique<
-            hwtest::algorithm::mbddf::MbdDfExchangeAlgorithmExecutor>(
-                std::move(transport),
-                QStringLiteral("mbddf.dh_pulse_config"),
-                QStringLiteral("dh_pulse_config_request"),
-                QStringLiteral("dh_pulse_config_response"),
-                QStringLiteral("DH_PULSE_CONFIG"));
-    } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.timer_jitter")) {
-        m_impl->executor = std::make_unique<
-            hwtest::algorithm::mbddf::MbdDfExchangeAlgorithmExecutor>(
-                std::move(transport),
-                QStringLiteral("mbddf.timer_jitter"),
-                QStringLiteral("timer_jitter_start_request"),
-                QStringLiteral("timer_jitter_start_response"),
-                QStringLiteral("TIMER_JITTER_START"));
-    } else {
+    m_impl->executor = createMbdDfExecutor(m_impl->selectedAlgorithmId,
+                                           std::move(transport));
+    if (!m_impl->executor) {
         const ActionResult result = failure(QStringLiteral("unsupported_algorithm"),
                                             QStringLiteral("Unsupported MB_DDF algorithm '%1'")
                                                 .arg(m_impl->selectedAlgorithmId));
@@ -841,11 +984,38 @@ ActionResult TestApplicationController::stop(int timeoutMs)
     }
     const QString stoppedTaskId = m_impl->snapshot.taskId;
     m_impl->suppressedResultTaskId = stoppedTaskId;
+    QElapsedTimer stopTimer;
+    stopTimer.start();
     const hwtest::biz::Status status = m_impl->runner->stopTest(timeoutMs);
     if (!status.ok() && m_impl->suppressedResultTaskId == stoppedTaskId) {
         m_impl->suppressedResultTaskId.clear();
     }
-    return status.ok() ? ActionResult{} : bizFailure(status, QStringLiteral("Unable to stop test"));
+    hwtest::hal::HalStatus safe;
+    if (m_impl->stimulusController) {
+        safe = m_impl->stimulusController->resetDigitalStimulus();
+        m_impl->snapshot.digitalStimulus = digitalStimulusSnapshot(
+            m_impl->stimulusController->state());
+        emit snapshotChanged(m_impl->snapshot);
+    }
+    if (!status.ok()) {
+        return bizFailure(status, QStringLiteral("Unable to stop test"));
+    }
+    ActionResult terminal;
+    if (m_impl->snapshot.phase != QStringLiteral("stopped") &&
+        m_impl->snapshot.phase != QStringLiteral("finished") &&
+        m_impl->snapshot.phase != QStringLiteral("error")) {
+        const qint64 remaining = static_cast<qint64>(timeoutMs) - stopTimer.elapsed();
+        terminal = waitForTerminal(static_cast<int>(std::max<qint64>(1, remaining)));
+    }
+    if (!terminal.ok) {
+        return terminal;
+    }
+    if (!safe.ok()) {
+        return halFailure(
+            safe,
+            QStringLiteral("Test stopped but digital stimulus could not return to safe state"));
+    }
+    return {};
 }
 
 ActionResult TestApplicationController::stopAsync(int timeoutMs)
@@ -891,11 +1061,26 @@ ActionResult TestApplicationController::stopAsync(int timeoutMs)
                         }
                         m_impl->asyncStopInProgress = false;
                         if (generation == m_impl->generation) {
-                            if (!result.ok &&
+                            ActionResult completion = result;
+                            if (!completion.ok &&
                                 m_impl->suppressedResultTaskId == stoppedTaskId) {
                                 m_impl->suppressedResultTaskId.clear();
                             }
-                            emit stopCompleted(result);
+                            if (m_impl->stimulusController) {
+                                const hwtest::hal::HalStatus safe =
+                                    m_impl->stimulusController->resetDigitalStimulus();
+                                m_impl->snapshot.digitalStimulus =
+                                    digitalStimulusSnapshot(
+                                        m_impl->stimulusController->state());
+                                emit snapshotChanged(m_impl->snapshot);
+                                if (!safe.ok() && completion.ok) {
+                                    completion = halFailure(
+                                        safe,
+                                        QStringLiteral(
+                                            "Test stopped but digital stimulus could not return to safe state"));
+                                }
+                            }
+                            emit stopCompleted(completion);
                         }
                     },
                     Qt::QueuedConnection);
@@ -995,6 +1180,51 @@ ActionResult TestApplicationController::waitForTerminal(int timeoutMs)
     return terminalResult();
 }
 
+ActionResult TestApplicationController::setDigitalStimulus(const QString& switchId,
+                                                            bool active,
+                                                            quint64 expectedRevision)
+{
+    if (!onAffinityThread(this)) return affinityFailure();
+    if (!stimulusActionPhase(m_impl->snapshot.phase) ||
+        !m_impl->stimulusController) {
+        return failure(QStringLiteral("invalid_state"),
+                       QStringLiteral("Digital stimulus is only available after DI preparation"));
+    }
+    const hwtest::hal::HalStatus status =
+        m_impl->stimulusController->setDigitalStimulus(
+            switchId.trimmed(), active, expectedRevision);
+    m_impl->snapshot.digitalStimulus = digitalStimulusSnapshot(
+        m_impl->stimulusController->state());
+    if (!status.ok()) {
+        m_impl->snapshot.digitalStimulus.errorCode = hwtest::hal::toString(status.code);
+        m_impl->snapshot.digitalStimulus.message = status.error.message;
+    }
+    emit snapshotChanged(m_impl->snapshot);
+    return status.ok() ? ActionResult{}
+                       : halFailure(status, QStringLiteral("Unable to set digital stimulus"));
+}
+
+ActionResult TestApplicationController::resetDigitalStimulus()
+{
+    if (!onAffinityThread(this)) return affinityFailure();
+    if (!stimulusActionPhase(m_impl->snapshot.phase) ||
+        !m_impl->stimulusController) {
+        return failure(QStringLiteral("invalid_state"),
+                       QStringLiteral("Digital stimulus is only available after DI preparation"));
+    }
+    const hwtest::hal::HalStatus status =
+        m_impl->stimulusController->resetDigitalStimulus();
+    m_impl->snapshot.digitalStimulus = digitalStimulusSnapshot(
+        m_impl->stimulusController->state());
+    if (!status.ok()) {
+        m_impl->snapshot.digitalStimulus.errorCode = hwtest::hal::toString(status.code);
+        m_impl->snapshot.digitalStimulus.message = status.error.message;
+    }
+    emit snapshotChanged(m_impl->snapshot);
+    return status.ok() ? ActionResult{}
+                       : halFailure(status, QStringLiteral("Unable to reset digital stimulus"));
+}
+
 ActionResult TestApplicationController::shutdown()
 {
     if (!onAffinityThread(this)) {
@@ -1005,7 +1235,7 @@ ActionResult TestApplicationController::shutdown()
                        QStringLiteral("Cannot shut down while an asynchronous stop is active"));
     }
     if (!m_impl->latchedShutdownFailure.ok && !m_impl->runner && !m_impl->hal &&
-        !m_impl->executor) {
+        !m_impl->executor && !m_impl->stimulusController) {
         return m_impl->latchedShutdownFailure;
     }
     ++m_impl->generation;
@@ -1022,20 +1252,36 @@ ActionResult TestApplicationController::shutdown()
             firstFailure = bizFailure(status, QStringLiteral("Unable to shut down BIZ service"));
         }
     }
-    m_impl->logService.clearSinks();
-    if (m_impl->fileSink) {
-        m_impl->fileSink->flush();
-    }
-    m_impl->fileSink.reset();
     m_impl->runner.reset();
     m_impl->executor.reset();
 
     if (m_impl->hal) {
-        if (!m_impl->sessionId.isEmpty()) {
+        if (m_impl->stimulusController &&
+            m_impl->stimulusController->state().configured) {
+            const hwtest::hal::HalStatus safe =
+                m_impl->stimulusController->resetDigitalStimulus();
+            if (!safe.ok() && firstFailure.ok) {
+                firstFailure = halFailure(
+                    safe, QStringLiteral("Unable to reset digital stimulus during shutdown"));
+            }
+        }
+        m_impl->stimulusController.reset();
+        m_impl->stimulusDevice = nullptr;
+        if (!m_impl->stimulusSessionId.isEmpty()) {
             const hwtest::hal::HalStatus closed =
-                m_impl->hal->closeDevice(m_impl->sessionId, hwtest::hal::OperationOptions{});
+                m_impl->hal->closeDevice(m_impl->stimulusSessionId,
+                                         hwtest::hal::OperationOptions{});
             if (!closed.ok() && firstFailure.ok) {
-                firstFailure = halFailure(closed, QStringLiteral("Unable to close HAL device"));
+                firstFailure = halFailure(closed,
+                                          QStringLiteral("Unable to close stimulus device"));
+            }
+        }
+        if (!m_impl->dutSessionId.isEmpty()) {
+            const hwtest::hal::HalStatus closed =
+                m_impl->hal->closeDevice(m_impl->dutSessionId,
+                                         hwtest::hal::OperationOptions{});
+            if (!closed.ok() && firstFailure.ok) {
+                firstFailure = halFailure(closed, QStringLiteral("Unable to close DUT device"));
             }
         }
         const hwtest::hal::HalStatus shutDown = m_impl->hal->shutdown();
@@ -1043,13 +1289,22 @@ ActionResult TestApplicationController::shutdown()
             firstFailure = halFailure(shutDown, QStringLiteral("Unable to shut down HAL"));
         }
     }
+    m_impl->logService.clearSinks();
+    if (m_impl->fileSink) {
+        m_impl->fileSink->flush();
+    }
+    m_impl->fileSink.reset();
     m_impl->hal.reset();
-    m_impl->sessionId.clear();
+    m_impl->dutSessionId.clear();
+    m_impl->stimulusSessionId.clear();
     m_impl->device = nullptr;
+    m_impl->stimulusDevice = nullptr;
 
     m_impl->snapshot = {};
     if (configured) {
         m_impl->snapshot.descriptor = m_impl->descriptor;
+        m_impl->snapshot.digitalStimulus = digitalStimulusDescriptor(
+            m_impl->executionConfig);
     }
     if (!firstFailure.ok) {
         m_impl->latchedShutdownFailure = firstFailure;

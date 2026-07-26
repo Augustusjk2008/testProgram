@@ -1,5 +1,7 @@
 #include <app/frontend_launch_options.h>
 
+#include "mbddf_algorithm_registry.h"
+
 #include <biz/test_config_manager.h>
 
 #include <QCommandLineOption>
@@ -28,16 +30,6 @@ ActionResult failure(const QString& code, const QString& message)
     return ActionResult{false, code, message};
 }
 
-bool isSupportedAlgorithm(const QString& algorithmId)
-{
-    return algorithmId == QStringLiteral("mbddf.system_status") ||
-        algorithmId == QStringLiteral("mbddf.elec_health_status") ||
-        algorithmId == QStringLiteral("mbddf.memperf") ||
-        algorithmId == QStringLiteral("mbddf.spi_flash") ||
-        algorithmId == QStringLiteral("mbddf.dh_pulse_config") ||
-        algorithmId == QStringLiteral("mbddf.timer_jitter");
-}
-
 bool makeTestConfigOption(const QString& configPath,
                           FrontendTestConfigOption* output)
 {
@@ -56,7 +48,7 @@ bool makeTestConfigOption(const QString& configPath,
         if (!step.enabled) {
             continue;
         }
-        if (selectedStep != nullptr || !isSupportedAlgorithm(step.algorithmId)) {
+        if (selectedStep != nullptr || !isSupportedMbdDfAlgorithm(step.algorithmId)) {
             return false;
         }
         selectedStep = &step;

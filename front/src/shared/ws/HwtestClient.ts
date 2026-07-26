@@ -2,6 +2,9 @@ import type {
   ActionName,
   ApplicationSample,
   ApplicationSnapshot,
+  DigitalStimulusSnapshot,
+  DigitalSwitchDescriptor,
+  ReplyData,
   ReplyMessage,
   RunMode,
   ServerMessage,
@@ -10,7 +13,7 @@ import type {
   TestDescriptor,
   TestMeasurementDescriptor,
 } from '../protocol'
-import { EMPTY_TEST_DESCRIPTOR } from '../protocol'
+import { EMPTY_DIGITAL_STIMULUS, EMPTY_TEST_DESCRIPTOR } from '../protocol'
 
 type JsonObject = Record<string, unknown>
 
@@ -42,9 +45,38 @@ function requiredNumber(parent: JsonObject, key: string): number {
   return value
 }
 
+function requiredSafeInteger(
+  parent: JsonObject,
+  key: string,
+  minimum = 0,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
+  const value = parent[key]
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`Invalid protocol field: ${key}`)
+  }
+  return value
+}
+
 function requiredBoolean(parent: JsonObject, key: string): boolean {
   const value = parent[key]
   if (typeof value !== 'boolean') {
+    throw new Error(`Invalid protocol field: ${key}`)
+  }
+  return value
+}
+
+function requiredNonEmptyString(parent: JsonObject, key: string): string {
+  const value = requiredString(parent, key)
+  if (!value.trim()) {
+    throw new Error(`Invalid protocol field: ${key}`)
+  }
+  return value
+}
+
+function requiredDigitalLevel(parent: JsonObject, key: string): DigitalSwitchDescriptor['activeLevel'] {
+  const value = requiredString(parent, key)
+  if (value !== 'High' && value !== 'Low') {
     throw new Error(`Invalid protocol field: ${key}`)
   }
   return value
@@ -108,13 +140,72 @@ export function parseTestConfigCatalog(value: JsonObject): TestConfigCatalog {
   }
 }
 
+function emptyDigitalStimulus(): DigitalStimulusSnapshot {
+  return { ...EMPTY_DIGITAL_STIMULUS, switches: [] }
+}
+
+function parseDigitalStimulus(value: JsonObject): DigitalStimulusSnapshot {
+  try {
+    const switchesValue = value.switches
+    if (!Array.isArray(switchesValue) || switchesValue.length > 64) {
+      throw new Error('switches')
+    }
+
+    const switchIds = new Set<string>()
+    const dutBits = new Set<number>()
+    const switches: DigitalSwitchDescriptor[] = switchesValue.map((item) => {
+      if (!isObject(item)) throw new Error('switch')
+      const switchId = requiredNonEmptyString(item, 'switchId')
+      const dutBit = requiredSafeInteger(item, 'dutBit', 0, 63)
+      const label = requiredNonEmptyString(item, 'label')
+      const activeLevel = requiredDigitalLevel(item, 'activeLevel')
+      if (switchIds.has(switchId) || dutBits.has(dutBit)) {
+        throw new Error('duplicate switchId or dutBit')
+      }
+      switchIds.add(switchId)
+      dutBits.add(dutBit)
+      return { switchId, dutBit, label, activeLevel }
+    })
+
+    return {
+      available: requiredBoolean(value, 'available'),
+      configured: requiredBoolean(value, 'configured'),
+      switches,
+      appliedMask: requiredSafeInteger(value, 'appliedMask'),
+      revision: requiredSafeInteger(value, 'revision'),
+      lastWriteTimestampUs: requiredSafeInteger(value, 'lastWriteTimestampUs'),
+      settlingMs: requiredSafeInteger(value, 'settlingMs', 0, 60_000),
+      errorCode: requiredString(value, 'errorCode'),
+      message: requiredString(value, 'message'),
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid protocol digitalStimulus: ${detail}`)
+  }
+}
+
+function parseReplyData(value: JsonObject): ReplyData {
+  const data: ReplyData = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (key !== 'digitalStimulus') data[key] = item
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'digitalStimulus')) {
+    data.digitalStimulus = parseDigitalStimulus(requiredObject(value, 'digitalStimulus'))
+  }
+  return data
+}
+
 function parseSnapshot(value: JsonObject): ApplicationSnapshot {
   const descriptorValue = value.descriptor
+  const digitalStimulus = Object.prototype.hasOwnProperty.call(value, 'digitalStimulus')
+    ? parseDigitalStimulus(requiredObject(value, 'digitalStimulus'))
+    : emptyDigitalStimulus()
   return {
     ...(value as unknown as ApplicationSnapshot),
     descriptor: descriptorValue === undefined
       ? EMPTY_TEST_DESCRIPTOR
       : parseDescriptor(requiredObject(value, 'descriptor')),
+    digitalStimulus,
   }
 }
 
@@ -176,7 +267,7 @@ export function parseServerMessage(text: string): ServerMessage {
       ok: parsed.ok,
       code: requiredString(parsed, 'code'),
       message: requiredString(parsed, 'message'),
-      data: requiredObject(parsed, 'data'),
+      data: parseReplyData(requiredObject(parsed, 'data')),
     }
   }
   throw new Error(`Unsupported protocol message type: ${parsed.type}`)
@@ -202,6 +293,18 @@ export type ClientEvent =
   | { type: 'message'; message: ServerMessage }
 
 type Listener = (event: ClientEvent) => void
+
+function replyIdFromMalformedMessage(text: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (isObject(parsed) && parsed.v === 1 && parsed.type === 'reply' && typeof parsed.id === 'string') {
+      return parsed.id
+    }
+  } catch {
+    // The original parser reports malformed JSON through the connection event.
+  }
+  return null
+}
 
 export class HwtestClient {
   private socket: WebSocket | null = null
@@ -274,12 +377,22 @@ export class HwtestClient {
       }
       this.emit({ type: 'message', message })
     } catch (error) {
+      const protocolError = error instanceof Error ? error : new Error(String(error))
+      const replyId = replyIdFromMalformedMessage(text)
+      if (replyId) this.rejectPendingReply(replyId, protocolError)
       this.emit({
         type: 'connection',
         state: 'error',
-        detail: error instanceof Error ? error.message : String(error),
+        detail: protocolError.message,
       })
     }
+  }
+
+  private rejectPendingReply(id: string, error: Error): void {
+    const pending = this.pending.get(id)
+    if (!pending) return
+    this.pending.delete(id)
+    pending.reject(error)
   }
 
   private rejectPending(error: Error): void {

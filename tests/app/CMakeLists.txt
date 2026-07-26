@@ -40,6 +40,8 @@ file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_elec_health.testcfg.json
      HWTEST_APP_ELEC_HEALTH_CONFIG)
 file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_pc_hal.json"
      HWTEST_APP_HAL_CONFIG)
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_di.testcfg.json"
+     HWTEST_APP_DI_CONFIG)
 
 target_compile_features(hwtest_app_tests PRIVATE cxx_std_17)
 
@@ -48,6 +50,8 @@ target_compile_definitions(hwtest_app_tests
         HWTEST_APP_TEST_CONFIG="${HWTEST_APP_TEST_CONFIG}"
         HWTEST_APP_ELEC_HEALTH_CONFIG="${HWTEST_APP_ELEC_HEALTH_CONFIG}"
         HWTEST_APP_HAL_CONFIG="${HWTEST_APP_HAL_CONFIG}"
+        HWTEST_APP_DI_CONFIG="${HWTEST_APP_DI_CONFIG}"
+        HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH="$<TARGET_FILE:hal_adapter_digital_fixture>"
         HWTEST_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )
 
@@ -65,6 +69,7 @@ target_link_libraries(hwtest_app_tests
 )
 
 add_dependencies(hwtest_app_tests
+    hal_adapter_digital_fixture
     hwtest_pc_runner
     hwtest_tui
 )

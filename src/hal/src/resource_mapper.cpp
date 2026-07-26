@@ -25,6 +25,7 @@ bool ResourceMapper::load(const QVariantMap& halConfig)
     m_bindings.clear();
     m_deviceIndexById.clear();
     m_safeState.clear();
+    m_errorString.clear();
 
     const QVariantMap hardwareMap = halConfig.value(QStringLiteral("hardware")).toMap();
     const QVariantList deviceList = hardwareMap.value(QStringLiteral("devices")).toList();
@@ -34,13 +35,69 @@ bool ResourceMapper::load(const QVariantMap& halConfig)
     for (int index = 0; index < deviceList.size(); ++index) {
         const QVariantMap deviceMap = deviceList.at(index).toMap();
         DeviceDescriptor descriptor = parseDeviceDescriptor(deviceMap, index);
+        if (descriptor.deviceId.trimmed().isEmpty()) {
+            m_errorString = QStringLiteral("hardware.devices[%1].alias must not be empty")
+                                .arg(index);
+            return false;
+        }
+        if (m_deviceIndexById.contains(descriptor.deviceId)) {
+            m_errorString = QStringLiteral("Duplicate hardware device alias '%1'")
+                                .arg(descriptor.deviceId);
+            return false;
+        }
         m_deviceIndexById.insert(descriptor.deviceId, m_devices.size());
         m_devices.push_back(descriptor);
         deviceLookup.insert(descriptor.deviceId, deviceMap);
     }
 
+    QHash<QString, ResourceId> physicalChannels;
     for (auto it = resourceMap.constBegin(); it != resourceMap.constEnd(); ++it) {
-        const ResourceBinding binding = parseResourceBinding(it.key(), it.value().toMap(), deviceLookup);
+        ResourceBinding binding = parseResourceBinding(it.key(), it.value().toMap(), deviceLookup);
+        if (binding.resourceId.trimmed().isEmpty()) {
+            m_errorString = QStringLiteral("Hardware resource id must not be empty");
+            return false;
+        }
+        if (binding.deviceId.isEmpty()) {
+            if (m_devices.size() == 1) {
+                binding.deviceId = m_devices.first().deviceId;
+            } else {
+                m_errorString = QStringLiteral("Resource '%1' must name a device when multiple devices are configured")
+                                    .arg(binding.resourceId);
+                return false;
+            }
+        }
+        const DeviceDescriptor descriptor = deviceDescriptor(binding.deviceId);
+        if (descriptor.deviceId.isEmpty()) {
+            m_errorString = QStringLiteral("Resource '%1' references unknown device '%2'")
+                                .arg(binding.resourceId, binding.deviceId);
+            return false;
+        }
+        if (binding.adapterId.isEmpty()) {
+            binding.adapterId = descriptor.adapterId;
+        } else if (binding.adapterId != descriptor.adapterId) {
+            m_errorString = QStringLiteral("Resource '%1' adapter '%2' does not match device adapter '%3'")
+                                .arg(binding.resourceId,
+                                     binding.adapterId,
+                                     descriptor.adapterId);
+            return false;
+        }
+        if (binding.module.trimmed().isEmpty() || binding.physicalIndex < 0) {
+            m_errorString = QStringLiteral("Resource '%1' requires a module and non-negative physicalIndex")
+                                .arg(binding.resourceId);
+            return false;
+        }
+        const QString physicalKey = QStringLiteral("%1\x1f%2\x1f%3\x1f%4")
+                                        .arg(binding.deviceId,
+                                             binding.module.trimmed().toLower(),
+                                             binding.direction.trimmed().toLower())
+                                        .arg(binding.physicalIndex);
+        if (physicalChannels.contains(physicalKey)) {
+            m_errorString = QStringLiteral("Resources '%1' and '%2' map the same physical channel")
+                                .arg(physicalChannels.value(physicalKey),
+                                     binding.resourceId);
+            return false;
+        }
+        physicalChannels.insert(physicalKey, binding.resourceId);
         m_bindings.push_back(binding);
     }
 
@@ -74,6 +131,11 @@ bool ResourceMapper::load(const QVariantMap& halConfig)
     }
 
     return true;
+}
+
+QString ResourceMapper::errorString() const
+{
+    return m_errorString;
 }
 
 QVector<DeviceDescriptor> ResourceMapper::devices() const
@@ -169,20 +231,12 @@ ResourceBinding ResourceMapper::parseResourceBinding(const QString& resourceId,
     ResourceBinding binding;
     binding.resourceId = resourceId;
     binding.deviceId = readString(resourceMap, QStringLiteral("device"));
-    binding.adapterId = readString(resourceMap, QStringLiteral("adapterId"), QStringLiteral("mock.adapter.v1"));
+    binding.adapterId = readString(resourceMap, QStringLiteral("adapterId"));
     binding.module = readString(resourceMap, QStringLiteral("module"));
     binding.direction = readString(resourceMap, QStringLiteral("direction"), QStringLiteral("bidirectional"));
     binding.physicalIndex = readInt(resourceMap, QStringLiteral("physicalIndex"), 0);
     binding.properties = resourceMap.value(QStringLiteral("properties")).toMap();
     binding.providerId = readString(resourceMap, QStringLiteral("providerId"));
-
-    if (!deviceLookup.contains(binding.deviceId) && !deviceLookup.isEmpty()) {
-        binding.deviceId = deviceLookup.constBegin().key();
-    }
-
-    if (binding.adapterId.isEmpty()) {
-        binding.adapterId = QStringLiteral("mock.adapter.v1");
-    }
 
     return binding;
 }

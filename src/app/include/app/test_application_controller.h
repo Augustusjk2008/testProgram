@@ -65,6 +65,25 @@ struct TestDescriptor {
     QVector<TestMeasurementDescriptor> measurements;
 };
 
+struct DigitalSwitchDescriptor {
+    QString switchId;
+    int dutBit = -1;
+    QString label;
+    QString activeLevel;
+};
+
+struct DigitalStimulusSnapshot {
+    bool available = false;
+    bool configured = false;
+    QVector<DigitalSwitchDescriptor> switches;
+    quint64 appliedMask = 0;
+    quint64 revision = 0;
+    qint64 lastWriteTimestampUs = 0;
+    int settlingMs = 0;
+    QString errorCode;
+    QString message;
+};
+
 struct ApplicationSnapshot {
     QString phase = QStringLiteral("empty");
     QString testState = QStringLiteral("Uninitialized");
@@ -89,6 +108,7 @@ struct ApplicationSnapshot {
     quint64 cycleIndex = 0;
     quint64 sampleCount = 0;
     TestDescriptor descriptor;
+    DigitalStimulusSnapshot digitalStimulus;
 };
 
 class TestApplicationController final : public QObject {
@@ -115,6 +135,10 @@ public:
     // Completion is reported by stopCompleted on this object's affinity thread.
     ActionResult stopAsync(int timeoutMs = 5000);
     ActionResult waitForTerminal(int timeoutMs = -1);
+    ActionResult setDigitalStimulus(const QString& switchId,
+                                    bool active,
+                                    quint64 expectedRevision);
+    ActionResult resetDigitalStimulus();
     ActionResult shutdown();
     ApplicationSnapshot snapshot() const;
 
@@ -137,4 +161,6 @@ Q_DECLARE_METATYPE(hwtest::app::SerialPortInfo)
 Q_DECLARE_METATYPE(hwtest::app::TestDescriptor)
 Q_DECLARE_METATYPE(hwtest::app::TestMeasurementDescriptor)
 Q_DECLARE_METATYPE(hwtest::app::TestRunOptions)
+Q_DECLARE_METATYPE(hwtest::app::DigitalSwitchDescriptor)
+Q_DECLARE_METATYPE(hwtest::app::DigitalStimulusSnapshot)
 Q_DECLARE_METATYPE(QVector<hwtest::app::SerialPortInfo>)

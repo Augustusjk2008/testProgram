@@ -33,7 +33,15 @@
        -> qt.udp -> QUdpSocket
 ```
 
-该路由只覆盖 `module = "control"` 的资源，Qt 标准接口不经过 Vendor C ABI。其他现有资源仍走 `HalService -> CAbiAdapter -> MockAdapter`；因此不能描述为通用 Provider Router 已完成。TCP、控制通道 Mock Provider、Vendor Provider 和真实厂家 Adapter 尚未接入。
+该路由只覆盖 `module = "control"` 的资源，Qt 标准接口不经过 Vendor C ABI。非控制设备资源当前走另一条已实现的内部链路：
+
+```text
+HalService -> AdapterRouter（按设备 adapterId）
+           -> MockAdapter（mock.* / mock.adapter.v1）
+           -> CAbiAdapter -> 配置的外部 ABI v1 DLL
+```
+
+`AdapterRouter` 只在首次 `openDevice()` 时构造并初始化该设备的后端；同一 Adapter 的最后一个会话关闭后调用后端 `shutdown()` 并释放实例。它不是控制通道的通用 `providerId` Router。TCP、控制通道 Mock Provider、控制通道通用 Router 和其他厂家 SDK Adapter 仍未接入；`hwtest_adapter_ni_daqmx` 已是可选的原生 ABI v1 后端，但源码/CMake/Fake 证据不等于真实设备证据。
 
 职责分配：
 
@@ -73,10 +81,10 @@
 
 ### 2.1 `IHalService` 语义
 
-- `initialize(const QVariantMap&)`：加载资源、安全配置并创建既有 `CAbiAdapter` 会话后端；控制资源的 `providerId` 在首次打开时由 `ControlChannelManager` 解析。
+- `initialize(const QVariantMap&)`：加载资源、安全配置，验证多设备资源映射并登记 `AdapterRouter` 条目；不加载厂商 DLL。控制资源的 `providerId` 在首次打开时由 `ControlChannelManager` 解析。
 - `scanDevices()` / `queryCapabilities()`：返回 HAL 归一化描述。当前结果来自 `ResourceMapper` 配置，不是物理扫描。
-- `openDevice()`：返回 `SessionId`；连接及底层 handle 归 HAL 所有。
-- `closeDevice()` / `shutdown()`：先尽力执行物理安全态并关闭连接，再释放后端；不得构造产品协议停机命令。
+- `openDevice()`：按目标设备 `adapterId` 惰性取得/初始化后端，返回全局不冲突的公开 `SessionId`；连接、底层 handle 和 Adapter 租约归 HAL 所有。
+- `closeDevice()` / `shutdown()`：先尽力执行物理安全态并关闭连接，再释放相应 Adapter 租约/后端；不得构造产品协议停机命令。
 - `device(sessionId)`：返回受该 HAL 会话生命周期约束的聚合设备接口。
 
 ### 2.2 原始通讯语义
@@ -150,7 +158,7 @@ ResourceId
 
 可运行配置见 `configs/mbddf_pc_hal.json`。PC 端通过 `control.resourceId` 在同一份配置中的串口和 UDP 资源之间选择；这只是 PC 每次运行前的选择，不向 DUT 发送“切换控制口”命令。远端 IP/端口属于部署事实，不从 MB_DDF 板端网口自环测试地址推断。
 
-通用 Router、Provider 级设备扫描、`Mock Provider`、`Vendor Adapter Provider` 和 TCP 仍是目标能力。当前设备 `adapterId` 仍用于建立兼容会话，不能与控制资源 `providerId` 混为一谈。
+控制通道的通用 Router、Provider 级设备扫描、`Mock Provider`、TCP 和其他厂家 SDK Provider 仍是目标能力。当前设备 `adapterId` 已用于选择惰性多 Adapter 后端，仍不能与控制资源 `providerId` 混为一谈；`ni.daqmx` 已有可选原生 Adapter，其他厂家 SDK Provider 仍未实现。
 
 HAL 部署配置与 BIZ 的产品测试配置是不同边界：BIZ 新配置使用 `executionConfig` 向算法透传产品执行参数，不得把 Provider、SDK、物理端点或扫描结果塞入 `ProtocolProfile`、`ExchangeAction` 或协议 CSV。
 
@@ -167,6 +175,12 @@ HAL 对外只接受逻辑资源 ID，并负责：
 - 在关闭、停止或异常路径按策略进入物理安全态。
 
 HAL 可以转换工程单位和厂家单位，但不得把产品字段转换或测试阈值判定伪装成硬件归一化。
+
+`[当前实现]` `ResourceMapper` 拒绝重复设备 alias；多设备配置中的每个资源必须显式指定已知设备，资源缺省 `adapterId` 时继承设备值，显式值不一致会失败；同一设备、模块、方向和物理索引的重复映射也会失败。单设备未声明 `device` 的既有配置仍兼容。
+
+`[当前实现]` `HalDevice::close()` 在关闭底层设备前尽力应用安全态。对于同一 HAL 设备的已配置数字输出，HAL 先按 `physicalIndex` 汇总，再只调用一次底层 `writeDigitalBatch()`；模拟输出、串口和 CAN 仍按各自资源处理。这是 HAL 批处理语义，不承诺厂商 Adapter 已按端口 bank 实现原子整幅写入，也不构成物理安全验收。
+
+`[当前实现]` 可选 `hwtest_adapter_ni_daqmx` 在厂商边界进一步按 `portNumber`、方向和连续 `lineNumber` 分组，使用 `DAQmxCreateDOChan`/`DAQmxCreateDIChan` 的 `ChanForAllLines` task，并用 `DAQmxWriteDigitalU32`/`DAQmxReadDigitalU32` 读写完整配置线段。打开、ABI reset 和关闭都会写安全 mask；关闭再 `DAQmxStopTask`/`DAQmxClearTask`，不调用会影响整卡其他任务的 `DAQmxResetDevice`。这条 NI 语义目前只有 Fake SDK 自动化证据。
 
 目标生命周期：
 
@@ -208,11 +222,15 @@ int HAL_ADAPTER_CALL hal_adapter_get_api_v1(const HalAdapterHostApiV1* host,
 
 当前 ABI 版本为 `HAL_ADAPTER_ABI_VERSION == 1`。函数表覆盖设备生命周期、模拟量、数字量、串口和 CAN/CANFD 操作。
 
+`[当前实现]` `CAbiAdapter` 通过 `AdapterLoader`/`QLibrary` 解析 `hal_adapter_get_api_v1`，校验 ABI 版本及函数表 `structSize`，并实际调用外部 DLL 的初始化、设备生命周期、能力、模拟/数字、串口和 CAN 函数。缺失函数指针返回 `NotSupported`；厂家状态码、原始 code 和诊断文本按现有 `HalStatusCode` 归一化并保留。它不再委托 `MockAdapter`。`IHalService::scanDevices()` 和 `queryCapabilities()` 当前仍返回配置映射，不是通过已加载 DLL 动态发现。
+
 兼容规则：
 
 - C ABI 只使用固定宽度整数、POD、opaque handle 和调用方分配缓冲区；
 - 字符串为 UTF-8 且以 `\0` 结尾；
 - 阻塞函数必须尊重传入的 `timeoutMs`；
+- `closeDevice` 一经调用即消费 opaque device handle；即使安全写、Stop/Clear 或其他清理返回错误，宿主也必须移除会话且不得用同一 handle 二次关闭；
+- 当前 `CAbiAdapter` 在进程内以递归互斥串行化同一 Adapter 实例的 ABI 调用，避免 I/O 与 close/shutdown 并发进入 DLL；
 - 不支持的函数指针可为 `nullptr`，HAL 调用前返回 `NotSupported`；
 - 新函数只能追加到函数表尾部，并以 `structSize` 判断兼容；
 - 改变已有字段语义必须升级 ABI 主版本。
@@ -220,6 +238,12 @@ int HAL_ADAPTER_CALL hal_adapter_get_api_v1(const HalAdapterHostApiV1* host,
 该 ABI 只服务 Vendor Adapter Provider。Qt Provider 和 Mock Provider 为进程内实现，不经过此 ABI。
 
 当前 Adapter 状态码映射保持兼容；其中 `HAL_ADAPTER_PROTOCOL_ERROR` 只有在厂家明确说明为传输层错误时才映射 `ProtocolError`，否则使用 `AdapterError` 并保留厂家码。
+
+`[当前实现]` 仓库有 `src/adapters/ni_daqmx/` 原生 Adapter。根 CMake 的 `HWTEST_ENABLE_NI_DAQMX` 默认关闭；开启时先使用显式 `NI_DAQMX_INCLUDE_DIR`/`NI_DAQMX_LIBRARY`，未提供时通过 `find_path`/`find_library` 搜索 `NIDAQmx.h` 和 `NIDAQmx`/`nicaiu` 导入库，仍缺任一项则配置失败，并生成共享 DLL `hwtest_adapter_ni_daqmx`。它导出 `hal_adapter_get_api_v1`，可经 `AdapterRouter -> CAbiAdapter` 由 `providerId = vendor.cabi` 加载。
+
+该 Adapter 只声明数字模块；未填充的模拟量、串口、CAN ABI 槽位由通用 C ABI 层返回 `NotSupported`。一个 `ni.daqmx` Adapter 实例只允许一个逻辑/物理 NI 设备，`hardware.devices` 的型号/序列号必须与 `settings` 一致，所有数字资源必须属于该设备。初始化时通过 `DAQmxGetSysDevNames`、`DAQmxGetDevProductType`、`DAQmxGetDevSerialNum` 核验配置的 `deviceName`、产品型号和十进制/十六进制序列号；配置还要求数字资源的物理索引和端口/线唯一、每个端口方向组使用连续线范围、每个输出具有合法安全态，并按 USB-6259 拓扑限制 P0 为 0..31、P1/P2 为 0..7。DAQmx 错误会保留厂家码，并归一化超时、设备移除和未找到等状态。
+
+`[当前实现]` 因而“NI-DAQmx 路径已实现，但 USB-6259 真机未验收”是当前源码/CMake/测试注册事实。`configs/mbddf_pc_hal.json` 仍是部署模板：`libraryPath` 由 `HWTEST_NI_DAQMX_ADAPTER_PATH` 提供，序列号为 `CONFIGURE_ME`。在隔离台架填入真实 DLL、设备名、型号、序列号和接线前，不能把该路径写成已加载的 NI 驱动、已输出电平或已验收 USB-6259。
 
 ---
 
@@ -248,7 +272,11 @@ HAL 关键生命周期和 I/O 操作应产生结构化事件，至少可追踪�
 
 也可以使用标准 Provider 连接隔离模拟目标，但必须单独标为 Qt Provider 证据，不能冒充 HAL Mock 或真实硬件证据。
 
-当前保留直连 `SystemStatusSimulator` 的 golden 测试，并已有“算法 -> HAL -> `qt.udp` -> 本机隔离模拟目标”的 `SYSTEM_STATUS`/`ELEC_HEALTH_STATUS` 集成测试。后者证明 Qt UDP Provider 路径，但不是 HAL Mock Provider、真实网口或真实 DUT 证据。当前 `MockAdapter` 的串口 echo 和 CAN loopback 仍只证明基础原始 I/O。
+当前保留直连 `SystemStatusSimulator` 的 golden 测试，并已有“算法 -> HAL -> `qt.udp` -> 本机隔离模拟目标”的 `SYSTEM_STATUS`/`ELEC_HEALTH_STATUS` 集成测试。后者证明 Qt UDP Provider 路径，但不是 HAL Mock Provider、真实网口或真实 DUT 证据。`MockAdapter` 的串口 echo 和 CAN loopback 仍只证明基础原始 I/O。
+
+`[当前实现]` `hal_adapter_digital_fixture` 是仅供测试动态加载的通用 Fake ABI v1 DLL；另有把生产 NI Adapter 源码链接到 Fake NIDAQmx 的 `hal_adapter_ni_daqmx_fixture`，由真实 `AdapterLoader -> CAbiAdapter` 动态加载。`CAbiAdapterTest` 覆盖加载、逻辑 alias 到物理设备名映射、数字批量读写、厂家状态映射、缺失符号/函数、close 错误后的 handle 消费，以及 I/O/close 串行化；`HalServiceTest` 覆盖 Mock 与 Fake DLL 的多 Adapter 惰性路由；`ResourceMapperTest` 和 `HalDeviceTest` 分别锁定严格多设备映射、一次数字安全态批写及 close 错误后不二次关闭。
+
+`NiDaqmxAdapterFakeTest` 则把同一 `ni_daqmx_adapter.cpp` 链接仓库内 Fake `NIDAQmx` API，覆盖单设备/身份/USB-6259 端口边界、DO/DI 持久 task、物理通道字符串与 DAQmx layout、完整端口 mask、安全态、DI 读取、超时、设备移除、reset/close 收尾、close 失败后继续 Stop/Clear 且 shutdown 不二次释放，以及不调用 `DAQmxResetDevice`。它在 `BUILD_TESTING` 时注册为标签 `hal;adapter;ni_daqmx;fake` 的 CTest，不依赖已安装 NI SDK。两类 Fake 都不构成实际 USB-6259、接线、电平兼容、物理输出或物理安全态证据。
 
 完整测试分层、证据等级和真实硬件隔离要求见 [测试规范](../testing/testing-specification.md)。
 
@@ -258,13 +286,13 @@ HAL 关键生命周期和 I/O 操作应产生结构化事件，至少可追踪�
 
 | 能力 | 当前 | 目标验收 |
 | --- | --- | --- |
-| 后端选择 | 控制资源按 `providerId` 路由；其他资源固定 `CAbiAdapter -> MockAdapter` | 扩展为通用 Router |
+| 后端选择 | 控制资源按 `providerId` 路由；非控制设备按 `adapterId` 经 `AdapterRouter` 惰性选择 Mock 或配置的 C ABI DLL | 补控制通道通用 Router、Provider 扫描和更多已验收后端 |
 | Qt 串口 | `qt.serial` 已实现宿主端口枚举、配置、打开、原始读写和关闭；早期 COM3 到真实 MB_DDF_v2 的 SYSTEM_STATUS 单次/三周期 smoke 每周期有 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，SYSTEM_STATUS 与 ELEC_HEALTH_STATUS 均成功复测且后端诊断不再出现该警告 | 补自动化 hardware target，并完成长时、超时、拔插、运行中停止和物理收尾验收 |
 | UDP/TCP | `qt.udp` 已实现并有本机闭环；TCP 未实现 | 明确现场 UDP 端点；另行评审 TCP |
-| Vendor Adapter | Loader 和 ABI 已有，未接入调用链 | 真实 DLL 经 Vendor Provider 使用 ABI v1 |
+| Vendor Adapter | 通用 `CAbiAdapter` 已实际加载并调用 ABI v1；可选 `hwtest_adapter_ni_daqmx` 已实现数字 I/O 与端口 bank 批写；自动化使用动态 Fake DLL 与 Fake NIDAQmx | 补其他原生厂家 Adapter；USB-6259 真机验收与 `hardware` CTest 标签均未实现 |
 | 设备发现 | HAL 设备来自配置；宿主串口可独立只读枚举 | Provider 设备扫描并与配置 match |
 | deadline | 部分方法传递 timeout | 一次 HAL 操作共享总预算 |
 | 产品级 Mock | Simulator 绕过 HAL；另有 Qt UDP 隔离模拟目标 | 增加控制通道 Mock Provider 闭环 |
-| 生产安全 | 有基础 safeState | 异常、停止和关闭路径均有可验证物理收尾 |
+| 生产安全 | 关闭前尽力应用 safeState；同一设备数字输出合并为一次后端批写；close 错误仍消费会话并禁止二次释放；NI Adapter 对配置连续端口线段的完整 mask 和异常 close 仅由 Fake SDK/动态 Fake DLL 锁定 | 异常、停止和关闭路径均有可验证物理收尾；真实 USB-6259 和其他厂商端口语义另行验收 |
 
 在代码达到目标前，文档和测试报告必须继续保留“未实现”标记，不得以 Mock echo、Simulator 或已存在的接口声明替代实现证据。

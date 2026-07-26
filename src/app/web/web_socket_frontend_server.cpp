@@ -600,6 +600,68 @@ public:
         if (request.action == QStringLiteral("start")) {
             return parseStartOptions(request, nullptr, error);
         }
+        if (request.action == QStringLiteral("setDigitalStimulus")) {
+            static const QSet<QString> allowed{
+                QStringLiteral("switchId"),
+                QStringLiteral("active"),
+                QStringLiteral("expectedRevision"),
+            };
+            if (request.params.size() != allowed.size()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("setDigitalStimulus only accepts switchId, active and expectedRevision"));
+                }
+                return false;
+            }
+            for (auto it = request.params.constBegin();
+                 it != request.params.constEnd();
+                 ++it) {
+                if (!allowed.contains(it.key())) {
+                    if (error != nullptr) {
+                        *error = protocolError(
+                            QStringLiteral("invalid_envelope"),
+                            QStringLiteral("Unknown digital stimulus parameter '%1'").arg(it.key()));
+                    }
+                    return false;
+                }
+            }
+            if (!validateRequiredString(request,
+                                        QStringLiteral("switchId"),
+                                        error)) {
+                return false;
+            }
+            if (!request.params.value(QStringLiteral("active")).isBool()) {
+                if (error != nullptr) {
+                    *error = protocolError(QStringLiteral("invalid_envelope"),
+                                           QStringLiteral("Parameter 'active' must be a boolean"));
+                }
+                return false;
+            }
+            const QJsonValue revision = request.params.value(
+                QStringLiteral("expectedRevision"));
+            const double revisionValue = revision.toDouble();
+            if (!revision.isDouble() || !std::isfinite(revisionValue) ||
+                std::floor(revisionValue) != revisionValue ||
+                revisionValue < 0.0 || revisionValue > 9007199254740991.0) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'expectedRevision' must be a non-negative safe integer"));
+                }
+                return false;
+            }
+            return true;
+        }
+        if (request.action == QStringLiteral("resetDigitalStimulus") &&
+            !request.params.isEmpty()) {
+            if (error != nullptr) {
+                *error = protocolError(
+                    QStringLiteral("invalid_envelope"),
+                    QStringLiteral("resetDigitalStimulus does not accept parameters"));
+            }
+            return false;
+        }
         return true;
     }
 
@@ -695,9 +757,26 @@ public:
                     result = controllerGuard->pause();
                 } else if (request.action == QStringLiteral("resume")) {
                     result = controllerGuard->resume();
+                } else if (request.action == QStringLiteral("setDigitalStimulus")) {
+                    result = controllerGuard->setDigitalStimulus(
+                        request.params.value(QStringLiteral("switchId")).toString(),
+                        request.params.value(QStringLiteral("active")).toBool(),
+                        static_cast<quint64>(request.params
+                                                 .value(QStringLiteral("expectedRevision"))
+                                                 .toDouble()));
+                } else if (request.action == QStringLiteral("resetDigitalStimulus")) {
+                    result = controllerGuard->resetDigitalStimulus();
                 } else {
                     result = protocolError(QStringLiteral("unknown_action"),
                                            QStringLiteral("Action is not implemented"));
+                }
+
+                if (request.action == QStringLiteral("setDigitalStimulus") ||
+                    request.action == QStringLiteral("resetDigitalStimulus")) {
+                    data.insert(
+                        QStringLiteral("digitalStimulus"),
+                        digitalStimulusObject(
+                            controllerGuard->snapshot().digitalStimulus));
                 }
 
                 QMetaObject::invokeMethod(
