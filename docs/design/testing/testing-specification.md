@@ -14,16 +14,16 @@
 | --- | --- | ---: | ---: | --- |
 | tests/hal/ | hwtest_hal_tests | 9 | 31 | HAL 接口、资源、安全、Mock、Loader、宿主串口枚举、Qt 控制 Provider |
 | tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
-| tests/biz/ | hwtest_biz_tests | 6 | 40 | 配置、计划、单次/PC 周期/设备流调度、样本、报告和架构边界 |
+| tests/biz/ | hwtest_biz_tests | 6 | 41 | 配置、计划、单次/PC 周期/设备流调度、Qt 工作线程、样本、报告和架构边界 |
 | tests/algorithm/ | hwtest_algorithm_tests | 2 | 21 | MB_DDF CSV、流式控制传输、SYSTEM_STATUS 和设备流能力判定 |
 | tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 78 | 共享启动/控制器、TUI/GUI/WebSocket、连续运行样本、异步停止与关闭、跨前端等价性、架构边界及经 HAL/Qt UDP 的闭环 |
-| 合计 | 7 个目标 | 28 | 177 | 当前源级 GoogleTest 清单 |
+| 合计 | 7 个目标 | 28 | 178 | 当前源级 GoogleTest 清单 |
 
-177 是当前测试源码中的 GoogleTest 定义数。完整构建后的 CTest 清单为 187 条：177 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试。2026-07-26 的 Debug 构建后 `ctest -N` 实际列出 187 条；清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
+178 是当前测试源码中的 GoogleTest 定义数。完整构建后的 CTest 清单为 188 条：178 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试。2026-07-26 的 Debug 构建后 `ctest -N` 实际列出 188 条；清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
 
 28 个测试定义源文件使用 `*_test.cpp` 命名。两个 HAL DLL fixture、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含测试定义，不计入该数量。
 
-浏览器前端当前有 3 个 `*.test.ts` 文件、9 条 Vitest，用于协议解析/请求、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组。它们由 `npm test` 独立运行，不计入上述 187 条 CTest。
+浏览器前端当前有 3 个 `*.test.ts` 文件、9 条 Vitest，用于协议解析/请求、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组。它们由 `npm test` 独立运行，不计入上述 188 条 CTest。
 
 ## 2. 当前覆盖与条件资产
 
@@ -31,7 +31,7 @@
 | --- | --- | --- |
 | HAL | 错误映射、资源映射、安全校验、会话、Mock AD/DA、DI/DO、宿主串口枚举、串口 echo、CANFD loopback、AdapterLoader fixture、控制资源路由、Qt UDP 回环和 timeout | 自动化测试中的串口枚举不打开设备；Qt UDP 仅是本机 Provider 证据；COM3 实机结果属于下述独立手工 smoke，不是默认 CTest 或厂家 SDK 证据 |
 | 日志 | LogService、JsonLineFileSink、HalLogEvent 到 LogEvent 桥接 | 不覆盖 UI 或真实设备日志链 |
-| BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
+| BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、专用 QThread 的 event dispatcher/计时器注册、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象；Qt 线程回归只证明同步任务具备 Qt dispatcher，不证明算法调用期间持续泵送事件、HAL actor 或跨线程取消；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
 | 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器及 Qt UDP 成功/超时/坏 CRC 路径、SYSTEM_STATUS 拒绝设备流 | 当前只实现 mbddf.system_status；本机 UDP 模拟目标不等同于真实板端通讯；拒绝设备流不证明其他算法已实现设备持续回告 |
 | 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、控制资源与会话串口选择、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | 默认自动化中的串口选择只证明配置覆盖；下述 COM3 实机 smoke 独立于 CTest，不能外推到真实网口、其他 DUT 或长期稳定性 |
 | 浏览器前端 | Vitest 下的类型化协议、有界数据结构、字段发现、时间窗、降采样和图组；TypeScript/Vite 生产构建 | 不替代 WebSocket/UDP C++ 集成测试，也不证明真实硬件、长期浏览器稳定性或设备流算法 |
@@ -52,8 +52,15 @@
 - 板端通过 `/dev/xdma0` 的 COM3 窗口和 event 2 运行产品协议服务；PC 端使用 `COM3`、`614400 / 8E1 / 无流控`。宿主只启动 `hwtest_web`，未启动浏览器前端，并通过 WebSocket 手工发送 `load -> prepare -> start -> quit`。
 - 单次 SYSTEM_STATUS 到达 `finished`，结果为 `Pass/Ok`，`status=0`、`err_code=0`，收到一个 `SYSTEM_STATUS` 样本。随后 `pc_periodic` 以 `intervalMs=100`、`maxCycles=3` 完成三轮，轮次为 `1,2,3`，快照和客户端均收到三个样本，最终仍为 `Pass/Ok`。
 - 三轮最后一次解码值包括 CPU 小/大核频率 `1704/2016 MHz`、CPU/RK/K7 温度 `37/37/43 C`、内存占用约 `3.6435%`、PCIe `5 GT/s x4`、上电时间 `1158 s`。这些是一次运行观测值，不是产品阈值或稳定性基线。
-- 风险：连接和 `prepare` 阶段无 Qt 警告，但三个实际串口周期在同一 BIZ 工作线程各产生一次 `QObject::startTimer: Timers can only be used with threads started with QThread`。本次字节交互仍成功；在修正线程模型并完成长时、超时、拔插、停止与物理安全收尾前，不得把该 smoke 写成生产验收。
+- 当次风险：连接和 `prepare` 阶段无 Qt 警告，但三个实际串口周期在同一 BIZ 工作线程各产生一次 `QObject::startTimer: Timers can only be used with threads started with QThread`。当次字节交互仍成功，但线程模型当时尚未修正；当前修复与复核状态见 2.2。长时、超时、拔插、停止与物理安全收尾完成前，不得把该 smoke 写成生产验收。
 - 同一来源提交的 `HW_TEST Release` 和完整 `MB_DDF_HW_Tests` 目标交叉构建通过；更新提交新增的 `HwXdmaTransport.WaitEventReportsReadinessWithoutReadingEventFd` 已部署到同一目标板并通过。测试结束后宿主后端和板端产品协议服务均已停止。
+
+### 2.2 2026-07-26 QThread 修复后复核
+
+- `TestRunService` 的任务 worker 已从原生 `std::thread` 迁移到 `QThread::create()`；`TestRunServiceTest.PcPeriodicWorkerProvidesQtEventDispatcher` 先在旧实现上因 dispatcher 为空、计时器 ID 为 `0` 失败，再在新实现上通过。该用例检查一次 `prepare()` 和两轮 `executeStep()` 位于同一非应用线程、存在 `QAbstractEventDispatcher` 且可注册 Qt 计时器。
+- 使用外部 32 份协议 CSV 完成 Debug 全量构建和 188 条 CTest，结果为 188/188 通过。
+- 自退出的 `hwtest_pc_runner` 随后使用 `CONTROL_SERIAL`、COM3、`614400 / 8E1 / 无流控` 发起一次 SYSTEM_STATUS；调用覆盖串口打开、写入、等待读取和关闭，未再观察到 `QObject::startTimer` 警告，但因板端产品协议服务未响应而以 `BusTimeout` 结束。目标板 SSH 22 端口探测也未在 15 秒内成功。
+- 这次无响应诊断不是成功 DUT smoke，不能替代 2.1 的成功字节往返证据，也不能证明三轮 PC 周期、长时、拔插、停止或物理安全收尾。未获得启动宿主 Web 常驻服务的明确授权，因此没有借 Web 入口重跑三轮真实串口周期。
 
 ## 3. 五级证据模型
 
@@ -63,7 +70,7 @@
 | --- | --- | --- | --- |
 | 1. 协议 Simulator | 配置 -> BIZ -> SystemStatusAlgorithmExecutor -> SystemStatusSimulator -> golden request frame | 已有；遗留的非 HAL 跨层替身回归，依赖外部 CSV | 仅证明当前 SYSTEM_STATUS 的模拟器闭环、CRC 和超时处理；不是产品模拟或集成验收范式 |
 | 2. HAL Mock 集成 | 算法 -> IControlChannel -> HAL Mock Provider | SYSTEM_STATUS 正向闭环未实现 | 现有 MockAdapter 回环不是控制通道 Mock Provider；算法 fake 只作传输契约测试 |
-| 3. Qt Provider | `qt.serial`/`qt.udp` 标准 Qt 通讯 Provider | 部分实现 | Qt UDP 已有原始回环及经 BIZ/算法/HAL 的本机模拟目标闭环；Qt 串口已有上述 COM3/DUT 短时 smoke，但存在线程告警且无自动化异常路径；TCP 未实现 |
+| 3. Qt Provider | `qt.serial`/`qt.udp` 标准 Qt 通讯 Provider | 部分实现 | Qt UDP 已有原始回环及经 BIZ/算法/HAL 的本机模拟目标闭环；Qt 串口已有上述成功但带历史线程告警的 COM3/DUT 短时 smoke，BIZ QThread dispatcher 回归已补齐且无响应串口诊断不再告警，但修复后的成功单次/三周期和自动化异常路径仍缺失；TCP 未实现 |
 | 4. Vendor Adapter | 真实厂家 Adapter DLL/SDK 经 C ABI 接入 | 未实现 | AdapterLoader fixture 仅证明最小加载器行为；CAbiAdapter 当前仍委托 MockAdapter |
 | 5. 真实硬件 | 隔离台架上的真实目标和测试设备 | 部分手工证据 | 已有上述授权 COM3 SYSTEM_STATUS smoke；没有宿主 CTest hardware target、长期稳定性、异常收尾或完整物理安全验收 |
 
@@ -82,7 +89,7 @@
 
 跨层验收必须明确是契约测试、协议测试、HAL Mock 集成、Provider 集成、Vendor Adapter 集成或真实硬件验收。不得把串口 echo、CANFD loopback 或 Simulator 结果描述为真实通讯证据。
 
-SYSTEM_STATUS 当前有 Simulator golden 链、“BIZ -> 算法 -> HalControlTransport -> HAL -> qt.udp -> 本机模拟目标”自动化成功链，以及上述 `qt.serial -> COM3 -> MB_DDF_v2` 手工成功链。HAL Mock Provider 正向链、真实串口自动化/异常路径和 `ProtocolProfile -> CSV -> HAL ResourceId` 一致性校验仍是未实现验收项。
+SYSTEM_STATUS 当前有 Simulator golden 链、“BIZ -> 算法 -> HalControlTransport -> HAL -> qt.udp -> 本机模拟目标”自动化成功链，以及上述 `qt.serial -> COM3 -> MB_DDF_v2` 手工成功链。BIZ QThread 回归证明调度 worker 具备 Qt dispatcher，但不把历史硬件成功链升级为修复后验收。HAL Mock Provider 正向链、修复后的真实串口成功复测/自动化异常路径和 `ProtocolProfile -> CSV -> HAL ResourceId` 一致性校验仍是未实现验收项。
 
 ## 5. 测试准入
 
@@ -90,7 +97,7 @@ SYSTEM_STATUS 当前有 Simulator golden 链、“BIZ -> 算法 -> HalControlTra
 - 修改 BIZ 时，必须运行 hwtest_biz_tests 和 BIZ 架构扫描；BIZ 测试不得引入硬件执行依赖。
 - 修改协议 CSV 规则、解析器或资产引用时，必须同步 device-communication-protocol.md 和协议契约测试，并记录基线路径、观测时间与清单；manifest/hash 机制落地后再记录固定版本和内容哈希。
 - 修改 Mock 行为时，必须说明证据级别；可配置超时/错误注入和 SYSTEM_STATUS 控制通道 Mock Provider 集成仍未实现，不得作为既有能力验收。
-- 修改 Qt Provider、Vendor Adapter 或真实硬件路径时，必须新增相应级别的隔离测试；当前 Qt UDP 有本机隔离测试，Qt 串口只有一次手工实机 smoke，真实 Adapter、CTest hardware label、串口线程告警回归和全面真实硬件验收仍未实现。
+- 修改 Qt Provider、Vendor Adapter 或真实硬件路径时，必须新增相应级别的隔离测试；当前 Qt UDP 有本机隔离测试，BIZ 已有 Qt dispatcher/计时器注册回归，Qt 串口仍只有一次成功但带历史告警的手工实机 smoke 和一次无响应无告警诊断；真实 Adapter、CTest hardware label、修复后的成功串口复测和全面真实硬件验收仍未实现。
 - 修改共享应用控制器、runner 或 TUI 命令时，必须运行 `hwtest_app_tests`；修改 Qt GUI 时还必须运行 `hwtest_gui_tests`；修改 WebSocket 协议、服务器、入口或脚本时必须运行 `hwtest_web_tests`、`ctest -L websocket` 和 `HwtestWeb*` 进程测试。修改 `front/` 时必须运行 `npm test` 和 `npm run build`。Qt GUI、WebSocket 后端和浏览器 Web UI 必须复用控制器 DTO/事件，不得以新增前端为由复制组合根。
 - 修复行为缺陷时，先补能复现问题的回归测试，再修改实现。
 

@@ -58,7 +58,7 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 | `HalControlTransport` | 经 `IControlChannel` 发送原始字节，并累积短读、搜索同步字、按长度分帧及保留剩余帧 |
 | `HalSerialTransport` | 将算法字节事务桥接到现有 `ISerialBus` |
 
-当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，完成单次和三轮 PC 周期 SYSTEM_STATUS。实机 smoke 证明该固定组合可成功往返，但因每轮出现 Qt 工作线程计时器警告，且未覆盖长时和异常收尾，不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
+当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，完成单次和三轮 PC 周期 SYSTEM_STATUS。该次实机 smoke 证明固定组合可成功往返，但每轮出现 Qt 工作线程计时器警告。BIZ worker 后续已迁移为 QThread 并有 dispatcher/计时器回归；无响应 COM3 诊断不再告警，但尚无修复后的成功复测。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
 
 ---
 
@@ -277,4 +277,4 @@ CAN/CANFD 的帧边界由总线提供，但 payload 内的 MB_DDF 字段、CRC�
 - 纯协议单测可直连 Simulator；产品模拟和算法集成必须经过 HAL，并标明是 HAL Mock 或标准 Provider 隔离模拟目标；
 - 真实硬件协议测试单独标记，不进入默认 CI。
 
-当前验收限制：`dut/` 已保存来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 的 32 份 CSV 同步副本，但宿主运行期仍使用仓库外批准基线，且尚无 manifest/hash 自动机制；控制通道 Mock Provider 未实现。Qt UDP 本机模拟目标和流式分帧已有自动化证据，真实 COM3/DUT 只有一次受控 smoke，线程告警和长时/异常收尾仍未解决。完整证据等级和执行命令统一见 [测试规范](../testing/testing-specification.md)。
+当前验收限制：`dut/` 已保存来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 的 32 份 CSV 同步副本，但宿主运行期仍使用仓库外批准基线，且尚无 manifest/hash 自动机制；控制通道 Mock Provider 未实现。Qt UDP 本机模拟目标和流式分帧已有自动化证据；BIZ QThread dispatcher 回归已补齐，但真实 COM3/DUT 仍只有一次带历史告警的成功 smoke，修复后的成功复测和长时/异常收尾尚未完成。完整证据等级和执行命令统一见 [测试规范](../testing/testing-specification.md)。

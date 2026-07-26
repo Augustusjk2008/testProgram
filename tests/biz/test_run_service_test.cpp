@@ -6,7 +6,13 @@
 
 #include <logging/log_types.h>
 
+#include <QAbstractEventDispatcher>
+#include <QCoreApplication>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QTemporaryDir>
+#include <QThread>
+#include <QTimer>
 
 #include <memory>
 
@@ -17,10 +23,89 @@ namespace {
 
 using ServiceHandle = std::unique_ptr<ITestRunService, void (*)(ITestRunService*)>;
 
-ServiceHandle makeService(test::FakeAlgorithmExecutor& executor)
+ServiceHandle makeService(IAlgorithmExecutor& executor)
 {
     return ServiceHandle(createTestRunService(&executor), destroyTestRunService);
 }
+
+class QtEventDispatcherProbeExecutor final : public IAlgorithmExecutor {
+public:
+    struct Snapshot {
+        int prepareCalls = 0;
+        int executeCalls = 0;
+        QVector<QThread*> threads;
+        bool allOffApplicationThread = true;
+        bool allHaveEventDispatcher = true;
+        bool allTimersRegistered = true;
+    };
+
+    Status prepare(const TestPlan&,
+                   const TestContext&,
+                   const QVariantMap&) override
+    {
+        recordProbe(true);
+        return Status{};
+    }
+
+    Result<TestResult> executeStep(const TestStep& step,
+                                   const IRunControl& control,
+                                   IAlgorithmObserver& observer) override
+    {
+        Q_UNUSED(control);
+        Q_UNUSED(observer);
+        recordProbe(false);
+        return test::successfulResult(step);
+    }
+
+    Status requestStop(int timeoutMs) override
+    {
+        Q_UNUSED(timeoutMs);
+        return Status{};
+    }
+
+    Status reset() override
+    {
+        return Status{};
+    }
+
+    Status shutdown(int timeoutMs) override
+    {
+        Q_UNUSED(timeoutMs);
+        return Status{};
+    }
+
+    Snapshot snapshot() const
+    {
+        QMutexLocker locker(&m_mutex);
+        return m_snapshot;
+    }
+
+private:
+    void recordProbe(bool preparing)
+    {
+        QThread* const currentThread = QThread::currentThread();
+        QTimer timer;
+        timer.start(1);
+        const bool timerRegistered = timer.timerId() > 0;
+        timer.stop();
+
+        QMutexLocker locker(&m_mutex);
+        preparing ? ++m_snapshot.prepareCalls : ++m_snapshot.executeCalls;
+        m_snapshot.threads.append(currentThread);
+        m_snapshot.allOffApplicationThread =
+            m_snapshot.allOffApplicationThread &&
+            QCoreApplication::instance() != nullptr &&
+            currentThread != QCoreApplication::instance()->thread();
+        m_snapshot.allHaveEventDispatcher =
+            m_snapshot.allHaveEventDispatcher &&
+            QAbstractEventDispatcher::instance(currentThread) != nullptr;
+        m_snapshot.allTimersRegistered =
+            m_snapshot.allTimersRegistered && timerRegistered;
+    }
+
+    mutable QMutex m_mutex;
+    Snapshot m_snapshot;
+};
 
 ConfigPath saveConfiguration(TestConfigManager& manager,
                              QTemporaryDir& temporaryDirectory,
@@ -618,6 +703,44 @@ TEST(TestRunServiceTest, PcPeriodicRunsFiniteCyclesAndTagsResultsAndSamples)
         EXPECT_EQ(results.at(index).cycleIndex, expectedCycle);
         EXPECT_EQ(samples.at(index).cycleIndex, expectedCycle);
     }
+    EXPECT_TRUE(service->shutdown().ok());
+}
+
+TEST(TestRunServiceTest, PcPeriodicWorkerProvidesQtEventDispatcher)
+{
+    test::ensureQtApplication();
+    QTemporaryDir temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.isValid());
+
+    TestConfig config = test::makeCompleteConfig();
+    config.steps = {config.steps.at(0)};
+    TestConfigManager manager;
+    const ConfigPath path = saveConfiguration(manager,
+                                               temporaryDirectory,
+                                               config,
+                                               QStringLiteral("pc-periodic-qthread.testcfg"));
+    QtEventDispatcherProbeExecutor executor;
+    ServiceHandle service = makeService(executor);
+    ASSERT_NE(service, nullptr);
+
+    ASSERT_TRUE(service->initialize().ok());
+    ASSERT_TRUE(service->loadConfiguration(path).ok());
+    RunOptions options;
+    options.mode = RunMode::PcPeriodic;
+    options.intervalMs = 10;
+    options.maxCycles = 2;
+    ASSERT_TRUE(service->startTestWithOptions(options).ok());
+    ASSERT_TRUE(waitForState(service.get(), TestState::Finished));
+
+    const QtEventDispatcherProbeExecutor::Snapshot snapshot = executor.snapshot();
+    EXPECT_EQ(snapshot.prepareCalls, 1);
+    EXPECT_EQ(snapshot.executeCalls, 2);
+    ASSERT_EQ(snapshot.threads.size(), 3);
+    EXPECT_EQ(snapshot.threads.at(0), snapshot.threads.at(1));
+    EXPECT_EQ(snapshot.threads.at(0), snapshot.threads.at(2));
+    EXPECT_TRUE(snapshot.allOffApplicationThread);
+    EXPECT_TRUE(snapshot.allHaveEventDispatcher);
+    EXPECT_TRUE(snapshot.allTimersRegistered);
     EXPECT_TRUE(service->shutdown().ok());
 }
 

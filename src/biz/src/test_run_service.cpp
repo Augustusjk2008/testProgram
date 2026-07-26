@@ -11,13 +11,13 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QSet>
+#include <QThread>
 #include <QUuid>
 #include <QWaitCondition>
 
 #include <memory>
 #include <functional>
 #include <mutex>
-#include <thread>
 
 namespace hwtest::biz {
 
@@ -281,7 +281,7 @@ public:
                 return failure<TaskId>(ErrorCode::ResourceBusy,
                                        QStringLiteral("A task is already running"));
             }
-            if (m_worker.joinable()) {
+            if (m_worker != nullptr) {
                 return failure<TaskId>(ErrorCode::ResourceBusy,
                                        QStringLiteral("The previous task is still being finalized"));
             }
@@ -301,12 +301,16 @@ public:
             m_workerTerminalState = TestState::Finished;
             m_priority = effectivePriority;
             m_state = TestState::Running;
-            m_worker = std::thread(&TestRunService::runTask,
-                                   this,
-                                   selected.value,
-                                   context,
-                                   config.executionConfig,
-                                   runOptions);
+            m_worker.reset(QThread::create(
+                [this,
+                 plan = selected.value,
+                 context,
+                 executionConfig = config.executionConfig,
+                 runOptions] {
+                    runTask(plan, context, executionConfig, runOptions);
+                }));
+            m_worker->setObjectName(QStringLiteral("hwtest.biz.worker"));
+            m_worker->start();
         }
         emit stateChanged(taskId, TestState::Running);
         {
@@ -847,29 +851,29 @@ private:
 
     void reapFinishedWorker()
     {
-        std::thread worker;
+        std::unique_ptr<QThread> worker;
         {
             QMutexLocker locker(&m_mutex);
-            if (m_worker.joinable() && m_workerDone) {
+            if (m_worker != nullptr && m_workerDone) {
                 worker = std::move(m_worker);
             }
         }
-        if (worker.joinable()) {
-            worker.join();
+        if (worker != nullptr) {
+            worker->wait();
         }
     }
 
     void joinWorker()
     {
-        std::thread worker;
+        std::unique_ptr<QThread> worker;
         {
             QMutexLocker locker(&m_mutex);
-            if (m_worker.joinable()) {
+            if (m_worker != nullptr) {
                 worker = std::move(m_worker);
             }
         }
-        if (worker.joinable()) {
-            worker.join();
+        if (worker != nullptr) {
+            worker->wait();
         }
     }
 
@@ -921,7 +925,7 @@ private:
     TestPlanBuilder m_planBuilder;
     RunControlAdapter m_runControl;
     std::unique_ptr<IReportGenerator> m_reportGenerator;
-    std::thread m_worker;
+    std::unique_ptr<QThread> m_worker;
     TestConfig m_config;
     TestContext m_context;
     TaskId m_taskId;

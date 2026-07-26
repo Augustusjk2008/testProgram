@@ -149,6 +149,7 @@ void destroyReportGenerator(IReportGenerator* generator);
 - 每轮开始先发出 `cycleStarted`；结果和样本均标记当前 `cycleIndex`。算法未给样本时间戳时，BIZ 使用当前 UTC epoch 微秒补齐，再发出 `sampleProduced`。当前服务不额外长期缓存样本，避免无限周期会话在 BIZ 内形成无界样本副本。
 - BIZ 把 `runMode`、`intervalMs` 和 `maxCycles` 写入 `TestContext::tags`，但不据此解释产品命令。设备是否支持 `DeviceStream` 由算法决定；当前 `mbddf.system_status` 没有设备流启动/停止命令，准备阶段返回 `CapabilityUnsupported`。
 - PC 周期会话中的硬件或协议执行错误结束整个会话；普通判定失败是否中止同轮后续步骤仍由 `RuntimeConfig::stopOnFirstFailure` 控制。
+- `[当前实现]` 每个任务在一个专用 `QThread` 中同步执行 `prepare()`、各轮 `executeStep()` 和轮间等待；该线程提供 Qt event dispatcher，测试锁定同一任务的准备与执行均不在应用亲和线程且能够注册 Qt 计时器。这里不承诺在同步算法调用期间持续泵送事件，也不改变 `requestStop()` 由调用线程发起的既有语义；不得据此宣称 HAL 连接已实现 actor 化或跨线程取消。
 
 ## 4. BIZ 到算法层端口
 

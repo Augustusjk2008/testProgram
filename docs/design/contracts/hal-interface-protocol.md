@@ -259,7 +259,7 @@ HAL 关键生命周期和 I/O 操作应产生结构化事件，至少可追踪�
 | 能力 | 当前 | 目标验收 |
 | --- | --- | --- |
 | 后端选择 | 控制资源按 `providerId` 路由；其他资源固定 `CAbiAdapter -> MockAdapter` | 扩展为通用 Router |
-| Qt 串口 | `qt.serial` 已实现宿主端口枚举、配置、打开、原始读写和关闭；已有一次 COM3 到真实 MB_DDF_v2 的 SYSTEM_STATUS 单次/三周期 smoke，但每周期有 Qt 工作线程计时器警告 | 修正线程模型并完成长时、超时、拔插、停止和物理收尾验收 |
+| Qt 串口 | `qt.serial` 已实现宿主端口枚举、配置、打开、原始读写和关闭；已有一次 COM3 到真实 MB_DDF_v2 的 SYSTEM_STATUS 单次/三周期 smoke，但该历史执行每周期有 Qt 工作线程计时器警告；BIZ worker 已迁移为 QThread 并有 dispatcher/计时器回归，修复后的无响应诊断不再告警但尚无成功复测 | 补修复后的成功单次/三周期，并完成长时、超时、拔插、停止和物理收尾验收 |
 | UDP/TCP | `qt.udp` 已实现并有本机闭环；TCP 未实现 | 明确现场 UDP 端点；另行评审 TCP |
 | Vendor Adapter | Loader 和 ABI 已有，未接入调用链 | 真实 DLL 经 Vendor Provider 使用 ABI v1 |
 | 设备发现 | HAL 设备来自配置；宿主串口可独立只读枚举 | Provider 设备扫描并与配置 match |
