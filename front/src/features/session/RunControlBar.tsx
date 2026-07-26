@@ -37,13 +37,17 @@ export function RunControlBar() {
     connect,
     invoke,
     snapshot,
+    selectedConfigId,
     start,
+    testConfigs,
   } = useSession()
   const [options, setOptions] = useState<TestRunOptions>(loadRunOptions)
 
   const active = ['running', 'paused', 'stopping'].includes(snapshot.phase)
+  const testChangeBlocked = ['running', 'paused', 'stopping', 'preparing'].includes(snapshot.phase)
   const canStart = ['ready', 'finished', 'stopped'].includes(snapshot.phase)
   const testTitle = snapshot.descriptor.title || snapshot.descriptor.productName || '当前测试'
+  const selectedTestId = snapshot.descriptor.configId || selectedConfigId
   const supportedModes: RunMode[] = snapshot.descriptor.supportedRunModes.length > 0
     ? snapshot.descriptor.supportedRunModes
     : ['single', 'pc_periodic']
@@ -89,6 +93,24 @@ export function RunControlBar() {
     <section className="run-console" aria-label="全局测试运行控制">
       <div className="run-console__identity">
         <span className="eyebrow">RUN CONTROL</span>
+        <div className="run-console__test-picker">
+          <label htmlFor="test-config-select">测试项目</label>
+          <select
+            aria-label="测试项目"
+            disabled={testChangeBlocked || busyAction !== null || testConfigs.length === 0}
+            id="test-config-select"
+            onChange={(event) => {
+              if (event.target.value) execute('selectTest', { configId: event.target.value })
+            }}
+            value={selectedTestId}
+          >
+            {testConfigs.length === 0 ? (
+              <option value={selectedTestId}>{selectedTestId ? '当前启动配置' : '等待配置目录'}</option>
+            ) : testConfigs.map((test) => (
+              <option key={test.configId} value={test.configId}>{test.title}</option>
+            ))}
+          </select>
+        </div>
         <div className="run-console__phase-row">
           <span className={`phase-beacon phase-beacon--${snapshot.phase}`} />
           <strong>{snapshot.phase.toUpperCase()}</strong>

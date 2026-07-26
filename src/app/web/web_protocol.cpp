@@ -22,6 +22,8 @@ bool isKnownAction(const QString& action)
 {
     static const QSet<QString> actions{
         QStringLiteral("load"),
+        QStringLiteral("testConfigs"),
+        QStringLiteral("selectTest"),
         QStringLiteral("snapshot"),
         QStringLiteral("controls"),
         QStringLiteral("ports"),

@@ -4,6 +4,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QFileInfo>
 #include <QPointer>
 #include <QSet>
 #include <QTimer>
@@ -13,6 +14,7 @@
 #include <QWebSocketServer>
 
 #include <cmath>
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -41,6 +43,70 @@ bool isAllowedOrigin(const QString& origin)
     const QString host = url.host().toLower();
     return (scheme == QStringLiteral("http") || scheme == QStringLiteral("https")) &&
         (host == QStringLiteral("localhost") || host == QStringLiteral("127.0.0.1"));
+}
+
+QJsonObject testConfigObject(const FrontendTestConfigOption& option)
+{
+    return QJsonObject{
+        {QStringLiteral("configId"), option.configId},
+        {QStringLiteral("title"), option.title},
+        {QStringLiteral("description"), option.description},
+        {QStringLiteral("algorithmId"), option.algorithmId},
+    };
+}
+
+QString selectedTestConfigId(const FrontendLaunchOptions& options)
+{
+    const QString selectedPath = QFileInfo(options.testConfigPath).absoluteFilePath();
+    for (const FrontendTestConfigOption& option : options.testConfigs) {
+        if (QFileInfo(option.configPath).absoluteFilePath() == selectedPath) {
+            return option.configId;
+        }
+    }
+    return {};
+}
+
+ActionResult loadSelectedTest(TestApplicationController& controller,
+                              const FrontendLaunchOptions& options,
+                              const QString& configId,
+                              QString* selectedConfigPath)
+{
+    const auto selected = std::find_if(
+        options.testConfigs.cbegin(),
+        options.testConfigs.cend(),
+        [&configId](const FrontendTestConfigOption& option) {
+            return option.configId == configId;
+        });
+    if (selected == options.testConfigs.cend()) {
+        return protocolError(QStringLiteral("test_config_not_found"),
+                             QStringLiteral("Unknown test configuration '%1'")
+                                 .arg(configId));
+    }
+
+    const QString phase = controller.snapshot().phase;
+    if (phase == QStringLiteral("running") ||
+        phase == QStringLiteral("paused") ||
+        phase == QStringLiteral("stopping") ||
+        phase == QStringLiteral("preparing")) {
+        return protocolError(QStringLiteral("invalid_state"),
+                             QStringLiteral("Test configuration cannot be changed while the test is active"));
+    }
+
+    if (phase != QStringLiteral("empty") &&
+        phase != QStringLiteral("configured")) {
+        const ActionResult shutdown = controller.shutdown();
+        if (!shutdown.ok) {
+            return shutdown;
+        }
+    }
+
+    FrontendLaunchOptions selectedOptions = options;
+    selectedOptions.testConfigPath = selected->configPath;
+    const ActionResult result = configureController(controller, selectedOptions);
+    if (result.ok && selectedConfigPath != nullptr) {
+        *selectedConfigPath = selected->configPath;
+    }
+    return result;
 }
 
 quint64 qtIncomingLimit(quint64 protocolLimit)
@@ -354,6 +420,7 @@ public:
     static bool isReadAction(const QString& action)
     {
         return action == QStringLiteral("snapshot") ||
+            action == QStringLiteral("testConfigs") ||
             action == QStringLiteral("controls") ||
             action == QStringLiteral("ports");
     }
@@ -494,6 +561,31 @@ public:
             }
             return false;
         }
+        if (request.action == QStringLiteral("testConfigs") &&
+            !request.params.isEmpty()) {
+            if (error != nullptr) {
+                *error = protocolError(
+                    QStringLiteral("invalid_envelope"),
+                    QStringLiteral("The testConfigs action does not accept parameters"));
+            }
+            return false;
+        }
+        if (request.action == QStringLiteral("selectTest")) {
+            if (!validateRequiredString(request,
+                                        QStringLiteral("configId"),
+                                        error)) {
+                return false;
+            }
+            if (request.params.size() != 1) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("The selectTest action only accepts configId"));
+                }
+                return false;
+            }
+            return true;
+        }
         if (request.action == QStringLiteral("selectControl")) {
             return validateRequiredString(request,
                                           QStringLiteral("resourceId"),
@@ -512,6 +604,18 @@ public:
 
     void dispatchControllerAction(const WebRequest& request, QWebSocket* socket)
     {
+        if (request.action == QStringLiteral("testConfigs")) {
+            QJsonArray configs;
+            for (const FrontendTestConfigOption& option : launchOptions.testConfigs) {
+                configs.push_back(testConfigObject(option));
+            }
+            const QJsonObject data{
+                {QStringLiteral("selectedConfigId"), selectedTestConfigId(launchOptions)},
+                {QStringLiteral("configs"), configs},
+            };
+            send(socket, makeReply(request.id, ActionResult{}, data));
+            return;
+        }
         if (controller == nullptr) {
             send(socket,
                  makeReply(request.id,
@@ -537,8 +641,16 @@ public:
 
                 ActionResult result;
                 QJsonObject data;
+                QString selectedConfigPath;
                 if (request.action == QStringLiteral("load")) {
                     result = configureController(*controllerGuard, optionsCopy);
+                } else if (request.action == QStringLiteral("selectTest")) {
+                    result = loadSelectedTest(
+                        *controllerGuard,
+                        optionsCopy,
+                        request.params.value(QStringLiteral("configId"))
+                            .toString().trimmed(),
+                        &selectedConfigPath);
                 } else if (request.action == QStringLiteral("controls")) {
                     QJsonArray controls;
                     for (const ControlResource& control :
@@ -589,9 +701,20 @@ public:
 
                 QMetaObject::invokeMethod(
                     owner.data(),
-                    [owner, socketGuard, id = request.id, result, data] {
-                        if (owner == nullptr || owner->m_impl == nullptr ||
-                            socketGuard == nullptr) {
+                    [owner,
+                     socketGuard,
+                     id = request.id,
+                     result,
+                     data,
+                     selectedConfigPath] {
+                        if (owner == nullptr || owner->m_impl == nullptr) {
+                            return;
+                        }
+                        if (result.ok && !selectedConfigPath.isEmpty()) {
+                            owner->m_impl->launchOptions.testConfigPath =
+                                selectedConfigPath;
+                        }
+                        if (socketGuard == nullptr) {
                             return;
                         }
                         send(socketGuard, makeReply(id, result, data));

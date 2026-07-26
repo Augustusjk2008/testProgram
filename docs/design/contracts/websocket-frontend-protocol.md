@@ -120,6 +120,7 @@
 | `server_busy` | 已有活跃客户端 | 否，关闭码 `1008` |
 | `message_too_large` | UTF-8 文本超过 `16384` 字节 | 否，关闭码 `1009` |
 | `command_in_progress` | 正在异步停止或安全收尾时又收到写动作 | 是 |
+| `test_config_not_found` | `selectTest.configId` 不在后端启动时发现的配置白名单中 | 是 |
 | `invalid_run_mode` | `start.mode` 不是固定三种模式之一 | 是 |
 | `ParameterRangeError` | `start.intervalMs` 或 `start.maxCycles` 超出范围 | 是 |
 
@@ -130,6 +131,8 @@
 | `action` | `params` | 行为及 reply `data` |
 | --- | --- | --- |
 | `load` | `{}` | 使用进程启动时解析好的 `FrontendLaunchOptions` 调用 `configureController`；客户端不能提供或覆盖文件路径 |
+| `testConfigs` | `{}` | 返回后端固定 `configs/` 目录中已验证的测试配置摘要；`data` 为 `{ "selectedConfigId": "...", "configs": [{"configId":"...","title":"...","description":"...","algorithmId":"..."}] }`，不返回本地路径 |
+| `selectTest` | `{"configId":"mbddf-elec-health"}` | 只接受 `testConfigs` 返回的白名单 `configId`；服务器映射到本地路径并重新加载配置，若当前处于可运行终态则先安全关闭当前会话；运行中或停止中拒绝切换 |
 | `snapshot` | `{}` | 从 Web 层缓存读取；`data` 为 `{ "seq": n, "snapshot": { ... } }`，其中包含当前配置 descriptor |
 | `controls` | `{}` | 在控制器亲和线程读取；`data.controls` 为 `{resourceId, providerId}` 数组 |
 | `ports` | `{}` | 在控制器亲和线程读取；`data.ports` 为完整 `SerialPortInfo` 对象数组 |
@@ -143,7 +146,7 @@
 | `disconnect` | `{}` | 必要时先异步停止，再调用 `shutdown`；最后回复并关闭当前连接，服务器继续监听 |
 | `quit` | `{}` | 执行与 `disconnect` 相同的安全收尾，随后关闭服务器并退出进程 |
 
-除 `start`、`selectControl` 和 `selectSerialPort` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段。`start` 只接受上表三个可选字段，未知字段按 `invalid_envelope` 拒绝。
+除 `start`、`selectTest`、`selectControl` 和 `selectSerialPort` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`start` 只接受上表三个可选字段，未知字段按 `invalid_envelope` 拒绝。
 
 ## 7. 异步、线程与安全收尾
 

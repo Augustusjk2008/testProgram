@@ -3,16 +3,26 @@
 #include <app/test_application_controller.h>
 
 #include <QString>
+#include <QVector>
 
 class QCommandLineParser;
 
 namespace hwtest::app {
+
+struct FrontendTestConfigOption {
+    QString configId;
+    QString title;
+    QString description;
+    QString algorithmId;
+    QString configPath;
+};
 
 struct FrontendLaunchOptions {
     QString testConfigPath;
     QString halConfigPath;
     QString controlResourceId;
     QString serialPortName;
+    QVector<FrontendTestConfigOption> testConfigs;
 };
 
 struct FrontendOptionDefaults {

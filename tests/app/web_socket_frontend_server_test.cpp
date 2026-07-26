@@ -5,6 +5,8 @@
 #include <gtest/gtest.h>
 
 #include <QHostAddress>
+#include <QDir>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -64,6 +66,95 @@ TEST(WebSocketFrontendServerTest, ListensOnlyOnLoopbackAndSendsHelloThenSnapshot
                   .value(QStringLiteral("phase"))
                   .toString(),
               QStringLiteral("empty"));
+}
+
+TEST(WebSocketFrontendServerTest, ListsAndSelectsAllowlistedTestConfigurations)
+{
+    const QString projectDirectory = QStringLiteral(HWTEST_PROJECT_SOURCE_DIR);
+    const QString systemConfig = QDir(projectDirectory).filePath(
+        QStringLiteral("configs/mbddf_system_status.testcfg.json"));
+    const QString electricalConfig = QDir(projectDirectory).filePath(
+        QStringLiteral("configs/mbddf_elec_health.testcfg.json"));
+    FrontendLaunchOptions launchOptions{
+        systemConfig,
+        QDir(projectDirectory).filePath(QStringLiteral("configs/mbddf_pc_hal.json")),
+        {},
+        {},
+        {
+            FrontendTestConfigOption{QStringLiteral("mbddf-system-status"),
+                                     QStringLiteral("系统状态"),
+                                     QStringLiteral("读取系统状态量。"),
+                                     QStringLiteral("mbddf.system_status"),
+                                     systemConfig},
+            FrontendTestConfigOption{QStringLiteral("mbddf-elec-health"),
+                                     QStringLiteral("电气健康"),
+                                     QStringLiteral("读取电气健康量。"),
+                                     QStringLiteral("mbddf.elec_health_status"),
+                                     electricalConfig},
+        }};
+
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, launchOptions, testOptions());
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    ASSERT_GT(client.sendText(compact(request(QStringLiteral("catalog"),
+                                              QStringLiteral("testConfigs")))),
+              0);
+    QJsonObject catalogReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("catalog"), &catalogReply));
+    ASSERT_TRUE(catalogReply.value(QStringLiteral("ok")).toBool());
+    const QJsonObject catalog = catalogReply.value(QStringLiteral("data")).toObject();
+    EXPECT_EQ(catalog.value(QStringLiteral("selectedConfigId")).toString(),
+              QStringLiteral("mbddf-system-status"));
+    ASSERT_EQ(catalog.value(QStringLiteral("configs")).toArray().size(), 2);
+
+    ASSERT_GT(client.sendText(compact(request(
+                                  QStringLiteral("reject-path"),
+                                  QStringLiteral("selectTest"),
+                                  QJsonObject{
+                                      {QStringLiteral("configId"),
+                                       QStringLiteral("mbddf-elec-health")},
+                                      {QStringLiteral("testConfigPath"),
+                                       QStringLiteral("C:/untrusted.json")}}))),
+              0);
+    QJsonObject rejectedPathReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("reject-path"),
+                                    &rejectedPathReply));
+    EXPECT_FALSE(rejectedPathReply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(rejectedPathReply.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+
+    ASSERT_GT(client.sendText(compact(request(
+                                  QStringLiteral("select"),
+                                  QStringLiteral("selectTest"),
+                                  QJsonObject{{QStringLiteral("configId"),
+                                               QStringLiteral("mbddf-elec-health")}}))),
+              0);
+    QJsonObject selectReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("select"), &selectReply));
+    ASSERT_TRUE(selectReply.value(QStringLiteral("ok")).toBool())
+        << selectReply.value(QStringLiteral("message")).toString().toStdString();
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("configured"));
+    EXPECT_EQ(controller.snapshot().descriptor.configId,
+              QStringLiteral("mbddf-elec-health"));
+    EXPECT_EQ(controller.snapshot().descriptor.algorithmId,
+              QStringLiteral("mbddf.elec_health_status"));
+
+    ASSERT_GT(client.sendText(compact(request(QStringLiteral("catalog-after"),
+                                              QStringLiteral("testConfigs")))),
+              0);
+    QJsonObject updatedCatalogReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("catalog-after"),
+                                    &updatedCatalogReply));
+    EXPECT_EQ(updatedCatalogReply.value(QStringLiteral("data"))
+                  .toObject()
+                  .value(QStringLiteral("selectedConfigId"))
+                  .toString(),
+              QStringLiteral("mbddf-elec-health"));
 }
 
 TEST(WebSocketFrontendServerTest, RepliesToInvalidJsonWithoutClosingActiveClient)

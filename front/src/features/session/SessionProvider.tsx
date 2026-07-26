@@ -21,9 +21,11 @@ import {
   type ApplicationSample,
   type ApplicationSnapshot,
   type ReplyMessage,
+  type TestConfigOption,
   type TestRunOptions,
 } from '../../shared/protocol'
 import {
+  parseTestConfigCatalog,
   type ConnectionState,
   HwtestClient,
 } from '../../shared/ws/HwtestClient'
@@ -43,6 +45,8 @@ interface SessionContextValue {
   connectionState: ConnectionState
   connectionDetail: string
   snapshot: ApplicationSnapshot
+  testConfigs: TestConfigOption[]
+  selectedConfigId: string
   latestSample: ApplicationSample | null
   telemetry: SampleBuffer
   fields: string[]
@@ -66,10 +70,13 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const commitTimer = useRef<number | null>(null)
   const commitFrame = useRef<number | null>(null)
   const lastCommit = useRef(0)
+  const descriptorConfigId = useRef('')
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected')
   const [connectionDetail, setConnectionDetail] = useState('')
   const [snapshot, setSnapshot] = useState<ApplicationSnapshot>(EMPTY_SNAPSHOT)
+  const [testConfigs, setTestConfigs] = useState<TestConfigOption[]>([])
+  const [selectedConfigId, setSelectedConfigId] = useState('')
   const [latestSample, setLatestSample] = useState<ApplicationSample | null>(null)
   const [fields, setFields] = useState<string[]>([])
   const [dataVersion, setDataVersion] = useState(0)
@@ -120,6 +127,13 @@ export function SessionProvider({ children }: PropsWithChildren) {
     }, remaining)
   }, [commitTelemetry])
 
+  const clearTelemetry = useCallback(() => {
+    telemetryRef.current.clear()
+    setLatestSample(null)
+    setFields([])
+    setDataVersion((version) => version + 1)
+  }, [])
+
   useEffect(() => {
     const client = new HwtestClient(HWTEST_WS_URL)
     clientRef.current = client
@@ -137,6 +151,11 @@ export function SessionProvider({ children }: PropsWithChildren) {
 
       const message = event.message
       if (message.type === 'snapshot') {
+        const nextConfigId = message.snapshot.descriptor.configId
+        if (nextConfigId && nextConfigId !== descriptorConfigId.current) {
+          if (descriptorConfigId.current) clearTelemetry()
+          descriptorConfigId.current = nextConfigId
+        }
         setSnapshot({ ...EMPTY_SNAPSHOT, ...message.snapshot })
         pushDiagnostic(
           'snapshot',
@@ -161,6 +180,28 @@ export function SessionProvider({ children }: PropsWithChildren) {
           `协议 v${message.protocolVersion}`,
           message,
         )
+        void client.request('testConfigs').then((reply) => {
+          if (!reply.ok) {
+            pushDiagnostic(
+              'error',
+              '测试配置目录不可用',
+              reply.message || reply.code,
+              reply,
+            )
+            return
+          }
+          try {
+            const catalog = parseTestConfigCatalog(reply.data)
+            setTestConfigs(catalog.configs)
+            setSelectedConfigId(catalog.selectedConfigId)
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error)
+            pushDiagnostic('error', '测试配置目录格式错误', detail, reply)
+          }
+        }).catch((error) => {
+          const detail = error instanceof Error ? error.message : String(error)
+          pushDiagnostic('error', '读取测试配置目录失败', detail)
+        })
       }
     })
 
@@ -171,7 +212,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
       if (commitTimer.current !== null) window.clearTimeout(commitTimer.current)
       if (commitFrame.current !== null) window.cancelAnimationFrame(commitFrame.current)
     }
-  }, [pushDiagnostic, scheduleTelemetryCommit])
+  }, [clearTelemetry, pushDiagnostic, scheduleTelemetryCommit])
 
   const connect = useCallback(async (reconnecting = true) => {
     setActionError('')
@@ -207,13 +248,6 @@ export function SessionProvider({ children }: PropsWithChildren) {
     }
   }, [pushDiagnostic])
 
-  const clearTelemetry = useCallback(() => {
-    telemetryRef.current.clear()
-    setLatestSample(null)
-    setFields([])
-    setDataVersion((version) => version + 1)
-  }, [])
-
   const start = useCallback(async (options: TestRunOptions) => {
     clearTelemetry()
     return invoke('start', { ...options })
@@ -224,6 +258,8 @@ export function SessionProvider({ children }: PropsWithChildren) {
     connectionState,
     connectionDetail,
     snapshot,
+    testConfigs,
+    selectedConfigId,
     latestSample,
     telemetry: telemetryRef.current,
     fields,
@@ -247,8 +283,10 @@ export function SessionProvider({ children }: PropsWithChildren) {
     fields,
     invoke,
     latestSample,
+    selectedConfigId,
     snapshot,
     start,
+    testConfigs,
   ])
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

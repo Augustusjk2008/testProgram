@@ -26,6 +26,8 @@ TEST(WebProtocolTest, AcceptsEveryVersionOneAction)
 {
     const QStringList actions{
         QStringLiteral("load"),
+        QStringLiteral("testConfigs"),
+        QStringLiteral("selectTest"),
         QStringLiteral("snapshot"),
         QStringLiteral("controls"),
         QStringLiteral("ports"),

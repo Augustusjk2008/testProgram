@@ -48,4 +48,4 @@ docs/design/
 - BIZ 的 API、配置迁移和 `executionConfig` 透传见 `contracts/business-scheduling-layer.md`。
 - `LogEvent` 字段、来源和 HAL/Adapter 映射只看 `contracts/log-interface-protocol.md`。
 - 协议 CSV 字段与物理帧规则只看 `contracts/device-communication-protocol.md`。
-- WebSocket 请求、快照、错误与关闭顺序只看 `contracts/websocket-frontend-protocol.md`。
+- WebSocket 请求、配置白名单选择、快照、错误与关闭顺序只看 `contracts/websocket-frontend-protocol.md`。

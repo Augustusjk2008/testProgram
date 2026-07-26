@@ -48,6 +48,7 @@ target_compile_definitions(hwtest_app_tests
         HWTEST_APP_TEST_CONFIG="${HWTEST_APP_TEST_CONFIG}"
         HWTEST_APP_ELEC_HEALTH_CONFIG="${HWTEST_APP_ELEC_HEALTH_CONFIG}"
         HWTEST_APP_HAL_CONFIG="${HWTEST_APP_HAL_CONFIG}"
+        HWTEST_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )
 
 target_include_directories(hwtest_app_tests

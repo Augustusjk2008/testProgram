@@ -27,8 +27,22 @@ export interface TestDescriptor {
   measurements: TestMeasurementDescriptor[]
 }
 
+export interface TestConfigOption {
+  configId: string
+  title: string
+  description: string
+  algorithmId: string
+}
+
+export interface TestConfigCatalog {
+  selectedConfigId: string
+  configs: TestConfigOption[]
+}
+
 export type ActionName =
   | 'load'
+  | 'testConfigs'
+  | 'selectTest'
   | 'snapshot'
   | 'controls'
   | 'ports'

@@ -1,9 +1,14 @@
 #include <app/frontend_launch_options.h>
 
+#include <biz/test_config_manager.h>
+
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFileInfo>
+#include <QSet>
+
+#include <algorithm>
 
 namespace hwtest::app {
 
@@ -21,6 +26,98 @@ QString resolvedPath(const QString& value, const QString& baseDirectory)
 ActionResult failure(const QString& code, const QString& message)
 {
     return ActionResult{false, code, message};
+}
+
+bool isSupportedAlgorithm(const QString& algorithmId)
+{
+    return algorithmId == QStringLiteral("mbddf.system_status") ||
+        algorithmId == QStringLiteral("mbddf.elec_health_status");
+}
+
+bool makeTestConfigOption(const QString& configPath,
+                          FrontendTestConfigOption* output)
+{
+    if (output == nullptr) {
+        return false;
+    }
+
+    hwtest::biz::TestConfigManager manager;
+    const auto loaded = manager.load(configPath);
+    if (!loaded.ok()) {
+        return false;
+    }
+
+    const hwtest::biz::TestStep* selectedStep = nullptr;
+    for (const hwtest::biz::TestStep& step : loaded.value.steps) {
+        if (!step.enabled) {
+            continue;
+        }
+        if (selectedStep != nullptr || !isSupportedAlgorithm(step.algorithmId)) {
+            return false;
+        }
+        selectedStep = &step;
+    }
+    if (selectedStep == nullptr) {
+        return false;
+    }
+
+    QString title = loaded.value.reportFields.value(QStringLiteral("title"))
+                        .toString().trimmed();
+    if (title.isEmpty()) {
+        title = selectedStep->name.trimmed();
+    }
+    if (title.isEmpty()) {
+        title = selectedStep->testItemId;
+    }
+    *output = FrontendTestConfigOption{
+        loaded.value.configId,
+        title,
+        loaded.value.reportFields.value(QStringLiteral("description"))
+            .toString().trimmed(),
+        selectedStep->algorithmId,
+        QFileInfo(configPath).absoluteFilePath(),
+    };
+    return true;
+}
+
+QVector<FrontendTestConfigOption> discoverTestConfigs(
+    const QString& baseDirectory,
+    const QString& selectedConfigPath)
+{
+    QVector<FrontendTestConfigOption> result;
+    const QDir configDirectory(QDir(baseDirectory).filePath(QStringLiteral("configs")));
+    QStringList configPaths;
+    const QString selectedAbsolute = QFileInfo(selectedConfigPath).absoluteFilePath();
+    if (!selectedConfigPath.trimmed().isEmpty()) {
+        configPaths.push_back(selectedAbsolute);
+    }
+    if (configDirectory.exists()) {
+        for (const QString& name : configDirectory.entryList(
+                 QStringList{QStringLiteral("*.testcfg.json")},
+                 QDir::Files,
+                 QDir::Name)) {
+            const QString path = configDirectory.absoluteFilePath(name);
+            if (!configPaths.contains(path)) {
+                configPaths.push_back(path);
+            }
+        }
+    }
+
+    QSet<QString> configIds;
+    for (const QString& configPath : configPaths) {
+        FrontendTestConfigOption option;
+        if (!makeTestConfigOption(configPath, &option) ||
+            option.configId.trimmed().isEmpty() ||
+            configIds.contains(option.configId)) {
+            continue;
+        }
+        configIds.insert(option.configId);
+        result.push_back(option);
+    }
+    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+        return left.configId < right.configId;
+    });
+    return result;
 }
 
 } // namespace
@@ -70,6 +167,7 @@ ActionResult readFrontendOptions(const QCommandLineParser& parser,
     result.halConfigPath = resolvedPath(halConfig, baseDirectory);
     result.controlResourceId = parser.value(QStringLiteral("control")).trimmed();
     result.serialPortName = parser.value(QStringLiteral("serial-port")).trimmed();
+    result.testConfigs = discoverTestConfigs(baseDirectory, result.testConfigPath);
     *output = result;
     return {};
 }

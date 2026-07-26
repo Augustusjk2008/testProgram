@@ -5,6 +5,8 @@ import type {
   ReplyMessage,
   RunMode,
   ServerMessage,
+  TestConfigCatalog,
+  TestConfigOption,
   TestDescriptor,
   TestMeasurementDescriptor,
 } from '../protocol'
@@ -83,6 +85,26 @@ function parseDescriptor(value: JsonObject): TestDescriptor {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`Invalid protocol descriptor: ${detail}`)
+  }
+}
+
+export function parseTestConfigCatalog(value: JsonObject): TestConfigCatalog {
+  const configValue = value.configs
+  if (!Array.isArray(configValue)) {
+    throw new Error('Invalid protocol field: configs')
+  }
+  const configs: TestConfigOption[] = configValue.map((item) => {
+    if (!isObject(item)) throw new Error('Invalid protocol field: config')
+    return {
+      configId: requiredString(item, 'configId'),
+      title: requiredString(item, 'title'),
+      description: requiredString(item, 'description'),
+      algorithmId: requiredString(item, 'algorithmId'),
+    }
+  })
+  return {
+    selectedConfigId: requiredString(value, 'selectedConfigId'),
+    configs,
   }
 }
 

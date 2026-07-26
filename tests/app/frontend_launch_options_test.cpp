@@ -44,6 +44,33 @@ TEST(FrontendLaunchOptionsTest, ResolvesRelativePathsAgainstProvidedBase)
               QDir::cleanPath(directory.filePath(QStringLiteral("relative/hal.json"))));
 }
 
+TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigDirectory)
+{
+    const FrontendOptionDefaults defaults{
+        QStringLiteral("configs/mbddf_system_status.testcfg.json"),
+        QStringLiteral("configs/mbddf_pc_hal.json"),
+        false};
+    QCommandLineParser parser;
+    parseFrontendArguments(&parser, defaults, {QStringLiteral("frontend")});
+
+    FrontendLaunchOptions options;
+    const ActionResult result = readFrontendOptions(
+        parser, QStringLiteral(HWTEST_PROJECT_SOURCE_DIR), defaults, &options);
+
+    ASSERT_TRUE(result.ok) << result.message.toStdString();
+    ASSERT_EQ(options.testConfigs.size(), 2);
+    bool foundSystem = false;
+    bool foundElectrical = false;
+    for (const FrontendTestConfigOption& option : options.testConfigs) {
+        foundSystem = foundSystem || option.configId == QStringLiteral("mbddf-system-status");
+        foundElectrical = foundElectrical || option.configId == QStringLiteral("mbddf-elec-health");
+        EXPECT_FALSE(option.configPath.isEmpty());
+        EXPECT_FALSE(option.title.isEmpty());
+    }
+    EXPECT_TRUE(foundSystem);
+    EXPECT_TRUE(foundElectrical);
+}
+
 TEST(FrontendLaunchOptionsTest, RequiresPathsForBatchRunner)
 {
     const FrontendOptionDefaults defaults{{}, {}, true};

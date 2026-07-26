@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { makeRequest, parseServerMessage } from './HwtestClient'
+import { makeRequest, parseServerMessage, parseTestConfigCatalog } from './HwtestClient'
 
 describe('HwtestClient protocol boundary', () => {
   it('builds a versioned start request without owning a repeat timer', () => {
@@ -98,5 +98,22 @@ describe('HwtestClient protocol boundary', () => {
       seq: 4,
       snapshot: { descriptor: { title: 'missing required fields' } },
     }))).toThrow(/descriptor/i)
+  })
+
+  it('parses the allowlisted test configuration catalog', () => {
+    const catalog = parseTestConfigCatalog({
+      selectedConfigId: 'mbddf-system-status',
+      configs: [
+        {
+          configId: 'mbddf-elec-health',
+          title: '电气健康',
+          description: '读取电源与辅助电压健康量。',
+          algorithmId: 'mbddf.elec_health_status',
+        },
+      ],
+    })
+
+    expect(catalog.selectedConfigId).toBe('mbddf-system-status')
+    expect(catalog.configs[0].title).toBe('电气健康')
   })
 })
