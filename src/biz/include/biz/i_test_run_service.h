@@ -24,6 +24,20 @@ public:
     virtual Status loadConfiguration(const ConfigPath& configPath) = 0;
     virtual Result<TaskId> startTest(const QStringList& testItems = {},
                                      int priority = -1) = 0;
+    virtual Result<TaskId> startTestWithOptions(const RunOptions& options,
+                                                const QStringList& testItems = {},
+                                                int priority = -1)
+    {
+        if (options.mode == RunMode::Single) {
+            return startTest(testItems, priority);
+        }
+        Result<TaskId> result;
+        result.status.code = ErrorCode::CapabilityUnsupported;
+        result.status.error.code = ErrorCode::CapabilityUnsupported;
+        result.status.error.message =
+            QStringLiteral("This test service does not support the requested run mode");
+        return result;
+    }
     virtual Status pauseTest() = 0;
     virtual Status resumeTest() = 0;
     virtual Status stopTest(int timeoutMs = 5000) = 0;
@@ -38,6 +52,10 @@ signals:
                       int progress,
                       const QString& step);
     void stateChanged(const TaskId& taskId, TestState state);
+    void cycleStarted(const TaskId& taskId, quint64 cycleIndex);
+    void sampleProduced(const TaskId& taskId,
+                        const StepId& stepId,
+                        const RawSample& sample);
     void resultProduced(const TaskId& taskId, const TestResult& result);
     void logProduced(const hwtest::logging::LogEvent& event);
     void hardwareError(const TaskId& taskId,

@@ -12,7 +12,7 @@
 namespace hwtest::app::web {
 
 struct WebSocketServerOptions {
-    quint16 port = 8765;
+    quint16 port = 18765;
     int handshakeTimeoutMs = 5000;
     quint64 maxIncomingMessageBytes = 16384;
 };

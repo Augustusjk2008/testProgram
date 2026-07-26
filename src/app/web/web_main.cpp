@@ -34,7 +34,7 @@ int main(int argc, char* argv[])
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(
         "Loopback WebSocket backend for MB_DDF_v2 SYSTEM_STATUS; "
-        "no browser frontend is implemented"));
+        "the separate browser frontend lives in front/"));
     parser.addHelpOption();
 
     const hwtest::app::FrontendOptionDefaults defaults{
@@ -47,7 +47,7 @@ int main(int argc, char* argv[])
         QStringLiteral("web-port"),
         QStringLiteral("WebSocket listen port on 127.0.0.1 (0 selects a free port)"),
         QStringLiteral("port"),
-        QStringLiteral("8765"));
+        QStringLiteral("18765"));
     parser.addOption(webPortOption);
     QCommandLineOption smokeTestOption(QStringLiteral("smoke-test"));
     smokeTestOption.setFlags(QCommandLineOption::HiddenFromHelp);

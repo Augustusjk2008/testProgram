@@ -164,6 +164,11 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     snapshot.rawData.insert(QStringLiteral("cpu_usage"), 12.5);
     snapshot.rawData.insert(QStringLiteral("flags"),
                             QVariantList{true, QStringLiteral("ok")});
+    snapshot.runMode = QStringLiteral("pc_periodic");
+    snapshot.intervalMs = 250;
+    snapshot.maxCycles = 0;
+    snapshot.cycleIndex = 17;
+    snapshot.sampleCount = 42;
 
     const QJsonObject envelope = makeSnapshot(12, snapshot);
     EXPECT_EQ(envelope.value(QStringLiteral("v")).toInt(), 1);
@@ -172,7 +177,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(envelope.value(QStringLiteral("seq")).toInt(), 12);
 
     const QJsonObject json = envelope.value(QStringLiteral("snapshot")).toObject();
-    EXPECT_EQ(json.size(), 17);
+    EXPECT_EQ(json.size(), 22);
     EXPECT_EQ(json.value(QStringLiteral("phase")).toString(), snapshot.phase);
     EXPECT_EQ(json.value(QStringLiteral("testState")).toString(), snapshot.testState);
     EXPECT_EQ(json.value(QStringLiteral("controlResourceId")).toString(),
@@ -191,12 +196,57 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(json.value(QStringLiteral("errorCode")).toString(), snapshot.errorCode);
     EXPECT_EQ(json.value(QStringLiteral("message")).toString(), snapshot.message);
     EXPECT_EQ(json.value(QStringLiteral("attempts")).toInt(), snapshot.attempts);
+    EXPECT_EQ(json.value(QStringLiteral("runMode")).toString(), snapshot.runMode);
+    EXPECT_EQ(json.value(QStringLiteral("intervalMs")).toInt(), snapshot.intervalMs);
+    EXPECT_EQ(json.value(QStringLiteral("maxCycles")).toDouble(),
+              static_cast<double>(snapshot.maxCycles));
+    EXPECT_EQ(json.value(QStringLiteral("cycleIndex")).toDouble(),
+              static_cast<double>(snapshot.cycleIndex));
+    EXPECT_EQ(json.value(QStringLiteral("sampleCount")).toDouble(),
+              static_cast<double>(snapshot.sampleCount));
     const QJsonObject rawData = json.value(QStringLiteral("rawData")).toObject();
     EXPECT_DOUBLE_EQ(rawData.value(QStringLiteral("cpu_usage")).toDouble(), 12.5);
     ASSERT_TRUE(rawData.value(QStringLiteral("flags")).isArray());
     EXPECT_TRUE(rawData.value(QStringLiteral("flags")).toArray().at(0).toBool());
     EXPECT_EQ(rawData.value(QStringLiteral("flags")).toArray().at(1).toString(),
               QStringLiteral("ok"));
+}
+
+TEST(WebProtocolTest, ProjectsApplicationSampleAsVersionedEvent)
+{
+    ApplicationSample sample;
+    sample.taskId = QStringLiteral("task-7");
+    sample.stepId = QStringLiteral("SYSTEM_STATUS");
+    sample.channelId = QStringLiteral("SYSTEM_STATUS");
+    sample.timestampUs = 1785000000123456LL;
+    sample.cycleIndex = 7;
+    sample.values.insert(QStringLiteral("cpu_usage"), 12.5);
+    sample.values.insert(QStringLiteral("power_on_sec"), 99u);
+    sample.tags.insert(QStringLiteral("requestFrameHex"), QStringLiteral("55aa"));
+
+    const QJsonObject envelope = makeSample(31, sample);
+
+    EXPECT_EQ(envelope.value(QStringLiteral("v")).toInt(), 1);
+    EXPECT_EQ(envelope.value(QStringLiteral("type")).toString(),
+              QStringLiteral("sample"));
+    EXPECT_EQ(envelope.value(QStringLiteral("seq")).toInt(), 31);
+    const QJsonObject json = envelope.value(QStringLiteral("sample")).toObject();
+    EXPECT_EQ(json.value(QStringLiteral("taskId")).toString(), sample.taskId);
+    EXPECT_EQ(json.value(QStringLiteral("stepId")).toString(), sample.stepId);
+    EXPECT_EQ(json.value(QStringLiteral("channelId")).toString(), sample.channelId);
+    EXPECT_EQ(json.value(QStringLiteral("timestampUs")).toDouble(),
+              static_cast<double>(sample.timestampUs));
+    EXPECT_EQ(json.value(QStringLiteral("cycleIndex")).toInt(), 7);
+    EXPECT_DOUBLE_EQ(json.value(QStringLiteral("values"))
+                         .toObject()
+                         .value(QStringLiteral("cpu_usage"))
+                         .toDouble(),
+                     12.5);
+    EXPECT_EQ(json.value(QStringLiteral("tags"))
+                  .toObject()
+                  .value(QStringLiteral("requestFrameHex"))
+                  .toString(),
+              QStringLiteral("55aa"));
 }
 
 TEST(WebProtocolTest, SerializesCompactJson)

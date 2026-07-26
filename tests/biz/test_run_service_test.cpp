@@ -504,4 +504,220 @@ TEST(TestRunServiceTest, GeneratingReportDoesNotReenterTheAlgorithmExecutor)
     EXPECT_TRUE(service->shutdown().ok());
 }
 
+TEST(TestRunServiceTest, SingleRunOptionsPreserveOneCycleAndForwardSampleMetadata)
+{
+    test::ensureQtApplication();
+    QTemporaryDir temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.isValid());
+
+    TestConfig config = test::makeCompleteConfig();
+    config.steps = {config.steps.at(0)};
+    TestConfigManager manager;
+    const ConfigPath path = saveConfiguration(manager,
+                                               temporaryDirectory,
+                                               config,
+                                               QStringLiteral("single-options.testcfg"));
+    test::FakeAlgorithmExecutor executor;
+    ServiceHandle service = makeService(executor);
+    ASSERT_NE(service, nullptr);
+
+    QVector<quint64> cycles;
+    QVector<RawSample> samples;
+    QObject::connect(service.get(),
+                     &ITestRunService::cycleStarted,
+                     QCoreApplication::instance(),
+                     [&cycles](const TaskId&, quint64 cycleIndex) {
+                         cycles.append(cycleIndex);
+                     },
+                     Qt::QueuedConnection);
+    QObject::connect(service.get(),
+                     &ITestRunService::sampleProduced,
+                     QCoreApplication::instance(),
+                     [&samples](const TaskId&, const StepId&, const RawSample& sample) {
+                         samples.append(sample);
+                     },
+                     Qt::QueuedConnection);
+
+    ASSERT_TRUE(service->initialize().ok());
+    ASSERT_TRUE(service->loadConfiguration(path).ok());
+    RunOptions options;
+    options.mode = RunMode::Single;
+    const Result<TaskId> started = service->startTestWithOptions(options);
+    ASSERT_TRUE(started.ok()) << started.status.error.message.toStdString();
+    ASSERT_TRUE(waitForState(service.get(), TestState::Finished));
+    ASSERT_TRUE(test::waitUntil([&] { return cycles.size() == 1 && samples.size() == 1; },
+                                1000));
+
+    EXPECT_EQ(executor.executeCallCount(), 1);
+    ASSERT_EQ(cycles.size(), 1);
+    EXPECT_EQ(cycles.at(0), 1u);
+    EXPECT_EQ(samples.at(0).cycleIndex, 1u);
+    EXPECT_GT(samples.at(0).timestampUs, 0);
+    EXPECT_TRUE(service->shutdown().ok());
+}
+
+TEST(TestRunServiceTest, PcPeriodicRunsFiniteCyclesAndTagsResultsAndSamples)
+{
+    test::ensureQtApplication();
+    QTemporaryDir temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.isValid());
+
+    TestConfig config = test::makeCompleteConfig();
+    config.steps = {config.steps.at(0)};
+    TestConfigManager manager;
+    const ConfigPath path = saveConfiguration(manager,
+                                               temporaryDirectory,
+                                               config,
+                                               QStringLiteral("pc-periodic.testcfg"));
+    test::FakeAlgorithmExecutor executor;
+    ServiceHandle service = makeService(executor);
+    ASSERT_NE(service, nullptr);
+
+    QVector<quint64> cycles;
+    QVector<TestResult> results;
+    QVector<RawSample> samples;
+    QObject::connect(service.get(),
+                     &ITestRunService::cycleStarted,
+                     QCoreApplication::instance(),
+                     [&cycles](const TaskId&, quint64 cycleIndex) {
+                         cycles.append(cycleIndex);
+                     },
+                     Qt::QueuedConnection);
+    QObject::connect(service.get(),
+                     &ITestRunService::resultProduced,
+                     QCoreApplication::instance(),
+                     [&results](const TaskId&, const TestResult& result) {
+                         results.append(result);
+                     },
+                     Qt::QueuedConnection);
+    QObject::connect(service.get(),
+                     &ITestRunService::sampleProduced,
+                     QCoreApplication::instance(),
+                     [&samples](const TaskId&, const StepId&, const RawSample& sample) {
+                         samples.append(sample);
+                     },
+                     Qt::QueuedConnection);
+
+    ASSERT_TRUE(service->initialize().ok());
+    ASSERT_TRUE(service->loadConfiguration(path).ok());
+    RunOptions options;
+    options.mode = RunMode::PcPeriodic;
+    options.intervalMs = 10;
+    options.maxCycles = 3;
+    ASSERT_TRUE(service->startTestWithOptions(options).ok());
+    ASSERT_TRUE(waitForState(service.get(), TestState::Finished));
+    ASSERT_TRUE(test::waitUntil(
+        [&] { return cycles.size() == 3 && results.size() == 3 && samples.size() == 3; },
+        1000));
+
+    EXPECT_EQ(executor.prepareCalls(), 1);
+    EXPECT_EQ(executor.executeCallCount(), 3);
+    EXPECT_EQ(cycles, QVector<quint64>({1, 2, 3}));
+    for (int index = 0; index < 3; ++index) {
+        const quint64 expectedCycle = static_cast<quint64>(index + 1);
+        EXPECT_EQ(results.at(index).cycleIndex, expectedCycle);
+        EXPECT_EQ(samples.at(index).cycleIndex, expectedCycle);
+    }
+    EXPECT_TRUE(service->shutdown().ok());
+}
+
+TEST(TestRunServiceTest, PcPeriodicWaitIsInterruptibleAndDoesNotStartAnotherCycle)
+{
+    test::ensureQtApplication();
+    QTemporaryDir temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.isValid());
+
+    TestConfig config = test::makeCompleteConfig();
+    config.steps = {config.steps.at(0)};
+    TestConfigManager manager;
+    const ConfigPath path = saveConfiguration(manager,
+                                               temporaryDirectory,
+                                               config,
+                                               QStringLiteral("pc-periodic-stop.testcfg"));
+    test::FakeAlgorithmExecutor executor;
+    ServiceHandle service = makeService(executor);
+    ASSERT_NE(service, nullptr);
+
+    ASSERT_TRUE(service->initialize().ok());
+    ASSERT_TRUE(service->loadConfiguration(path).ok());
+    RunOptions options;
+    options.mode = RunMode::PcPeriodic;
+    options.intervalMs = 1000;
+    options.maxCycles = 0;
+    ASSERT_TRUE(service->startTestWithOptions(options).ok());
+    ASSERT_TRUE(test::waitUntil([&] { return executor.executeCallCount() == 1; }, 500));
+
+    ASSERT_TRUE(service->stopTest(500).ok());
+    ASSERT_TRUE(waitForState(service.get(), TestState::Idle));
+    QThread::msleep(50);
+    EXPECT_EQ(executor.executeCallCount(), 1);
+    EXPECT_TRUE(service->shutdown().ok());
+}
+
+TEST(TestRunServiceTest, DeviceStreamModeInvokesTheAlgorithmOnlyOnce)
+{
+    test::ensureQtApplication();
+    QTemporaryDir temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.isValid());
+
+    TestConfig config = test::makeCompleteConfig();
+    config.steps = {config.steps.at(0)};
+    TestConfigManager manager;
+    const ConfigPath path = saveConfiguration(manager,
+                                               temporaryDirectory,
+                                               config,
+                                               QStringLiteral("device-stream.testcfg"));
+    test::FakeAlgorithmExecutor executor;
+    ServiceHandle service = makeService(executor);
+    ASSERT_NE(service, nullptr);
+
+    ASSERT_TRUE(service->initialize().ok());
+    ASSERT_TRUE(service->loadConfiguration(path).ok());
+    RunOptions options;
+    options.mode = RunMode::DeviceStream;
+    options.maxCycles = 0;
+    ASSERT_TRUE(service->startTestWithOptions(options).ok());
+    ASSERT_TRUE(waitForState(service.get(), TestState::Finished));
+
+    EXPECT_EQ(executor.executeCallCount(), 1);
+    const QVariantMap tags = executor.prepareSnapshot().context.tags;
+    EXPECT_EQ(tags.value(QStringLiteral("runMode")).toString(),
+              QStringLiteral("device_stream"));
+    EXPECT_TRUE(service->shutdown().ok());
+}
+
+TEST(TestRunServiceTest, RejectsInvalidPcPeriodicOptionsBeforePreparingTheExecutor)
+{
+    test::ensureQtApplication();
+    QTemporaryDir temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.isValid());
+
+    TestConfigManager manager;
+    const ConfigPath path = saveConfiguration(manager,
+                                               temporaryDirectory,
+                                               test::makeCompleteConfig(),
+                                               QStringLiteral("invalid-run-options.testcfg"));
+    test::FakeAlgorithmExecutor executor;
+    ServiceHandle service = makeService(executor);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+    ASSERT_TRUE(service->loadConfiguration(path).ok());
+
+    RunOptions tooFast;
+    tooFast.mode = RunMode::PcPeriodic;
+    tooFast.intervalMs = 9;
+    tooFast.maxCycles = 0;
+    EXPECT_EQ(service->startTestWithOptions(tooFast).status.code,
+              ErrorCode::ParameterRangeError);
+
+    RunOptions tooMany;
+    tooMany.mode = RunMode::PcPeriodic;
+    tooMany.intervalMs = 10;
+    tooMany.maxCycles = 1000000001ULL;
+    EXPECT_EQ(service->startTestWithOptions(tooMany).status.code,
+              ErrorCode::ParameterRangeError);
+    EXPECT_EQ(executor.prepareCalls(), 0);
+    EXPECT_TRUE(service->shutdown().ok());
+}
+
 } // namespace hwtest::biz

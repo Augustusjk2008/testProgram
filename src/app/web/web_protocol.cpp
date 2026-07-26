@@ -58,6 +58,14 @@ QJsonObject snapshotObject(const ApplicationSnapshot& snapshot)
     object.insert(QStringLiteral("attempts"), snapshot.attempts);
     object.insert(QStringLiteral("rawData"),
                   QJsonObject::fromVariantMap(snapshot.rawData));
+    object.insert(QStringLiteral("runMode"), snapshot.runMode);
+    object.insert(QStringLiteral("intervalMs"), snapshot.intervalMs);
+    object.insert(QStringLiteral("maxCycles"),
+                  static_cast<double>(snapshot.maxCycles));
+    object.insert(QStringLiteral("cycleIndex"),
+                  static_cast<double>(snapshot.cycleIndex));
+    object.insert(QStringLiteral("sampleCount"),
+                  static_cast<double>(snapshot.sampleCount));
     return object;
 }
 
@@ -188,6 +196,26 @@ QJsonObject makeSnapshot(quint64 sequence,
         {QStringLiteral("type"), QStringLiteral("snapshot")},
         {QStringLiteral("seq"), static_cast<double>(sequence)},
         {QStringLiteral("snapshot"), snapshotObject(snapshot)},
+    };
+}
+
+QJsonObject makeSample(quint64 sequence,
+                       const ApplicationSample& sample)
+{
+    const QJsonObject sampleObject{
+        {QStringLiteral("taskId"), sample.taskId},
+        {QStringLiteral("stepId"), sample.stepId},
+        {QStringLiteral("channelId"), sample.channelId},
+        {QStringLiteral("timestampUs"), static_cast<double>(sample.timestampUs)},
+        {QStringLiteral("cycleIndex"), static_cast<double>(sample.cycleIndex)},
+        {QStringLiteral("values"), QJsonObject::fromVariantMap(sample.values)},
+        {QStringLiteral("tags"), QJsonObject::fromVariantMap(sample.tags)},
+    };
+    return QJsonObject{
+        {QStringLiteral("v"), 1},
+        {QStringLiteral("type"), QStringLiteral("sample")},
+        {QStringLiteral("seq"), static_cast<double>(sequence)},
+        {QStringLiteral("sample"), sampleObject},
     };
 }
 

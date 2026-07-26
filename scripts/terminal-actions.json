@@ -47,9 +47,9 @@
     },
     {
       "id": "start_web",
-      "label": "启动 WebSocket 后端",
-      "icon": "RadioTower",
-      "windowsCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\hwtest.ps1 -Ui web -WebPort 8765",
+      "label": "启动 Web",
+      "icon": "Terminal",
+      "windowsCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\hwtest.ps1 -Ui web -WebPort 18765",
       "linuxCommand": "",
       "macosCommand": "",
       "cwd": ".",

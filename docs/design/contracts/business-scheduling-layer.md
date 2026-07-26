@@ -16,7 +16,7 @@
 BIZ 负责：
 
 - 配置读取、迁移、校验和新格式写出。
-- 计划生成、稳定依赖排序、重试、任务状态和结果编排。
+- 计划生成、稳定依赖排序、重试、运行模式、任务状态和结果编排。
 - 报告编排，以及 `LogEvent` 的生产和转发。
 - 向算法端口传递 `TestPlan`、`TestContext` 和不透明的 `executionConfig`。
 
@@ -33,11 +33,12 @@ BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作�
 | `TestStep` | 可调度步骤：标识、算法 ID、参数、超时、重试、启用状态、依赖和判据 |
 | `TestPlan` | 由已规范化配置生成的有序步骤和相关业务模型；不包含 `executionConfig` |
 | `TestContext` | 一次任务的 `runId`、`requestId`、产品、操作者、工位和 tags；不得扩展为设备句柄或通讯对象 |
-| `TestResult`、`MeasurementRecord`、`RawSample` | 单步结果、测量记录和算法回传样本；BIZ 聚合但不改变产品判定语义 |
+| `RunMode`、`RunOptions` | 单次、PC 周期和设备持续回告三种通用运行语义，以及轮间隔和最大轮数 |
+| `TestResult`、`MeasurementRecord`、`RawSample` | 单步结果、测量记录和算法回传样本；BIZ 聚合结果、标记并转发样本，但不改变产品判定语义 |
 | `ProtocolProfile`、`HardwareRequirement`、`SafetyPolicy` | 兼容和透传模型；BIZ 保存/校验结构，不解释协议或实施安全动作 |
 | `RuntimeConfig`、`ReportOptions` | 业务调度与报告选项；文件 I/O 不属于生产硬件/通讯 I/O 边界 |
 
-`TestState`、`TestVerdict`、`SkipReason`、`RunControl`、`CmpOp`、`Permission` 和 `ErrorCode` 的枚举值是公共兼容面。结构体应优先尾部扩展，不改变既有枚举数值或语义。
+`TestState`、`TestVerdict`、`SkipReason`、`RunControl`、`RunMode`、`CmpOp`、`Permission` 和 `ErrorCode` 的枚举值是公共兼容面。结构体应优先尾部扩展，不改变既有枚举数值或语义。`RawSample::cycleIndex` 和 `TestResult::cycleIndex` 是当前尾部扩展；轮次从 `1` 开始。
 
 配置规则：
 
@@ -75,6 +76,9 @@ public:
     virtual Status loadConfiguration(const ConfigPath& configPath) = 0;
     virtual Result<TaskId> startTest(const QStringList& testItems = {},
                                      int priority = -1) = 0;
+    virtual Result<TaskId> startTestWithOptions(const RunOptions& options,
+                                                const QStringList& testItems = {},
+                                                int priority = -1);
     virtual Status pauseTest() = 0;
     virtual Status resumeTest() = 0;
     virtual Status stopTest(int timeoutMs = 5000) = 0;
@@ -86,6 +90,8 @@ public:
 signals:
     void testProgress(const TaskId&, const TestItemId&, int progress, const QString& step);
     void stateChanged(const TaskId&, TestState);
+    void cycleStarted(const TaskId&, quint64 cycleIndex);
+    void sampleProduced(const TaskId&, const StepId&, const RawSample&);
     void resultProduced(const TaskId&, const TestResult&);
     void logProduced(const hwtest::logging::LogEvent&);
     void hardwareError(const TaskId&, const TestItemId&, ErrorCode, const QString&);
@@ -93,6 +99,7 @@ signals:
 ```
 
 - `resetHardware()` 是保留的对上方法名；BIZ 的实现只能委托算法端口的 `reset()`，不保有设备对象。
+- `startTest()` 保持既有单次语义，并等价于 `startTestWithOptions(RunOptions{})`。接口为外部派生类提供默认实现：`Single` 委托旧方法，其他模式默认返回 `CapabilityUnsupported`。
 - 空 `testItems` 表示全部启用步骤；`priority == -1` 使用 `RuntimeConfig::taskPriorityDefault`，其他值只接受 1 到 3。
 - `loadConfiguration()` 仅允许 `Idle` 或 `Finished`；`stopTest()` 在 `Idle` 幂等成功。
 - `generateReport()` 只读取已编排的结果和日志摘要，不触发算法、日志存储或硬件操作。
@@ -121,12 +128,27 @@ void destroyReportGenerator(IReportGenerator* generator);
 | 当前状态 | 操作 | 目标状态 |
 | --- | --- | --- |
 | `Uninitialized` | `initialize()` | `Idle` |
-| `Idle` / `Finished` | `loadConfiguration()` / `startTest()` | `Idle` / `Running` |
+| `Idle` / `Finished` | `loadConfiguration()` / `startTest()` / `startTestWithOptions()` | `Idle` / `Running` |
 | `Running` | `pauseTest()` | `Paused` |
 | `Paused` | `resumeTest()` | `Running` |
 | `Running` / `Paused` | `stopTest()` | `Stopping` 后收敛到 `Idle` |
 | 活动状态 | 算法端口返回不可恢复业务错误 | `Error` |
 | `Idle` / `Finished` / `Error` | `shutdown()` | `Uninitialized` |
+
+### 3.1 运行模式
+
+三种模式是互相独立的通用调度语义：
+
+| 模式 | BIZ 行为 | 结束条件 |
+| --- | --- | --- |
+| `Single` / `single` | 执行测试计划一轮 | 一轮完成、错误或停止 |
+| `PcPeriodic` / `pc_periodic` | 每轮完整执行计划；上一轮完成后等待 `intervalMs`，再由 PC 主机发起下一轮，不允许轮次重叠 | 达到 `maxCycles`、错误或停止；`maxCycles == 0` 表示不限轮数 |
+| `DeviceStream` / `device_stream` | BIZ 只调用一轮、每个步骤只调用一次 `executeStep()`；算法可在该调用内多次 `onSample()`，并自行定义设备流启动/停止协议 | 算法返回、错误或停止 |
+
+- `PcPeriodic` 只接受 `10..3600000` ms 的整数间隔，有限轮数不超过 `1000000000`。轮间等待可被暂停、恢复和停止唤醒。
+- 每轮开始先发出 `cycleStarted`；结果和样本均标记当前 `cycleIndex`。算法未给样本时间戳时，BIZ 使用当前 UTC epoch 微秒补齐，再发出 `sampleProduced`。当前服务不额外长期缓存样本，避免无限周期会话在 BIZ 内形成无界样本副本。
+- BIZ 把 `runMode`、`intervalMs` 和 `maxCycles` 写入 `TestContext::tags`，但不据此解释产品命令。设备是否支持 `DeviceStream` 由算法决定；当前 `mbddf.system_status` 没有设备流启动/停止命令，准备阶段返回 `CapabilityUnsupported`。
+- PC 周期会话中的硬件或协议执行错误结束整个会话；普通判定失败是否中止同轮后续步骤仍由 `RuntimeConfig::stopOnFirstFailure` 控制。
 
 ## 4. BIZ 到算法层端口
 
@@ -163,6 +185,7 @@ public:
 
 - BIZ 先构建 `TestPlan` 和 `TestContext`，再调用 `prepare()`；`executeStep()` 只接收已排序的单步。
 - 依赖失败、禁用、重试和任务级停止策略由 BIZ 编排；算法端口返回单步结果、样本、进度和日志。
+- 一次 `executeStep()` 可以产生零到多条 `RawSample`；这既用于单轮观测，也为设备持续回告保留，不意味着 BIZ 自行读取设备。
 - `IRunControl`、`IAlgorithmObserver` 的引用只在对应 `executeStep()` 调用期间有效，算法实现不得缓存。
 - `requestStop(timeoutMs)` 必须使活动 `executeStep()` 在时限内观察取消并返回；其 `Status` 描述清理结果，不表示允许继续阻塞。`shutdown(timeoutMs)` 同样必须遵守时限。
 - 工厂接收的 `IAlgorithmExecutor*` 为非拥有指针，执行器必须晚于服务销毁。
@@ -172,7 +195,7 @@ public:
 ## 5. 计划、调度、日志和报告
 
 - `TestPlanBuilder` 过滤禁用步骤、合并默认超时和重试、拒绝缺失依赖和依赖环，并产生稳定拓扑顺序。
-- `[当前实现]` 执行器按拓扑顺序串行调度。`parallelEnabled`、`maxParallel` 和 `Permission` 仅保留为配置/兼容扩展面，尚不形成并行组或授权服务。
+- `[当前实现]` 每一轮按拓扑顺序串行调度；`PcPeriodic` 在轮外重复该稳定顺序。`parallelEnabled`、`maxParallel` 和 `Permission` 仅保留为配置/兼容扩展面，尚不形成并行组或授权服务。
 - `getResourceStatus()` 当前返回 BIZ 只读快照；它不锁定、释放、复位或观察硬件资源。
 - BIZ 只生产或转发 `logProduced(const hwtest::logging::LogEvent&)`。`LogEvent` 的来源、字段、追踪和 HAL/Adapter 映射以 `log-interface-protocol.md` 为唯一主定义。
 - 报告只消费 BIZ 已编排的 `TestResult` 快照和摘要；报告文件 I/O 不触发执行器或设备操作。

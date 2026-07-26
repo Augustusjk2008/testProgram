@@ -87,6 +87,18 @@ enum class RunControl {
     Stop
 };
 
+enum class RunMode {
+    Single = 0,
+    PcPeriodic,
+    DeviceStream
+};
+
+struct HWTEST_BIZ_EXPORT RunOptions {
+    RunMode mode = RunMode::Single;
+    int intervalMs = 1000;
+    quint64 maxCycles = 1;
+};
+
 enum class TestVerdict {
     Pass = 0,
     Fail,
@@ -263,6 +275,7 @@ struct HWTEST_BIZ_EXPORT RawSample {
     QString channelId;
     QVariantMap values;
     QVariantMap tags;
+    quint64 cycleIndex = 1;
 };
 
 struct HWTEST_BIZ_EXPORT SystemResource {
@@ -286,6 +299,7 @@ struct HWTEST_BIZ_EXPORT TestResult {
     int attempts = 1;
     qint64 startTimeUs = 0;
     qint64 endTimeUs = 0;
+    quint64 cycleIndex = 1;
 };
 
 struct HWTEST_BIZ_EXPORT ReportOptions {
@@ -302,6 +316,8 @@ struct HWTEST_BIZ_EXPORT ReportOptions {
 HWTEST_BIZ_EXPORT QString errorCodeToString(ErrorCode code);
 HWTEST_BIZ_EXPORT QString testStateToString(TestState state);
 HWTEST_BIZ_EXPORT QString testVerdictToString(TestVerdict verdict);
+HWTEST_BIZ_EXPORT QString runModeToString(RunMode mode);
+HWTEST_BIZ_EXPORT bool runModeFromString(const QString& text, RunMode* mode);
 HWTEST_BIZ_EXPORT void registerBizMetaTypes();
 
 } // namespace hwtest::biz
@@ -309,6 +325,8 @@ HWTEST_BIZ_EXPORT void registerBizMetaTypes();
 Q_DECLARE_METATYPE(hwtest::biz::ErrorCode)
 Q_DECLARE_METATYPE(hwtest::biz::TestState)
 Q_DECLARE_METATYPE(hwtest::biz::TestVerdict)
+Q_DECLARE_METATYPE(hwtest::biz::RunMode)
+Q_DECLARE_METATYPE(hwtest::biz::RunOptions)
 Q_DECLARE_METATYPE(hwtest::biz::TestResult)
 Q_DECLARE_METATYPE(QVector<hwtest::biz::TestResult>)
 Q_DECLARE_METATYPE(hwtest::biz::SystemResource)

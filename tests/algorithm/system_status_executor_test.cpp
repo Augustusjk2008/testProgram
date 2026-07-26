@@ -501,6 +501,24 @@ TEST(SystemStatusExecutorTest, ConfigBIZSimulatorAndGoldenFrameFormOneClosedLoop
     ASSERT_TRUE(service->shutdown().ok());
 }
 
+TEST(SystemStatusExecutorTest, RejectsDeviceManagedStreamingBeforeOpeningTransport)
+{
+    ProtocolCatalog catalog;
+    auto simulator = std::make_unique<SystemStatusSimulator>(&catalog);
+    SystemStatusSimulator* simulatorPtr = simulator.get();
+    SystemStatusAlgorithmExecutor executor(std::move(simulator));
+
+    hwtest::biz::TestContext context;
+    context.tags.insert(QStringLiteral("runMode"), QStringLiteral("device_stream"));
+    const hwtest::biz::Status prepared =
+        executor.prepare(hwtest::biz::TestPlan{}, context, QVariantMap{});
+
+    EXPECT_FALSE(prepared.ok());
+    EXPECT_EQ(prepared.code, hwtest::biz::ErrorCode::CapabilityUnsupported);
+    EXPECT_TRUE(prepared.error.message.contains(QStringLiteral("SYSTEM_STATUS")));
+    EXPECT_EQ(simulatorPtr->transactionCount(), 0);
+}
+
 TEST(SystemStatusExecutorTest, BadCrcBecomesProtocolErrorThroughBIZ)
 {
     const QString assets = catalogDirectory();

@@ -59,11 +59,43 @@ QString testVerdictToString(TestVerdict verdict)
     return QStringLiteral("Error");
 }
 
+QString runModeToString(RunMode mode)
+{
+    switch (mode) {
+    case RunMode::Single: return QStringLiteral("single");
+    case RunMode::PcPeriodic: return QStringLiteral("pc_periodic");
+    case RunMode::DeviceStream: return QStringLiteral("device_stream");
+    }
+    return QStringLiteral("single");
+}
+
+bool runModeFromString(const QString& text, RunMode* mode)
+{
+    if (mode == nullptr) {
+        return false;
+    }
+    const QString normalized = text.trimmed().toLower();
+    if (normalized == QStringLiteral("single")) {
+        *mode = RunMode::Single;
+        return true;
+    }
+    if (normalized == QStringLiteral("pc_periodic")) {
+        *mode = RunMode::PcPeriodic;
+        return true;
+    }
+    if (normalized == QStringLiteral("device_stream")) {
+        *mode = RunMode::DeviceStream;
+        return true;
+    }
+    return false;
+}
+
 void registerBizMetaTypes()
 {
     // MOC records aliases used in ITestRunService signal signatures by their
     // unqualified spelling. Register both spellings for queued UI delivery.
     qRegisterMetaType<TaskId>("TaskId");
+    qRegisterMetaType<StepId>("StepId");
     qRegisterMetaType<TestItemId>("TestItemId");
     qRegisterMetaType<ErrorCode>("ErrorCode");
     qRegisterMetaType<TestState>("TestState");
@@ -71,9 +103,12 @@ void registerBizMetaTypes()
     qRegisterMetaType<ErrorCode>("hwtest::biz::ErrorCode");
     qRegisterMetaType<TestState>("hwtest::biz::TestState");
     qRegisterMetaType<TestVerdict>("hwtest::biz::TestVerdict");
+    qRegisterMetaType<RunMode>("hwtest::biz::RunMode");
+    qRegisterMetaType<RunOptions>("hwtest::biz::RunOptions");
     qRegisterMetaType<TestResult>("hwtest::biz::TestResult");
     qRegisterMetaType<QVector<TestResult>>("QVector<hwtest::biz::TestResult>");
     qRegisterMetaType<SystemResource>("hwtest::biz::SystemResource");
+    qRegisterMetaType<RawSample>("RawSample");
     qRegisterMetaType<RawSample>("hwtest::biz::RawSample");
 }
 

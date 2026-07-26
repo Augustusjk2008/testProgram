@@ -1,6 +1,6 @@
 # testProgram
 
-当前版本提供 MB_DDF_v2 `SYSTEM_STATUS` 的一次性 runner、分步 TUI、Qt Widgets GUI 和本机 WebSocket 后端。四个入口共享同一个应用控制器和生命周期；板端当前通讯基线是串口，PC 端仍保留 UDP 控制资源，用于本机模拟和后续网口扩展。
+当前版本提供 MB_DDF_v2 `SYSTEM_STATUS` 的一次性 runner、分步 TUI、Qt Widgets GUI、本机 WebSocket 后端和浏览器遥测控制台。四个 C++ 入口共享同一个应用控制器和生命周期；BIZ 支持单次与 PC 主动周期测试，并保留设备主动持续回告的独立语义。板端当前通讯基线是串口，PC 端仍保留 UDP 控制资源，用于本机模拟和后续网口扩展。
 
 从仓库根目录执行一条命令即可配置、构建和启动：
 
@@ -8,7 +8,7 @@
 .\hwtest.ps1 ports
 .\hwtest.ps1 -Ui tui
 .\hwtest.ps1 -Ui gui
-.\hwtest.ps1 -Ui web -WebPort 8765
+.\hwtest.ps1 -Ui web -WebPort 18765
 .\hwtest.ps1 start -Ui gui -Port COM7
 .\hwtest.ps1 run -Port COM7
 .\hwtest.ps1 test
@@ -16,9 +16,21 @@
 
 第一次使用命令行界面时，先阅读 [TUI 使用指南](docs/user/tui-usage-guide.md)。其中包含可直接照抄的串口流程、全部命令和状态说明、常见错误恢复，以及后续新增测试项目时的操作兼容规则。
 
-`tui`、`gui` 和 `web` 是兼容别名，例如 `.\hwtest.ps1 tui -Port COM7`、`.\hwtest.ps1 gui -Port COM7` 与 `.\hwtest.ps1 web -WebPort 8765`。无参数执行脚本只显示帮助，不启动前端。
+`tui`、`gui` 和 `web` 是兼容别名，例如 `.\hwtest.ps1 tui -Port COM7`、`.\hwtest.ps1 gui -Port COM7` 与 `.\hwtest.ps1 web -WebPort 18765`。无参数执行脚本只显示帮助，不启动前端。
 
-`hwtest_web` 只监听 `127.0.0.1`，默认暴露 `ws://127.0.0.1:8765/ws`，启动后打印机器可读的 `ready wsUrl=...`。它是控制器的 WebSocket 适配后端，不提供 HTTP 或静态文件服务；根目录 [front/README.md](front/README.md) 仍只说明未来浏览器前端预留，因此当前不能称为完整 Web UI。消息、动作和安全关闭规则见 [WebSocket 前端协议契约](docs/design/contracts/websocket-frontend-protocol.md)。
+`hwtest_web` 只监听 `127.0.0.1`，默认暴露 `ws://127.0.0.1:18765/ws`，启动后打印机器可读的 `ready wsUrl=...`。它是控制器的 WebSocket 适配后端，不提供 HTTP 或静态文件服务。浏览器控制台是 [front/](front/README.md) 中独立启动的 Vite 工程：
+
+```powershell
+# 终端 1：WebSocket 后端
+.\hwtest.ps1 -Ui web -WebPort 18765
+
+# 终端 2：浏览器前端
+Set-Location front
+npm install
+npm run dev
+```
+
+随后打开 `http://127.0.0.1:5173`。三张页面顶部都保留同一个运行控制条；PC 周期模式由后端/BIZ 重复执行“发指令 → 采反馈”，浏览器不会用定时器重复发送 `start`。字段选择、同图/分图/自定义图组和时间窗保存在浏览器本机。消息、动作和安全关闭规则见 [WebSocket 前端协议契约](docs/design/contracts/websocket-frontend-protocol.md)。
 
 `-Port` 只覆盖本次进程，不修改配置文件。也可以在独立的 HAL 部署配置中设置 `hardware.resources.<ResourceId>.properties.portName`，再用 `-HalConfig` 指定：
 

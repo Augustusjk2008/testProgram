@@ -29,13 +29,13 @@
 - 算法：`src/algorithm/` 已提供 `hwtest_algorithm_mbddf`、MB_DDF CSV 协议编解码和 `SYSTEM_STATUS` 执行器，命名空间为 `hwtest::algorithm::mbddf`。
 - 应用：`src/app/` 提供共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support`、`hwtest_web_support`，以及独立的 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui`、`hwtest_web`；四个入口均通过 `TestApplicationController` 从 BIZ 测试配置和 HAL 部署配置组装当前唯一的 `mbddf.system_status` 测试。
 - 测试：`tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/`、`tests/app/` 使用 GoogleTest 并通过 CTest 注册；当前清单和统计只以 `docs/design/testing/testing-specification.md` 为准。
-- 当前已有行式 TUI、Qt Widgets GUI 和仅监听 `127.0.0.1` 的 `hwtest_web` WebSocket 后端；`front/` 仍只有说明文件，没有浏览器页面、组件或构建工具，因此不能宣称完整 Web UI 已落地。TCP Provider、真实厂家链和真实硬件验收仍未实现。HAL 控制通道已实现 `qt.serial` 和 `qt.udp`，其中 UDP 已有经应用控制器/BIZ/算法/HAL 的本机模拟目标闭环；真实串口尚未联调。`SystemStatusSimulator` 仍只作为纯协议替身。
+- 当前已有行式 TUI、Qt Widgets GUI、仅监听 `127.0.0.1` 的 `hwtest_web` WebSocket 后端，以及 `front/` 中独立构建的 React/Vite 浏览器遥测控制台。BIZ 已实现 `single`、`pc_periodic`、`device_stream` 三种运行语义；当前 SYSTEM_STATUS 支持单次和 PC 周期，因缺少设备流启动/停止命令而明确拒绝设备持续模式。TCP Provider、真实厂家链和真实硬件验收仍未实现。HAL 控制通道已实现 `qt.serial` 和 `qt.udp`，其中 UDP 已有经应用控制器/BIZ/算法/HAL 的本机模拟目标闭环；真实串口尚未联调。`SystemStatusSimulator` 仍只作为纯协议替身。
 - `dut/docs/design/product_protocol_csv/` 是已导入的 MB_DDF 协议 CSV 快照，导入提交时清单为 32 个 CSV；源事实目录仍为 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv`。仓库尚未实现协议 manifest、内容哈希和不可变快照的自动机制。
 
 ## 分层与 I/O 边界
 
 ```text
-TUI / Qt GUI / batch CLI / WebSocket 后端（当前实现）；浏览器 Web UI（未实现）
+浏览器 Web UI -> 回环 WebSocket 后端；TUI / Qt GUI / batch CLI
   -> hwtest_app_core::TestApplicationController
   -> hwtest_biz
   -> biz::IAlgorithmExecutor（算法层实现）
@@ -44,7 +44,7 @@ TUI / Qt GUI / batch CLI / WebSocket 后端（当前实现）；浏览器 Web UI
 ```
 
 - BIZ 负责配置、计划、稳定拓扑排序、运行状态、重试、结果编排和报告，保持硬件无关。它只能直接依赖 Qt Core、`hwtest_log_types` 和自身公共模型；禁止 include、link、call 或持有 HAL、Adapter、Socket、codec、测量基类/工厂或安全输出执行对象。
-- TUI、Qt GUI、WebSocket 后端和未来浏览器 Web UI 只能消费应用层 DTO、动作结果和快照事件；HAL 会话、算法执行器、BIZ 服务及其收尾顺序统一由 `hwtest_app_core` 组合，不得在各前端复制。控制器动作和快照只能在其 QObject 亲和线程调用，其他线程必须排队投递；GUI 和 WebSocket 后端不调用 `waitForTerminal()`，只通过 `snapshotChanged`、`stopAsync()` 和 `stopCompleted` 异步观察运行、停止和终态。这里禁止的是前端持有 DUT/生产 I/O Socket；`QWebSocketServer`/`QWebSocket` 只属于前端传输边界。
+- TUI、Qt GUI、WebSocket 后端和浏览器 Web UI 只能消费应用层 DTO、动作结果、快照和样本事件；HAL 会话、算法执行器、BIZ 服务及其收尾顺序统一由 `hwtest_app_core` 组合，不得在各前端复制。控制器动作和快照只能在其 QObject 亲和线程调用，其他线程必须排队投递；GUI 和 WebSocket 后端不调用 `waitForTerminal()`，只通过异步事件、`stopAsync()` 和 `stopCompleted` 观察运行、停止和终态。PC 周期调度属于 BIZ，浏览器不得定时重复发送 `start`。这里禁止的是前端持有 DUT/生产 I/O Socket；`QWebSocketServer`/`QWebSocket` 只属于前端传输边界。
 - `[目标契约-未实现]` 算法层负责产品协议 CSV、编解码、序列/流程和判定，并通过 HAL 请求设备生命周期；它不持有具体连接对象，也不直接执行生产原始 I/O、deadline 或物理 safe state。
 - `[目标契约-未实现]` 面向测试设备或 DUT 的所有生产态硬件和通讯 I/O 必须统一经 HAL。HAL 持有具体连接对象，执行原始 I/O 和 deadline，归一化错误，并执行物理 safe state。
 - `[当前实现]` `module = "control"` 的资源按显式 `providerId` 路由 `qt.serial` 或 `qt.udp`，直接使用 Qt 标准 API 并绕过 Vendor Adapter；其他资源仍走现有 `CAbiAdapter -> MockAdapter`。通用 Provider Router、TCP、控制通道 Mock Provider 和 Vendor Provider 尚未实现。

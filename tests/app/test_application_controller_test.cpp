@@ -227,6 +227,88 @@ TEST(TestApplicationControllerTest, RunsSystemStatusThroughTheSelectedUdpControl
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("configured"));
 }
 
+TEST(TestApplicationControllerTest, PcPeriodicRunForwardsTimestampedSamplesFromEveryCycle)
+{
+    ensureQtApplication();
+    const QString assets = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
+
+    TestApplicationController controller;
+    QVector<ApplicationSample> samples;
+    QObject::connect(&controller,
+                     &TestApplicationController::sampleReceived,
+                     &controller,
+                     [&](const ApplicationSample& sample) {
+                         samples.push_back(sample);
+                     });
+    ASSERT_TRUE(controller.loadConfigurations(QStringLiteral(HWTEST_APP_TEST_CONFIG),
+                                                halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+
+    TestRunOptions invalidOptions;
+    invalidOptions.mode = QStringLiteral("pc_periodic");
+    invalidOptions.intervalMs = 9;
+    invalidOptions.maxCycles = 2;
+    const ActionResult rejected = controller.start(invalidOptions);
+    EXPECT_FALSE(rejected.ok);
+    EXPECT_EQ(rejected.code, QStringLiteral("ParameterRangeError"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
+
+    TestRunOptions options;
+    options.mode = QStringLiteral("pc_periodic");
+    options.intervalMs = 10;
+    options.maxCycles = 2;
+    const ActionResult started = controller.start(options);
+    ASSERT_TRUE(started.ok) << started.message.toStdString();
+
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+        ASSERT_TRUE(peer.replyToLastRequest(&peerError)) << peerError.toStdString();
+    }
+
+    const ActionResult waited = controller.waitForTerminal(3000);
+    ASSERT_TRUE(waited.ok) << waited.message.toStdString();
+    ASSERT_EQ(samples.size(), 2);
+    EXPECT_EQ(samples.at(0).cycleIndex, 1u);
+    EXPECT_EQ(samples.at(1).cycleIndex, 2u);
+    EXPECT_EQ(samples.at(0).taskId, controller.snapshot().taskId);
+    EXPECT_EQ(samples.at(0).stepId, QStringLiteral("SYSTEM_STATUS"));
+    EXPECT_EQ(samples.at(0).channelId, QStringLiteral("SYSTEM_STATUS"));
+    EXPECT_GT(samples.at(0).timestampUs, 0);
+    EXPECT_NEAR(samples.at(0).values.value(QStringLiteral("cpu_usage")).toDouble(),
+                12.5,
+                1e-6);
+
+    const ApplicationSnapshot finished = controller.snapshot();
+    EXPECT_EQ(finished.phase, QStringLiteral("finished"));
+    EXPECT_EQ(finished.runMode, QStringLiteral("pc_periodic"));
+    EXPECT_EQ(finished.intervalMs, 10);
+    EXPECT_EQ(finished.maxCycles, 2u);
+    EXPECT_EQ(finished.cycleIndex, 2u);
+    EXPECT_EQ(finished.sampleCount, 2u);
+    EXPECT_EQ(finished.rawData.value(QStringLiteral("responseValues"))
+                  .toMap()
+                  .value(QStringLiteral("seq"))
+                  .toUInt(),
+              0x1235u);
+
+    ASSERT_TRUE(controller.shutdown().ok);
+}
+
 TEST(TestApplicationControllerTest, AsyncPreparationFailureIsReturnedByWaitWithoutFabricatingAResult)
 {
     ensureQtApplication();

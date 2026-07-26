@@ -146,8 +146,10 @@ TestApplicationController::TestApplicationController(QObject* parent)
     , m_impl(std::make_unique<Impl>())
 {
     qRegisterMetaType<ActionResult>();
+    qRegisterMetaType<ApplicationSample>();
     qRegisterMetaType<ApplicationSnapshot>();
     qRegisterMetaType<SerialPortInfo>();
+    qRegisterMetaType<TestRunOptions>();
     qRegisterMetaType<QVector<SerialPortInfo>>();
 }
 
@@ -436,6 +438,41 @@ ActionResult TestApplicationController::prepare()
                      &hwtest::logging::LogService::append,
                      Qt::DirectConnection);
     QObject::connect(m_impl->runner.get(),
+                     &hwtest::biz::ITestRunService::cycleStarted,
+                     this,
+                     [this, generation](const hwtest::biz::TaskId& taskId,
+                                        quint64 cycleIndex) {
+                         if (generation != m_impl->generation ||
+                             taskId == m_impl->suppressedResultTaskId) {
+                             return;
+                         }
+                         m_impl->snapshot.taskId = taskId;
+                         m_impl->snapshot.cycleIndex = cycleIndex;
+                         emit snapshotChanged(m_impl->snapshot);
+                     });
+    QObject::connect(m_impl->runner.get(),
+                     &hwtest::biz::ITestRunService::sampleProduced,
+                     this,
+                     [this, generation](const hwtest::biz::TaskId& taskId,
+                                        const hwtest::biz::StepId& stepId,
+                                        const hwtest::biz::RawSample& rawSample) {
+                         if (generation != m_impl->generation ||
+                             taskId == m_impl->suppressedResultTaskId) {
+                             return;
+                         }
+                         ApplicationSample sample;
+                         sample.taskId = taskId;
+                         sample.stepId = stepId;
+                         sample.channelId = rawSample.channelId;
+                         sample.timestampUs = rawSample.timestampUs;
+                         sample.cycleIndex = rawSample.cycleIndex;
+                         sample.values = rawSample.values;
+                         sample.tags = rawSample.tags;
+                         m_impl->snapshot.cycleIndex = rawSample.cycleIndex;
+                         ++m_impl->snapshot.sampleCount;
+                         emit sampleReceived(sample);
+                     });
+    QObject::connect(m_impl->runner.get(),
                      &hwtest::biz::ITestRunService::testProgress,
                      this,
                      [this, generation](const hwtest::biz::TaskId& taskId,
@@ -518,6 +555,7 @@ ActionResult TestApplicationController::prepare()
                          m_impl->snapshot.message = result.message;
                          m_impl->snapshot.attempts = result.attempts;
                          m_impl->snapshot.rawData = result.rawData;
+                         m_impl->snapshot.cycleIndex = result.cycleIndex;
                          emit snapshotChanged(m_impl->snapshot);
                      });
     QObject::connect(m_impl->runner.get(),
@@ -559,6 +597,11 @@ ActionResult TestApplicationController::prepare()
 
 ActionResult TestApplicationController::start()
 {
+    return start(TestRunOptions{});
+}
+
+ActionResult TestApplicationController::start(const TestRunOptions& options)
+{
     if (!onAffinityThread(this)) {
         return affinityFailure();
     }
@@ -568,6 +611,26 @@ ActionResult TestApplicationController::start()
          m_impl->snapshot.phase != QStringLiteral("stopped"))) {
         return failure(QStringLiteral("invalid_state"),
                        QStringLiteral("Run is only available after preparation or a finished run"));
+    }
+
+    hwtest::biz::RunMode mode = hwtest::biz::RunMode::Single;
+    if (!hwtest::biz::runModeFromString(options.mode, &mode)) {
+        return failure(QStringLiteral("invalid_run_mode"),
+                       QStringLiteral("Unknown run mode '%1'").arg(options.mode));
+    }
+    hwtest::biz::RunOptions runOptions;
+    runOptions.mode = mode;
+    runOptions.intervalMs = options.intervalMs;
+    runOptions.maxCycles = options.maxCycles;
+    if (mode == hwtest::biz::RunMode::PcPeriodic &&
+        (options.intervalMs < 10 || options.intervalMs > 60 * 60 * 1000)) {
+        return failure(QStringLiteral("ParameterRangeError"),
+                       QStringLiteral("PC periodic interval must be in the range 10..3600000 ms"));
+    }
+    if (mode == hwtest::biz::RunMode::PcPeriodic &&
+        options.maxCycles > 1000000000ULL) {
+        return failure(QStringLiteral("ParameterRangeError"),
+                       QStringLiteral("PC periodic maxCycles must be 0 or at most 1000000000"));
     }
 
     m_impl->snapshot.progress = 0;
@@ -581,8 +644,13 @@ ActionResult TestApplicationController::start()
     m_impl->snapshot.message.clear();
     m_impl->snapshot.attempts = 0;
     m_impl->snapshot.rawData.clear();
+    m_impl->snapshot.runMode = hwtest::biz::runModeToString(mode);
+    m_impl->snapshot.intervalMs = options.intervalMs;
+    m_impl->snapshot.maxCycles = options.maxCycles;
+    m_impl->snapshot.cycleIndex = 0;
+    m_impl->snapshot.sampleCount = 0;
     m_impl->suppressedResultTaskId.clear();
-    const auto started = m_impl->runner->startTest();
+    const auto started = m_impl->runner->startTestWithOptions(runOptions);
     if (!started.ok()) {
         return bizFailure(started.status, QStringLiteral("Unable to start test"));
     }

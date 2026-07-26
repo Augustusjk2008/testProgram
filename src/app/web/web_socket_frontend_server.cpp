@@ -5,12 +5,14 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QPointer>
+#include <QSet>
 #include <QTimer>
 #include <QWebSocket>
 #include <QWebSocketCorsAuthenticator>
 #include <QWebSocketProtocol>
 #include <QWebSocketServer>
 
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -92,6 +94,19 @@ public:
                              q,
                              [this](const ActionResult& result) {
                                  handleStopCompleted(result);
+                             });
+            QObject::connect(controller,
+                             &TestApplicationController::sampleReceived,
+                             q,
+                             [this](const ApplicationSample& sample) {
+                                 if (activeClient == nullptr ||
+                                     activeClient->state() !=
+                                         QAbstractSocket::ConnectedState) {
+                                     return;
+                                 }
+                                 ++sampleSequence;
+                                 send(activeClient,
+                                      makeSample(sampleSequence, sample));
                              });
         }
 
@@ -368,6 +383,107 @@ public:
         return true;
     }
 
+    static bool parseStartOptions(const WebRequest& request,
+                                  TestRunOptions* options,
+                                  ActionResult* error)
+    {
+        const QSet<QString> allowed{
+            QStringLiteral("mode"),
+            QStringLiteral("intervalMs"),
+            QStringLiteral("maxCycles"),
+        };
+        for (auto iterator = request.params.constBegin();
+             iterator != request.params.constEnd();
+             ++iterator) {
+            if (!allowed.contains(iterator.key())) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Unknown start parameter '%1'")
+                            .arg(iterator.key()));
+                }
+                return false;
+            }
+        }
+
+        TestRunOptions parsed;
+        if (request.params.contains(QStringLiteral("mode"))) {
+            const QJsonValue mode = request.params.value(QStringLiteral("mode"));
+            if (!mode.isString()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'mode' must be a string"));
+                }
+                return false;
+            }
+            parsed.mode = mode.toString();
+        }
+        if (parsed.mode != QStringLiteral("single") &&
+            parsed.mode != QStringLiteral("pc_periodic") &&
+            parsed.mode != QStringLiteral("device_stream")) {
+            if (error != nullptr) {
+                *error = protocolError(
+                    QStringLiteral("invalid_run_mode"),
+                    QStringLiteral("Unknown run mode '%1'").arg(parsed.mode));
+            }
+            return false;
+        }
+
+        if (request.params.contains(QStringLiteral("intervalMs"))) {
+            const QJsonValue interval =
+                request.params.value(QStringLiteral("intervalMs"));
+            const double value = interval.toDouble();
+            if (!interval.isDouble() || !std::isfinite(value) ||
+                std::floor(value) != value) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'intervalMs' must be an integer"));
+                }
+                return false;
+            }
+            if (value < 10.0 || value > 3600000.0) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("ParameterRangeError"),
+                        QStringLiteral("Parameter 'intervalMs' must be in the range 10..3600000"));
+                }
+                return false;
+            }
+            parsed.intervalMs = static_cast<int>(value);
+        }
+
+        if (request.params.contains(QStringLiteral("maxCycles"))) {
+            const QJsonValue cycles =
+                request.params.value(QStringLiteral("maxCycles"));
+            const double value = cycles.toDouble();
+            if (!cycles.isDouble() || !std::isfinite(value) ||
+                std::floor(value) != value) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'maxCycles' must be an integer"));
+                }
+                return false;
+            }
+            if (value < 0.0 || value > 1000000000.0) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("ParameterRangeError"),
+                        QStringLiteral("Parameter 'maxCycles' must be in the range 0..1000000000"));
+                }
+                return false;
+            }
+            parsed.maxCycles = static_cast<quint64>(value);
+        }
+
+        if (options != nullptr) {
+            *options = parsed;
+        }
+        return true;
+    }
+
     static bool validateAction(const WebRequest& request, ActionResult* error)
     {
         if (request.action == QStringLiteral("load") && !request.params.isEmpty()) {
@@ -387,6 +503,9 @@ public:
             return validateRequiredString(request,
                                           QStringLiteral("portName"),
                                           error);
+        }
+        if (request.action == QStringLiteral("start")) {
+            return parseStartOptions(request, nullptr, error);
         }
         return true;
     }
@@ -452,7 +571,13 @@ public:
                 } else if (request.action == QStringLiteral("prepare")) {
                     result = controllerGuard->prepare();
                 } else if (request.action == QStringLiteral("start")) {
-                    result = controllerGuard->start();
+                    TestRunOptions runOptions;
+                    ActionResult parseError;
+                    if (!parseStartOptions(request, &runOptions, &parseError)) {
+                        result = parseError;
+                    } else {
+                        result = controllerGuard->start(runOptions);
+                    }
                 } else if (request.action == QStringLiteral("pause")) {
                     result = controllerGuard->pause();
                 } else if (request.action == QStringLiteral("resume")) {
@@ -732,6 +857,7 @@ public:
     QPointer<QWebSocket> activeClient;
     ApplicationSnapshot cachedSnapshot;
     quint64 snapshotSequence = 0;
+    quint64 sampleSequence = 0;
     PendingOperation pendingOperation = PendingOperation::None;
     QString pendingRequestId;
     QPointer<QWebSocket> pendingSocket;

@@ -129,6 +129,14 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
     m_request = nullptr;
     m_response = nullptr;
 
+    if (context.tags.value(QStringLiteral("runMode")).toString() ==
+        QStringLiteral("device_stream")) {
+        return makeStatus(
+            ErrorCode::CapabilityUnsupported,
+            QStringLiteral("SYSTEM_STATUS does not define a device-managed streaming start/stop flow"),
+            QStringLiteral("mbddf.prepare"));
+    }
+
     const QString assetRoot = effectiveAssetRoot(executionConfig);
     if (assetRoot.isEmpty() || !QFileInfo(assetRoot).isDir()) {
         return makeStatus(ErrorCode::ConfigParseError,

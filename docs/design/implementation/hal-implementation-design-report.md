@@ -286,7 +286,7 @@ createBackend() -> CAbiAdapter -> MockAdapter
 - 传输对象不创建或拥有 `IHalService` / 设备会话，`hwtest_app_core::TestApplicationController` 负责按配置建立和收尾会话；`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web` 均复用该控制器；
 - `SystemStatusAlgorithmExecutor` 每次 BIZ 重试都独立打开/关闭控制资源，并保持同一请求序号；
 - `configs/mbddf_pc_hal.json` 同时定义串口和 UDP 资源，`control.resourceId` 是 PC 每次运行前的唯一选择点；
-- 当前只有 `mbddf.system_status`；行式 TUI、Qt GUI 和 WebSocket 后端可在 configured 状态切换控制资源，浏览器 Web UI 与已准备/运行期间的热切换未实现。
+- 当前只有 `mbddf.system_status`；行式 TUI、Qt GUI 和 WebSocket 后端可在 configured 状态切换控制资源。浏览器遥测控制台已实现运行和观测，但当前未暴露控制资源/串口选择；已准备或运行期间的热切换仍未实现。
 
 Qt UDP 本机模拟目标闭环已经打通；真实 Windows 串口、现场网络端点和 DUT 闭环尚无证据。
 
@@ -324,6 +324,6 @@ Qt UDP 本机模拟目标闭环已经打通；真实 Windows 串口、现场网�
 4. 把当前 `MockAdapter` 迁为直接的 Mock Provider，并补 SYSTEM_STATUS 控制通道闭环。
 5. 把 `AdapterLoader + HalAdapterApiV1` 接入 Vendor Adapter Provider，保留 ABI v1 兼容测试。
 6. 统一全 HAL deadline、连接取消、日志覆盖和异常安全收尾；TCP 在实际用例明确后另行评审。
-7. 完成隔离真实 DUT 验收，再扩充更多 MB_DDF 测试项；未来浏览器 Web UI 继续通过已实现的 `hwtest_web` 和当前应用控制器接入。
+7. 完成隔离真实 DUT 验收，再扩充更多 MB_DDF 测试项；浏览器新增测试项目时继续复用已实现的 `hwtest_web` 和当前应用控制器。
 
 每一步都应先更新 HAL 契约和测试边界，再修改实现；目标能力在通过相应测试前继续标记“未实现”。

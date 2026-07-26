@@ -50,5 +50,11 @@ logs/
 Thumbs.db
 Desktop.ini
 
+# Browser frontend
+front/node_modules/
+front/dist/
+front/coverage/
+front/.env.local
+
 # tmp
 tmp/

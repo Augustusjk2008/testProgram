@@ -17,7 +17,7 @@ param(
     [string]$Control = '',
     [string]$Port = '',
     [ValidateRange(0, 65535)]
-    [int]$WebPort = 8765,
+    [int]$WebPort = 18765,
     [string]$QtPrefix = '',
     [string]$TestRegex = '',
     [switch]$SkipBuild
@@ -60,7 +60,7 @@ Common options:
   -Control <ResourceId>
   -Port <port-name>
   -Ui tui|gui|web
-  -WebPort <0-65535> (WebSocket backend only; no browser frontend is implemented)
+  -WebPort <0-65535> (WebSocket backend port; launch the separate front/ Vite app independently)
   -QtPrefix <Qt CMake prefix>
   -TestRegex <CTest regex>
   -SkipBuild
@@ -72,7 +72,7 @@ Examples:
   .\hwtest.ps1 ports
   .\hwtest.ps1 -Ui tui
   .\hwtest.ps1 start -Ui gui
-  .\hwtest.ps1 -Ui web -WebPort 8765
+  .\hwtest.ps1 -Ui web -WebPort 18765
   .\hwtest.ps1 tui -Port COM7
   .\hwtest.ps1 gui -Port COM7
   .\hwtest.ps1 run -Control CONTROL_SERIAL -Port COM7

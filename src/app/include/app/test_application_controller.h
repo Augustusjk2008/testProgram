@@ -28,6 +28,22 @@ struct SerialPortInfo {
     QString systemLocation;
 };
 
+struct TestRunOptions {
+    QString mode = QStringLiteral("single");
+    int intervalMs = 1000;
+    quint64 maxCycles = 1;
+};
+
+struct ApplicationSample {
+    QString taskId;
+    QString stepId;
+    QString channelId;
+    qint64 timestampUs = 0;
+    quint64 cycleIndex = 1;
+    QVariantMap values;
+    QVariantMap tags;
+};
+
 struct ApplicationSnapshot {
     QString phase = QStringLiteral("empty");
     QString testState = QStringLiteral("Uninitialized");
@@ -46,6 +62,11 @@ struct ApplicationSnapshot {
     QString message;
     int attempts = 0;
     QVariantMap rawData;
+    QString runMode = QStringLiteral("single");
+    int intervalMs = 1000;
+    quint64 maxCycles = 1;
+    quint64 cycleIndex = 0;
+    quint64 sampleCount = 0;
 };
 
 class TestApplicationController final : public QObject {
@@ -65,6 +86,7 @@ public:
     ActionResult selectSerialPort(const QString& portName);
     ActionResult prepare();
     ActionResult start();
+    ActionResult start(const TestRunOptions& options);
     ActionResult pause();
     ActionResult resume();
     ActionResult stop(int timeoutMs = 5000);
@@ -76,6 +98,7 @@ public:
 
 signals:
     void snapshotChanged(const hwtest::app::ApplicationSnapshot& snapshot);
+    void sampleReceived(const hwtest::app::ApplicationSample& sample);
     void stopCompleted(const hwtest::app::ActionResult& result);
 
 private:
@@ -86,6 +109,8 @@ private:
 } // namespace hwtest::app
 
 Q_DECLARE_METATYPE(hwtest::app::ActionResult)
+Q_DECLARE_METATYPE(hwtest::app::ApplicationSample)
 Q_DECLARE_METATYPE(hwtest::app::ApplicationSnapshot)
 Q_DECLARE_METATYPE(hwtest::app::SerialPortInfo)
+Q_DECLARE_METATYPE(hwtest::app::TestRunOptions)
 Q_DECLARE_METATYPE(QVector<hwtest::app::SerialPortInfo>)

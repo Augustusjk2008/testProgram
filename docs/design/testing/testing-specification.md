@@ -8,20 +8,22 @@
 
 ## 1. 当前清单与统计口径
 
-根 CMake 在 BUILD_TESTING 为真时加入 tests/；tests/CMakeLists.txt 当前加入 HAL、日志、BIZ、算法和应用五个目录，共生成七个 GoogleTest 可执行目标。七个目标均用 gtest_discover_tests 在构建后发现 CTest 条目；应用目录另直接注册 GUI offscreen 启动、runner/TUI/Web 的帮助或 smoke、根脚本帮助/非法 UI/选择 TUI、一个 TUI stdin 会话和一个 runner 异步错误，共十个进程测试。
+根 CMake 在 BUILD_TESTING 为真时加入 tests/；tests/CMakeLists.txt 当前加入 HAL、日志、BIZ、算法和应用五个目录，共生成七个 GoogleTest 可执行目标。七个目标均用 gtest_discover_tests 在构建后发现 CTest 条目；应用目录另直接注册 GUI offscreen 启动、runner/TUI/Web 的帮助或 smoke、根脚本帮助/非法 UI/选择 TUI、一个 TUI stdin 会话和一个 runner 异步错误，共十个进程测试。`front/` 另有 Vitest，不进入 CTest 清单。
 
 | 目录 | 测试目标 | 测试源文件 | 源级 GoogleTest 定义 | 当前范围 |
 | --- | --- | ---: | ---: | --- |
 | tests/hal/ | hwtest_hal_tests | 9 | 31 | HAL 接口、资源、安全、Mock、Loader、宿主串口枚举、Qt 控制 Provider |
 | tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
-| tests/biz/ | hwtest_biz_tests | 6 | 35 | 配置、计划、调度、报告和架构边界 |
-| tests/algorithm/ | hwtest_algorithm_tests | 2 | 20 | MB_DDF CSV、流式控制传输和 SYSTEM_STATUS |
-| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 74 | 共享启动/控制器、TUI/GUI/WebSocket、异步停止与关闭、跨前端等价性、架构边界及经 HAL/Qt UDP 的闭环 |
-| 合计 | 7 个目标 | 28 | 167 | 当前源级测试清单 |
+| tests/biz/ | hwtest_biz_tests | 6 | 40 | 配置、计划、单次/PC 周期/设备流调度、样本、报告和架构边界 |
+| tests/algorithm/ | hwtest_algorithm_tests | 2 | 21 | MB_DDF CSV、流式控制传输、SYSTEM_STATUS 和设备流能力判定 |
+| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 78 | 共享启动/控制器、TUI/GUI/WebSocket、连续运行样本、异步停止与关闭、跨前端等价性、架构边界及经 HAL/Qt UDP 的闭环 |
+| 合计 | 7 个目标 | 28 | 177 | 当前源级 GoogleTest 清单 |
 
-167 是当前测试源码中的 GoogleTest 定义数。完整构建后的 CTest 清单为 177 条：167 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试。2026-07-25 的 Debug 构建后 `ctest -N` 实际列出 177 条；清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
+177 是当前测试源码中的 GoogleTest 定义数。完整构建后的 CTest 清单为 187 条：177 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试。2026-07-26 的 Debug 构建后 `ctest -N` 实际列出 187 条；清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
 
 28 个测试定义源文件使用 `*_test.cpp` 命名。两个 HAL DLL fixture、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含测试定义，不计入该数量。
+
+浏览器前端当前有 3 个 `*.test.ts` 文件、9 条 Vitest，用于协议解析/请求、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组。它们由 `npm test` 独立运行，不计入上述 187 条 CTest。
 
 ## 2. 当前覆盖与条件资产
 
@@ -29,15 +31,16 @@
 | --- | --- | --- |
 | HAL | 错误映射、资源映射、安全校验、会话、Mock AD/DA、DI/DO、宿主串口枚举、串口 echo、CANFD loopback、AdapterLoader fixture、控制资源路由、Qt UDP 回环和 timeout | 串口枚举不打开设备；Qt UDP 仅是本机 Provider 证据；没有真实串口、真实网口或厂家 SDK 证据 |
 | 日志 | LogService、JsonLineFileSink、HalLogEvent 到 LogEvent 桥接 | 不覆盖 UI 或真实设备日志链 |
-| BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象 |
-| 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器及 Qt UDP 成功/超时/坏 CRC 路径 | 当前只实现 mbddf.system_status；本机 UDP 模拟目标不等同于真实板端通讯 |
-| 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、控制资源与会话串口选择、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照投影、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口，以及经 BIZ/算法/HAL/Qt UDP 到协议模拟目标的闭环 | 串口选择只证明配置覆盖，不证明端口可打开；offscreen、WebSocket 回环与 UDP 模拟目标不证明浏览器 Web UI、真实串口、真实网口或真实 DUT |
+| BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
+| 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器及 Qt UDP 成功/超时/坏 CRC 路径、SYSTEM_STATUS 拒绝设备流 | 当前只实现 mbddf.system_status；本机 UDP 模拟目标不等同于真实板端通讯；拒绝设备流不证明其他算法已实现设备持续回告 |
+| 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、控制资源与会话串口选择、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | 串口选择只证明配置覆盖，不证明端口可打开；offscreen、WebSocket 回环与 UDP 模拟目标不证明真实串口、真实网口或真实 DUT |
+| 浏览器前端 | Vitest 下的类型化协议、有界数据结构、字段发现、时间窗、降采样和图组；TypeScript/Vite 生产构建 | 不替代 WebSocket/UDP C++ 集成测试，也不证明真实硬件、长期浏览器稳定性或设备流算法 |
 
 下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
 
-- 5 个 MB_DDF 协议测试和 27 个 SYSTEM_STATUS 跨层/集成测试依赖 MB_DDF_PROTOCOL_CSV_DIR 指向的外部 CSV 资产目录；后者包含 20 个应用/TUI/GUI/Web UDP 运行、停止、关闭或等价性测试。
+- 5 个 MB_DDF 协议测试和 29 个 SYSTEM_STATUS 跨层/集成测试依赖 MB_DDF_PROTOCOL_CSV_DIR 指向的外部 CSV 资产目录；后者包含 22 个应用/TUI/GUI/Web UDP 运行、连续采样、停止、关闭或等价性测试。
 - BIZ 的导入附件样例测试依赖 tmp/hwtest_BIZ/configs/sample_product.testcfg；tmp 不是仓库实现事实。
-- 算法测试中有 8 个自包含的帧、传输或临时 CSV 用例；其余 12 个依赖外部 MB_DDF CSV。
+- 算法测试中有 9 个自包含的帧、传输、能力判定或临时 CSV 用例；其余 12 个依赖外部 MB_DDF CSV。
 
 协议 CSV 是运行期资产。用户已批准 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容作为 MB_DDF 基线，当前为 32 个 CSV；协议测试按一文件一定义及当前实际字段校验。仓库不保存这些 CSV fixture，因此测试仍可能因目录缺失而跳过；基线已批准不等于 manifest/hash 可复现快照已经实现。
 
@@ -60,7 +63,7 @@
 | 范围 | 单元测试允许依赖 | 禁止或不作为通过证据 |
 | --- | --- | --- |
 | BIZ | FakeAlgorithmExecutor、配置样本、结果和报告样本 | HAL、Adapter、Socket、codec、测量对象、硬件安全执行 |
-| 应用/TUI/GUI/WebSocket | `TestApplicationController`、前端支持库、TUI 命令解析、Qt offscreen、Qt WebSockets 回环、本机 UDP 隔离目标 | 前端直接持有 HAL、算法或 DUT/生产 I/O Socket；GUI/Web 调用阻塞等待；真实硬件结论；ANSI 屏幕文本作为业务状态源。`QWebSocketServer/QWebSocket` 只属于前端传输，不属于 DUT I/O |
+| 应用/TUI/GUI/WebSocket/浏览器 | `TestApplicationController`、前端支持库、TUI 命令解析、Qt offscreen、Qt WebSockets 回环、本机 UDP 隔离目标、纯前端数据结构和浏览器 API | 前端直接持有 HAL、算法或 DUT/生产 I/O Socket；GUI/Web 调用阻塞等待；浏览器用定时器重复 `start`；真实硬件结论；ANSI 屏幕文本作为业务状态源。`QWebSocketServer/QWebSocket` 只属于前端传输，不属于 DUT I/O |
 | 算法 | 协议 CSV 样本、Simulator、脚本化传输、IHalDevice 测试替身 | UI、业务调度实现、厂家 SDK |
 | HAL | MockAdapter、最小 ABI fixture、资源配置 | 业务判定、产品协议字段解释、真实厂家硬件结论 |
 | Vendor Adapter | 厂家 SDK 假对象或隔离仿真 DLL | UI、BIZ、算法判定 |
@@ -77,7 +80,7 @@ SYSTEM_STATUS 当前同时有 Simulator golden 链和“BIZ -> 算法 -> HalCont
 - 修改协议 CSV 规则、解析器或资产引用时，必须同步 device-communication-protocol.md 和协议契约测试，并记录基线路径、观测时间与清单；manifest/hash 机制落地后再记录固定版本和内容哈希。
 - 修改 Mock 行为时，必须说明证据级别；可配置超时/错误注入和 SYSTEM_STATUS 控制通道 Mock Provider 集成仍未实现，不得作为既有能力验收。
 - 修改 Qt Provider、Vendor Adapter 或真实硬件路径时，必须新增相应级别的隔离测试；当前 Qt UDP 有本机隔离测试，Qt 串口实机、真实 Adapter、CTest hardware label 和真实硬件验收仍未实现。
-- 修改共享应用控制器、runner 或 TUI 命令时，必须运行 `hwtest_app_tests`；修改 Qt GUI 时还必须运行 `hwtest_gui_tests`；修改 WebSocket 协议、服务器、入口或脚本时必须运行 `hwtest_web_tests`、`ctest -L websocket` 和 `HwtestWeb*` 进程测试。Qt GUI、WebSocket 后端和未来浏览器 Web UI 必须复用控制器 DTO/事件，不得以新增前端为由复制组合根。
+- 修改共享应用控制器、runner 或 TUI 命令时，必须运行 `hwtest_app_tests`；修改 Qt GUI 时还必须运行 `hwtest_gui_tests`；修改 WebSocket 协议、服务器、入口或脚本时必须运行 `hwtest_web_tests`、`ctest -L websocket` 和 `HwtestWeb*` 进程测试。修改 `front/` 时必须运行 `npm test` 和 `npm run build`。Qt GUI、WebSocket 后端和浏览器 Web UI 必须复用控制器 DTO/事件，不得以新增前端为由复制组合根。
 - 修复行为缺陷时，先补能复现问题的回归测试，再修改实现。
 
 ### 5.1 前端使用习惯兼容准入
@@ -103,6 +106,13 @@ SYSTEM_STATUS 当前同时有 Simulator golden 链和“BIZ -> 算法 -> HalCont
     .\hwtest.ps1 test -Configuration Release
     .\hwtest.ps1 test -TestRegex "^(HalTypesTest|TuiShellTest)\."
 
+浏览器前端单独验证：
+
+    Set-Location front
+    npm test
+    npm run build
+    Set-Location ..
+
 以下是脚本对应的底层通用命令。完整构建是动态发现七个测试目标的前提。
 
     cmake -S . -B build_vs -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
@@ -122,6 +132,6 @@ ctest -N 只确认构建后动态发现的 CTest 清单；它不执行测试，�
 
     $env:MB_DDF_PROTOCOL_CSV_DIR = "H:\Resources\RTLinux\Demos\MB_DDF_v2\docs\design\product_protocol_csv"
     if (-not (Test-Path $env:MB_DDF_PROTOCOL_CSV_DIR)) { throw "MB_DDF CSV assets are required" }
-    ctest --test-dir build_vs -C Debug -R "^(MbddfProtocolTest|SystemStatusExecutorTest|HalControlTransportTest|SystemStatusUdpIntegrationTest|TestApplicationControllerTest|TuiShellTest|GuiMainWindowTest|WebSocket|FrontendEquivalenceTest)\." --output-on-failure
+    ctest --test-dir build_vs -C Debug -R "^(MbddfProtocolTest|SystemStatusExecutorTest|HalControlTransportTest|SystemStatusUdpIntegrationTest|TestApplicationControllerTest|TuiShellTest|GuiMainWindowTest|WebProtocolTest|WebSocket|FrontendEquivalenceTest)\." --output-on-failure
 
 HAL 专属覆盖快照和缺口见 [HAL 测试设计报告](hal-test-design-report.md)。本文以外的历史计划不是现行测试规则或通过证据。

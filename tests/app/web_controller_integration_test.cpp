@@ -172,6 +172,29 @@ TEST(WebSocketControllerIntegrationTest, ReturnsControllerErrorsAndRemainsUsable
     EXPECT_TRUE(load.value(QStringLiteral("ok")).toBool());
 }
 
+TEST(WebSocketControllerIntegrationTest, RejectsMistypedContinuousRunParametersAtBoundary)
+{
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    WebSocketFrontendServer server(&controller, launchOptions(), options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+
+    const QJsonObject reply = sendAndWait(
+        &client,
+        QStringLiteral("bad-run-options"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), QStringLiteral("fast")},
+                    {QStringLiteral("maxCycles"), 2}});
+
+    EXPECT_FALSE(reply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(reply.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+}
+
 TEST(WebSocketControllerIntegrationTest, RejectsClientSuppliedConfigurationPaths)
 {
     TestApplicationController controller;
@@ -430,6 +453,93 @@ protected:
     std::unique_ptr<WebSocketFrontendServer> server;
     std::unique_ptr<test::WebSocketTestClient> client;
 };
+
+TEST(WebSocketContinuousIntegrationTest, PcPeriodicStreamsSamplesFromTwoCommandResponseCycles)
+{
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QTemporaryDir directory;
+    QString error;
+    QString halConfigPath;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    WebSocketFrontendServer server(&controller,
+                                   launchOptions(halConfigPath),
+                                   options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+    ASSERT_TRUE(sendAndWait(&client, QStringLiteral("load"), QStringLiteral("load"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("prepare"),
+                            QStringLiteral("prepare"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+
+    const QJsonObject started = sendAndWait(
+        &client,
+        QStringLiteral("periodic"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 10},
+                    {QStringLiteral("maxCycles"), 2}});
+    ASSERT_TRUE(started.value(QStringLiteral("ok")).toBool())
+        << started.value(QStringLiteral("message")).toString().toStdString();
+
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+        ASSERT_TRUE(peer.replyToLastRequest(&error)) << error.toStdString();
+    }
+
+    QJsonObject terminal;
+    ASSERT_TRUE(client.waitForSnapshotPhase(QStringLiteral("finished"),
+                                            &terminal,
+                                            5000));
+    QVector<QJsonObject> samples;
+    for (const QJsonObject& message : client.messages()) {
+        if (message.value(QStringLiteral("type")).toString() ==
+            QStringLiteral("sample")) {
+            samples.push_back(message.value(QStringLiteral("sample")).toObject());
+        }
+    }
+    ASSERT_EQ(samples.size(), 2);
+    EXPECT_EQ(samples.at(0).value(QStringLiteral("cycleIndex")).toInt(), 1);
+    EXPECT_EQ(samples.at(1).value(QStringLiteral("cycleIndex")).toInt(), 2);
+    EXPECT_GT(samples.at(0).value(QStringLiteral("timestampUs")).toDouble(), 0.0);
+    EXPECT_DOUBLE_EQ(samples.at(0)
+                         .value(QStringLiteral("values"))
+                         .toObject()
+                         .value(QStringLiteral("cpu_usage"))
+                         .toDouble(),
+                     12.5);
+
+    const QJsonObject snapshot = terminal.value(QStringLiteral("snapshot")).toObject();
+    EXPECT_EQ(snapshot.value(QStringLiteral("runMode")).toString(),
+              QStringLiteral("pc_periodic"));
+    EXPECT_EQ(snapshot.value(QStringLiteral("intervalMs")).toInt(), 10);
+    EXPECT_EQ(snapshot.value(QStringLiteral("maxCycles")).toInt(), 2);
+    EXPECT_EQ(snapshot.value(QStringLiteral("cycleIndex")).toInt(), 2);
+    EXPECT_EQ(snapshot.value(QStringLiteral("sampleCount")).toInt(), 2);
+
+    const QJsonObject disconnected = sendAndWait(&client,
+                                                  QStringLiteral("cleanup"),
+                                                  QStringLiteral("disconnect"));
+    EXPECT_TRUE(disconnected.value(QStringLiteral("ok")).toBool());
+    EXPECT_TRUE(client.waitForDisconnected(5000));
+}
 
 TEST_F(WebSocketUdpIntegrationTest, PassesSystemStatusThroughHalUdp)
 {

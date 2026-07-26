@@ -28,6 +28,8 @@ QJsonObject makeReply(const QString& id,
                       const QJsonObject& data = {});
 QJsonObject makeSnapshot(quint64 sequence,
                          const ApplicationSnapshot& snapshot);
+QJsonObject makeSample(quint64 sequence,
+                       const ApplicationSample& sample);
 QString compactJson(const QJsonObject& object);
 
 } // namespace hwtest::app::web

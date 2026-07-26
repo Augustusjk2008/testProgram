@@ -5,6 +5,7 @@
 #include <biz/test_config_manager.h>
 #include <biz/test_plan_builder.h>
 
+#include <QDateTime>
 #include <QHash>
 #include <QElapsedTimer>
 #include <QMutex>
@@ -207,6 +208,13 @@ public:
 
     Result<TaskId> startTest(const QStringList& testItems, int priority) override
     {
+        return startTestWithOptions(RunOptions{}, testItems, priority);
+    }
+
+    Result<TaskId> startTestWithOptions(const RunOptions& runOptions,
+                                        const QStringList& testItems,
+                                        int priority) override
+    {
         const std::lock_guard<std::recursive_mutex> lifecycleLocker(m_lifecycleMutex);
         reapFinishedWorker();
 
@@ -226,6 +234,11 @@ public:
                                         QStringLiteral("A task cannot start in the current state"));
             }
             config = m_config;
+        }
+
+        const Status optionsStatus = validateRunOptions(runOptions);
+        if (!optionsStatus.ok()) {
+            return failure<TaskId>(optionsStatus.code, optionsStatus.error.message);
         }
 
         if (priority < -1) {
@@ -257,6 +270,10 @@ public:
         context.requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
         context.productModel = config.productModel;
         context.tags = config.runtimeConfig.tags;
+        context.tags.insert(QStringLiteral("runMode"), runModeToString(runOptions.mode));
+        context.tags.insert(QStringLiteral("intervalMs"), runOptions.intervalMs);
+        context.tags.insert(QStringLiteral("maxCycles"),
+                            QVariant::fromValue<qulonglong>(runOptions.maxCycles));
 
         {
             QMutexLocker locker(&m_mutex);
@@ -272,7 +289,7 @@ public:
             m_context = context;
             m_results.clear();
             m_resultsByStep.clear();
-            m_samples.clear();
+            m_currentCycleIndex = 0;
             m_control = RunControl::Run;
             ++m_controlVersion;
             m_runControl.reset();
@@ -288,7 +305,8 @@ public:
                                    this,
                                    selected.value,
                                    context,
-                                   config.executionConfig);
+                                   config.executionConfig,
+                                   runOptions);
         }
         emit stateChanged(taskId, TestState::Running);
         {
@@ -460,6 +478,15 @@ public:
 
 private:
     static constexpr int kShutdownTimeoutMs = 5000;
+    static constexpr int kMinPeriodicIntervalMs = 10;
+    static constexpr int kMaxPeriodicIntervalMs = 60 * 60 * 1000;
+    static constexpr quint64 kMaxFiniteCycles = 1000000000ULL;
+
+    enum class CycleOutcome {
+        Completed,
+        Stopped,
+        Error,
+    };
 
     class RunControlAdapter final : public IRunControl {
     public:
@@ -512,6 +539,30 @@ private:
     {
         return state == TestState::Running || state == TestState::Paused ||
             state == TestState::Stopping;
+    }
+
+    static Status validateRunOptions(const RunOptions& options)
+    {
+        switch (options.mode) {
+        case RunMode::Single:
+        case RunMode::DeviceStream:
+            return Status{};
+        case RunMode::PcPeriodic:
+            if (options.intervalMs < kMinPeriodicIntervalMs ||
+                options.intervalMs > kMaxPeriodicIntervalMs) {
+                return makeStatus(
+                    ErrorCode::ParameterRangeError,
+                    QStringLiteral("PC periodic interval must be in the range 10..3600000 ms"));
+            }
+            if (options.maxCycles > kMaxFiniteCycles) {
+                return makeStatus(
+                    ErrorCode::ParameterRangeError,
+                    QStringLiteral("PC periodic maxCycles must be 0 or at most 1000000000"));
+            }
+            return Status{};
+        }
+        return makeStatus(ErrorCode::ParameterRangeError,
+                          QStringLiteral("Unknown run mode"));
     }
 
     Result<TestPlan> selectSteps(const TestPlan& source, const QStringList& testItems) const
@@ -615,7 +666,107 @@ private:
         emit resultProduced(taskId, result);
     }
 
-    void runTask(TestPlan plan, TestContext context, QVariantMap executionConfig)
+    CycleOutcome executeCycle(const TestPlan& plan,
+                              const TestContext& context,
+                              quint64 cycleIndex)
+    {
+        bool executionError = false;
+        bool stopAfterFailure = false;
+        for (const TestStep& step : plan.steps) {
+            if (!m_runControl.checkpoint()) {
+                return CycleOutcome::Stopped;
+            }
+
+            if (stopAfterFailure) {
+                TestResult skipped;
+                skipped.stepId = step.stepId;
+                skipped.testItemId = step.testItemId;
+                skipped.algorithmId = step.algorithmId;
+                skipped.verdict = TestVerdict::Skipped;
+                skipped.skipReason = SkipReason::Cancelled;
+                skipped.message = QStringLiteral("Skipped after a prior failure");
+                skipped.cycleIndex = cycleIndex;
+                publishResult(skipped);
+                continue;
+            }
+
+            if (!dependenciesPassed(step)) {
+                TestResult skipped;
+                skipped.stepId = step.stepId;
+                skipped.testItemId = step.testItemId;
+                skipped.algorithmId = step.algorithmId;
+                skipped.verdict = TestVerdict::Skipped;
+                skipped.skipReason = SkipReason::DependencyFailed;
+                skipped.message = QStringLiteral("A dependency did not pass");
+                skipped.cycleIndex = cycleIndex;
+                publishResult(skipped);
+                continue;
+            }
+
+            Result<TestResult> outcome;
+            int attempts = 0;
+            for (int attempt = 0; attempt <= step.retryCount; ++attempt) {
+                if (!m_runControl.checkpoint()) {
+                    break;
+                }
+                outcome = m_executor->executeStep(step, m_runControl, *this);
+                ++attempts;
+                if (!retryable(outcome) || attempt == step.retryCount ||
+                    m_runControl.current() == RunControl::Stop) {
+                    break;
+                }
+                if (plan.runtimeConfig.retryIntervalMs > 0 &&
+                    !waitForRetryInterval(plan.runtimeConfig.retryIntervalMs)) {
+                    break;
+                }
+            }
+
+            if (attempts == 0) {
+                return CycleOutcome::Stopped;
+            }
+
+            TestResult result = outcome.value;
+            result.stepId = step.stepId;
+            result.testItemId = step.testItemId;
+            result.algorithmId = step.algorithmId;
+            result.attempts = attempts;
+            result.cycleIndex = cycleIndex;
+            if (!outcome.status.ok()) {
+                result.verdict = TestVerdict::Error;
+                result.errorCode = outcome.status.code;
+                if (result.message.isEmpty()) {
+                    result.message = outcome.status.error.message;
+                }
+                executionError = true;
+                emit hardwareError(context.runId,
+                                   step.testItemId,
+                                   outcome.status.code,
+                                   result.message);
+            } else if (result.verdict == TestVerdict::Error) {
+                executionError = true;
+                if (result.errorCode != ErrorCode::Ok) {
+                    emit hardwareError(context.runId,
+                                       step.testItemId,
+                                       result.errorCode,
+                                       result.message);
+                }
+            }
+            publishResult(result);
+
+            if (plan.runtimeConfig.stopOnFirstFailure &&
+                (result.verdict == TestVerdict::Fail ||
+                 result.verdict == TestVerdict::Error)) {
+                stopAfterFailure = true;
+            }
+        }
+
+        return executionError ? CycleOutcome::Error : CycleOutcome::Completed;
+    }
+
+    void runTask(TestPlan plan,
+                 TestContext context,
+                 QVariantMap executionConfig,
+                 RunOptions runOptions)
     {
         {
             QMutexLocker locker(&m_mutex);
@@ -640,89 +791,34 @@ private:
         }
 
         bool executionError = false;
-        bool stopAfterFailure = false;
-        for (const TestStep& step : plan.steps) {
+        quint64 cycleIndex = 1;
+        while (true) {
             if (!m_runControl.checkpoint()) {
                 break;
             }
-
-            if (stopAfterFailure) {
-                TestResult skipped;
-                skipped.stepId = step.stepId;
-                skipped.testItemId = step.testItemId;
-                skipped.algorithmId = step.algorithmId;
-                skipped.verdict = TestVerdict::Skipped;
-                skipped.skipReason = SkipReason::Cancelled;
-                skipped.message = QStringLiteral("Skipped after a prior failure");
-                publishResult(skipped);
-                continue;
+            {
+                QMutexLocker locker(&m_mutex);
+                m_resultsByStep.clear();
+                m_currentCycleIndex = cycleIndex;
             }
+            emit cycleStarted(context.runId, cycleIndex);
 
-            if (!dependenciesPassed(step)) {
-                TestResult skipped;
-                skipped.stepId = step.stepId;
-                skipped.testItemId = step.testItemId;
-                skipped.algorithmId = step.algorithmId;
-                skipped.verdict = TestVerdict::Skipped;
-                skipped.skipReason = SkipReason::DependencyFailed;
-                skipped.message = QStringLiteral("A dependency did not pass");
-                publishResult(skipped);
-                continue;
-            }
-
-            Result<TestResult> outcome;
-            int attempts = 0;
-            for (int attempt = 0; attempt <= step.retryCount; ++attempt) {
-                if (!m_runControl.checkpoint()) {
-                    break;
-                }
-                outcome = m_executor->executeStep(step, m_runControl, *this);
-                ++attempts;
-                if (!retryable(outcome) || attempt == step.retryCount ||
-                    m_runControl.current() == RunControl::Stop) {
-                    break;
-                }
-                if (plan.runtimeConfig.retryIntervalMs > 0 &&
-                    !waitForRetryInterval(plan.runtimeConfig.retryIntervalMs)) {
-                    break;
-                }
-            }
-
-            if (attempts == 0) {
+            const CycleOutcome outcome = executeCycle(plan, context, cycleIndex);
+            if (outcome == CycleOutcome::Stopped) {
                 break;
             }
-
-            TestResult result = outcome.value;
-            result.stepId = step.stepId;
-            result.testItemId = step.testItemId;
-            result.algorithmId = step.algorithmId;
-            result.attempts = attempts;
-            if (!outcome.status.ok()) {
-                result.verdict = TestVerdict::Error;
-                result.errorCode = outcome.status.code;
-                if (result.message.isEmpty()) {
-                    result.message = outcome.status.error.message;
-                }
+            if (outcome == CycleOutcome::Error) {
                 executionError = true;
-                emit hardwareError(context.runId,
-                                   step.testItemId,
-                                   outcome.status.code,
-                                   result.message);
-            } else if (result.verdict == TestVerdict::Error) {
-                executionError = true;
-                if (result.errorCode != ErrorCode::Ok) {
-                    emit hardwareError(context.runId,
-                                       step.testItemId,
-                                       result.errorCode,
-                                       result.message);
-                }
+                break;
             }
-            publishResult(result);
-
-            if (plan.runtimeConfig.stopOnFirstFailure &&
-                (result.verdict == TestVerdict::Fail || result.verdict == TestVerdict::Error)) {
-                stopAfterFailure = true;
+            if (runOptions.mode != RunMode::PcPeriodic ||
+                (runOptions.maxCycles > 0 && cycleIndex >= runOptions.maxCycles)) {
+                break;
             }
+            if (!waitForRetryInterval(runOptions.intervalMs)) {
+                break;
+            }
+            ++cycleIndex;
         }
 
         completeWorker(executionError ? TestState::Error : TestState::Finished);
@@ -793,8 +889,18 @@ private:
 
     void onSample(const StepId& stepId, const RawSample& sample) override
     {
-        QMutexLocker locker(&m_mutex);
-        m_samples[stepId].append(sample);
+        RawSample forwarded = sample;
+        TaskId taskId;
+        {
+            QMutexLocker locker(&m_mutex);
+            forwarded.cycleIndex = m_currentCycleIndex;
+            if (forwarded.timestampUs == 0) {
+                forwarded.timestampUs =
+                    static_cast<qint64>(QDateTime::currentMSecsSinceEpoch()) * 1000;
+            }
+            taskId = m_taskId;
+        }
+        emit sampleProduced(taskId, stepId, forwarded);
     }
 
     void onLog(const hwtest::logging::LogEvent& event) override
@@ -821,7 +927,7 @@ private:
     TaskId m_taskId;
     QVector<TestResult> m_results;
     QHash<StepId, TestResult> m_resultsByStep;
-    QHash<StepId, QVector<RawSample>> m_samples;
+    quint64 m_currentCycleIndex = 0;
     TestState m_state = TestState::Uninitialized;
     TestState m_workerTerminalState = TestState::Finished;
     RunControl m_control = RunControl::Run;
