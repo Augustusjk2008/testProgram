@@ -7,6 +7,8 @@ import { fieldLabel, fieldUnit } from '../../shared/format'
 import { getChartPalette } from '../../shared/theme'
 import type { SampleBuffer } from './sample-buffer'
 
+const CHART_HEIGHT = 270
+
 interface TelemetryChartProps {
   title: string
   fields: string[]
@@ -35,7 +37,7 @@ export function TelemetryChart({
     const data = buffer.query(fields, { windowSeconds, pixelWidth: width })
     const options: uPlot.Options = {
       width,
-      height: 290,
+      height: CHART_HEIGHT,
       padding: [10, 12, 0, 0],
       cursor: {
         drag: { x: true, y: false },
@@ -53,14 +55,14 @@ export function TelemetryChart({
           stroke: palette.axis,
           grid: { stroke: palette.grid, width: 1 },
           ticks: { stroke: palette.ticks, width: 1 },
-          font: '11px Geist Mono, monospace',
+          font: '12px Geist Mono, monospace',
           size: 46,
         },
         {
           stroke: palette.axis,
           grid: { stroke: palette.grid, width: 1 },
           ticks: { stroke: palette.ticks, width: 1 },
-          font: '11px Geist Mono, monospace',
+          font: '12px Geist Mono, monospace',
           size: 54,
         },
       ],
@@ -86,7 +88,7 @@ export function TelemetryChart({
     const observer = new ResizeObserver(([entry]) => {
       const nextWidth = Math.max(320, Math.floor(entry.contentRect.width))
       if (nextWidth !== plot.width) {
-        plot.setSize({ width: nextWidth, height: 290 })
+        plot.setSize({ width: nextWidth, height: CHART_HEIGHT })
         const nextData = buffer.query(fields, {
           windowSeconds,
           pixelWidth: nextWidth,
