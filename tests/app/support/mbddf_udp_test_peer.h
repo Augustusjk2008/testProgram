@@ -10,6 +10,7 @@
 #include <QString>
 #include <QTemporaryDir>
 #include <QUdpSocket>
+#include <QVariantMap>
 
 #include <limits>
 
@@ -174,6 +175,66 @@ public:
 
         const qint64 written = m_socket.writeDatagram(result.frame, m_sender, m_senderPort);
         if (written != result.frame.size()) {
+            return fail(error, m_socket.errorString());
+        }
+        return true;
+    }
+
+    bool replyToLastRequest(const QString& responseProfile,
+                            QVariantMap responseValues,
+                            QString* error = nullptr)
+    {
+        clearError(error);
+        if (!m_hasRequest) {
+            return fail(error, QStringLiteral("UDP peer has not received a request"));
+        }
+
+        hwtest::algorithm::mbddf::ProtocolCatalog catalog;
+        if (!catalog.loadFromDirectory(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR"), error)) {
+            return false;
+        }
+
+        QByteArray requestPayload;
+        if (!hwtest::algorithm::mbddf::decodeFrame(m_request, &requestPayload, error) ||
+            requestPayload.size() < 3) {
+            return fail(error, QStringLiteral("UDP peer received an invalid MB_DDF request"));
+        }
+        const auto* requestDefinition = catalog.findByCommand(
+            static_cast<quint8>(requestPayload.at(1)),
+            static_cast<quint8>(requestPayload.at(2)),
+            hwtest::algorithm::mbddf::Direction::Request);
+        if (requestDefinition == nullptr) {
+            return fail(error, QStringLiteral("UDP peer received an unknown MB_DDF request"));
+        }
+        QVariantMap requestValues;
+        if (!hwtest::algorithm::mbddf::decodePayload(*requestDefinition,
+                                                     requestPayload,
+                                                     &requestValues,
+                                                     error)) {
+            return false;
+        }
+
+        const auto* responseDefinition = catalog.findByName(responseProfile);
+        if (responseDefinition == nullptr ||
+            responseDefinition->direction != hwtest::algorithm::mbddf::Direction::Response) {
+            return fail(error, QStringLiteral("UDP peer response profile is missing or not a response"));
+        }
+        const quint16 sequence = static_cast<quint16>(
+            requestValues.value(QStringLiteral("seq")).toUInt());
+        QByteArray responsePayload;
+        if (!hwtest::algorithm::mbddf::encodePayload(*responseDefinition,
+                                                     responseValues,
+                                                     sequence,
+                                                     &responsePayload,
+                                                     error)) {
+            return false;
+        }
+        QByteArray responseFrame;
+        if (!hwtest::algorithm::mbddf::encodeFrame(responsePayload, &responseFrame, error)) {
+            return false;
+        }
+        const qint64 written = m_socket.writeDatagram(responseFrame, m_sender, m_senderPort);
+        if (written != responseFrame.size()) {
             return fail(error, m_socket.errorString());
         }
         return true;

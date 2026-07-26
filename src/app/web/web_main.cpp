@@ -33,7 +33,7 @@ int main(int argc, char* argv[])
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(
-        "Loopback WebSocket backend for MB_DDF_v2 SYSTEM_STATUS; "
+        "Loopback WebSocket backend for selectable MB_DDF_v2 tests; "
         "the separate browser frontend lives in front/"));
     parser.addHelpOption();
 

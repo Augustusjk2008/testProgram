@@ -25,7 +25,7 @@
                    -> Qt Serial/TCP/UDP Provider -> Qt 标准 API
 ```
 
-当前只在 `module = "control"` 的资源上实现局部 `providerId` 路由。没有通用 Router、控制通道 Mock Provider、TCP 或真实厂家 DLL 调用；真实硬件证据仅限 2026-07-26 的 COM3 SYSTEM_STATUS smoke，也没有定义 `INetworkBus`。
+当前只在 `module = "control"` 的资源上实现局部 `providerId` 路由。没有通用 Router、控制通道 Mock Provider、TCP 或真实厂家 DLL 调用；真实硬件证据仅限 2026-07-26 的 COM3 `SYSTEM_STATUS`/`ELEC_HEALTH_STATUS` smoke，也没有定义 `INetworkBus`。
 
 ---
 
@@ -284,11 +284,11 @@ createBackend() -> CAbiAdapter -> MockAdapter
 当前限制：
 
 - 传输对象不创建或拥有 `IHalService` / 设备会话，`hwtest_app_core::TestApplicationController` 负责按配置建立和收尾会话；`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web` 均复用该控制器；
-- `SystemStatusAlgorithmExecutor` 每次 BIZ 重试都独立打开/关闭控制资源，并保持同一请求序号；
+- MB_DDF 固定命令执行器每次 BIZ 重试都独立打开/关闭控制资源，并保持同一请求序号；当前命令为 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS`；
 - `configs/mbddf_pc_hal.json` 同时定义串口和 UDP 资源，`control.resourceId` 是 PC 每次运行前的唯一选择点；
-- 当前只有 `mbddf.system_status`；行式 TUI、Qt GUI 和 WebSocket 后端可在 configured 状态切换控制资源。浏览器遥测控制台已实现运行和观测，但当前未暴露控制资源/串口选择；已准备或运行期间的热切换仍未实现。
+- 当前支持两个独立单步算法 `mbddf.system_status` 和 `mbddf.elec_health_status`；行式 TUI、Qt GUI 和 WebSocket 后端可在 configured 状态切换控制资源。浏览器遥测控制台已实现运行和观测，但当前未暴露控制资源/串口选择；已准备或运行期间的热切换仍未实现。
 
-Qt UDP 本机模拟目标闭环已经打通。2026-07-26 已通过 `hwtest_web -> TestApplicationController -> BIZ -> SystemStatusAlgorithmExecutor -> HalControlTransport -> HAL -> qt.serial -> COM3 -> MB_DDF_v2` 完成单次和三轮 PC 周期真实链路，终态均为 `Pass/Ok`，三轮产生三个样本。该次执行每轮都出现一次 `QObject::startTimer: Timers can only be used with threads started with QThread`。随后 BIZ worker 已迁移为 `QThread` 并补 dispatcher/计时器自动回归；修复后的 COM3 无响应诊断未再告警，但因板端服务未响应而未形成新的成功单次/三周期证据。长时、拔插、超时、停止和物理安全收尾仍未覆盖，因此不是全面 DUT 验收；现场网络端点仍无证据。
+Qt UDP 本机模拟目标闭环已经打通。2026-07-26 已通过 `hwtest_web -> TestApplicationController -> BIZ -> MB_DDF executor -> HalControlTransport -> HAL -> qt.serial -> COM3 -> MB_DDF_v2` 分别完成 `SYSTEM_STATUS` 与 `ELEC_HEALTH_STATUS` 的单次和三轮 PC 周期真实链路，两个测试项终态均为 `Pass/Ok`，各产生三个样本；早期 SYSTEM_STATUS 执行每轮都出现一次 `QObject::startTimer: Timers can only be used with threads started with QThread`。随后 BIZ worker 迁移为 `QThread` 并补 dispatcher/计时器自动回归，两个测试项在同一 COM3/板端链路再次完成单次和三轮 PC 周期，后端完整诊断中该警告出现次数均为 `0`；正常 `quit`、板端 `SIGTERM` 和 COM3 释放均完成。长时、拔插、超时、运行中停止和物理安全收尾仍未覆盖，因此不是全面 DUT 验收；现场网络端点仍无证据。
 
 ---
 
@@ -306,7 +306,7 @@ Qt UDP 本机模拟目标闭环已经打通。2026-07-26 已通过 `hwtest_web -
 | --- | --- | --- |
 | Router 只覆盖控制资源 | 其他资源仍无法显式选择 Qt/Vendor/Mock | 扩展统一 Provider 生命周期和配置校验 |
 | Mock 静默默认 | 生产误连 Mock 或首设备 | 生产模式缺配置即失败 |
-| Qt Provider 证据不完整 | 串口仅有带历史线程告警的短时成功链；QThread 自动回归和无响应无告警诊断不能替代成功复测；现场 UDP 行为未知 | 补修复后的串口成功单次/三周期及长时/异常收尾，确认现场 UDP 端点；TCP 另行评审 |
+| Qt Provider 证据不完整 | 串口已有 QThread 迁移后无目标计时器警告的短时手工成功复测，但缺少自动化 hardware target 和长时/异常路径；现场 UDP 行为未知 | 补串口自动化 hardware target 及长时/异常收尾，确认现场 UDP 端点；TCP 另行评审 |
 | Vendor 调用链缺失 | ABI/Loader 与运行时脱节 | 在 Vendor Provider 内接入 ABI v1 |
 | 扫描来自配置 | 无法证明物理设备身份 | Provider 扫描并按 match 唯一绑定 |
 | deadline 非端到端 | write/read 累计超时 | 单调时钟计算剩余预算 |
@@ -319,9 +319,9 @@ Qt UDP 本机模拟目标闭环已经打通。2026-07-26 已通过 `hwtest_web -
 ## 12. 建议迁移顺序
 
 1. 在已实现的控制资源路由上补齐连接取消和更完整的 Provider 日志证据。
-2. 在已有 COM3 成功 smoke 和 BIZ QThread 自动回归基础上，补修复后的成功单次/三周期，并继续验证 614400/8E1 的短读、拆包、长时、超时、拔插和停止收尾。
+2. 在已有 COM3 迁移后成功单次/三周期和 BIZ QThread 自动回归基础上，继续验证 614400/8E1 的短读、拆包、长时、超时、拔插、运行中停止和异常收尾，并评估独立 hardware target。
 3. 确认 PC 到 DUT 的实际 UDP 地址/端口；不得复用板端网口自环测试事实作推断。
-4. 把当前 `MockAdapter` 迁为直接的 Mock Provider，并补 SYSTEM_STATUS 控制通道闭环。
+4. 把当前 `MockAdapter` 迁为直接的 Mock Provider，并补 SYSTEM_STATUS/ELEC_HEALTH_STATUS 控制通道闭环。
 5. 把 `AdapterLoader + HalAdapterApiV1` 接入 Vendor Adapter Provider，保留 ABI v1 兼容测试。
 6. 统一全 HAL deadline、连接取消、日志覆盖和异常安全收尾；TCP 在实际用例明确后另行评审。
 7. 完成隔离真实 DUT 验收，再扩充更多 MB_DDF 测试项；浏览器新增测试项目时继续复用已实现的 `hwtest_web` 和当前应用控制器。

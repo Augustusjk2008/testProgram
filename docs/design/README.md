@@ -32,13 +32,13 @@ docs/design/
 | 范围 | 入口 | 说明 |
 | --- | --- | --- |
 | BIZ | `src/biz/` | `hwtest_biz`；公共头仅直接依赖 Qt Core 和 `hwtest_log_types` |
-| 算法 | `src/algorithm/` | `hwtest_algorithm_mbddf`，包含 MB_DDF 协议 CSV、编解码和 `SYSTEM_STATUS` 执行器 |
+| 算法 | `src/algorithm/` | `hwtest_algorithm_mbddf`，包含 MB_DDF 协议 CSV、编解码以及 `SYSTEM_STATUS`、`ELEC_HEALTH_STATUS` 执行器 |
 | HAL | `src/hal/` | `hwtest_hal`；控制资源可走 `qt.serial`/`qt.udp`，其他资源仍为 `CAbiAdapter -> MockAdapter` 兼容路径 |
 | 日志 | `src/logging/` | `hwtest_log_types` 与 `hwtest_log` |
 | 应用 | `src/app/`、`front/` | `hwtest_app_core` 统一组合生命周期；`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与回环 `hwtest_web` 是独立 C++ 入口；`front/` 是独立 React/Vite 遥测控制台 |
 | 测试 | `tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/`、`tests/app/` | 七个 GoogleTest 目标，经 CTest 注册 |
 
-`[当前实现]` 仓库已有行式 TUI、Qt Widgets GUI、WebSocket 后端和浏览器遥测控制台。浏览器提供贯穿所有页面的单次/PC 周期控制、SYSTEM_STATUS 总览、可选字段同图/分图/自定义分组曲线和诊断视图；设备持续回告模式的通用边界已保留，但当前 SYSTEM_STATUS 协议不支持。BIZ 任务 worker 已迁移为带 Qt dispatcher 的 `QThread` 并有自动化回归。TCP Provider、真实厂家链和全面真实硬件验收仍未实现。Qt UDP 已有本机模拟目标闭环；Qt 串口已有一次受控 COM3 真实板端 SYSTEM_STATUS smoke，但该历史成功链带工作线程计时器警告，修复后只完成了无响应无告警诊断，成功复测及长时/异常收尾仍缺失。测试目标、源码清单、实机证据和限制统一见 `testing/testing-specification.md`。
+`[当前实现]` 仓库已有行式 TUI、Qt Widgets GUI、WebSocket 后端和浏览器遥测控制台。浏览器通过现有配置选择一个独立单步测试；当前 `SYSTEM_STATUS` 与 `ELEC_HEALTH_STATUS` 均支持单次/PC 周期，设备持续回告模式的通用边界已保留但两个协议都不支持。电气健康仅判定设备 `status`/`err_code`，不解释电压阈值。BIZ 任务 worker 已迁移为带 Qt dispatcher 的 `QThread` 并有自动化回归。TCP Provider、真实厂家链和全面真实硬件验收仍未实现。Qt UDP 已有本机模拟目标闭环；Qt 串口的历史受控 COM3 成功链带工作线程计时器警告，迁移后已在同一真实板端完成两个测试项的单次和三轮 PC 周期，后端诊断不再出现该警告。该证据仍是短时手工 smoke，长时和异常收尾验收仍缺失。测试目标、源码清单、实机证据和限制统一见 `testing/testing-specification.md`。
 
 外部目录 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容已批准为 MB_DDF 协议 CSV 基线；`dut/` 已同步来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 及其中 32 份 CSV，但尚无 manifest、内容哈希和不可变快照自动机制。宿主运行期仍显式使用外部资产目录，当前清单和约束统一见 `contracts/device-communication-protocol.md`。
 

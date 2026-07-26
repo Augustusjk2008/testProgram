@@ -93,7 +93,25 @@ QString effectiveAssetRoot(const QVariantMap& executionConfig)
 
 SystemStatusAlgorithmExecutor::SystemStatusAlgorithmExecutor(
     std::unique_ptr<IByteTransport> transport)
+    : SystemStatusAlgorithmExecutor(std::move(transport),
+                                    QStringLiteral("mbddf.system_status"),
+                                    QStringLiteral("system_status_request"),
+                                    QStringLiteral("system_status_response"),
+                                    QStringLiteral("SYSTEM_STATUS"))
+{
+}
+
+SystemStatusAlgorithmExecutor::SystemStatusAlgorithmExecutor(
+    std::unique_ptr<IByteTransport> transport,
+    QString algorithmId,
+    QString requestProfileId,
+    QString responseProfileId,
+    QString commandName)
     : m_transport(std::move(transport))
+    , m_algorithmId(std::move(algorithmId))
+    , m_requestProfileId(std::move(requestProfileId))
+    , m_responseProfileId(std::move(responseProfileId))
+    , m_commandName(std::move(commandName))
 {
 }
 
@@ -133,7 +151,8 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
         QStringLiteral("device_stream")) {
         return makeStatus(
             ErrorCode::CapabilityUnsupported,
-            QStringLiteral("SYSTEM_STATUS does not define a device-managed streaming start/stop flow"),
+            QStringLiteral("%1 does not define a device-managed streaming start/stop flow")
+                .arg(m_commandName),
             QStringLiteral("mbddf.prepare"));
     }
 
@@ -154,17 +173,18 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
     const QVariantMap protocol = nestedMap(executionConfig, QStringLiteral("protocol"));
     const QString requestName = mapString(protocol,
                                            QStringLiteral("requestProfileId"),
-                                           QStringLiteral("system_status_request"));
+                                           m_requestProfileId);
     const QString responseName = mapString(protocol,
                                             QStringLiteral("responseProfileId"),
-                                            QStringLiteral("system_status_response"));
+                                            m_responseProfileId);
     m_request = m_catalog.findByName(requestName);
     m_response = m_catalog.findByName(responseName);
     if (m_request == nullptr || m_response == nullptr ||
         m_request->direction != Direction::Request ||
         m_response->direction != Direction::Response) {
         return makeStatus(ErrorCode::ConfigSchemaError,
-                          QStringLiteral("SYSTEM_STATUS request/response profiles are missing or have wrong direction"),
+                          QStringLiteral("%1 request/response profiles are missing or have wrong direction")
+                              .arg(m_commandName),
                           QStringLiteral("mbddf.prepare"));
     }
 
@@ -265,9 +285,11 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     }
     if (m_stopRequested.load() || control.current() == hwtest::biz::RunControl::Stop ||
         !control.checkpoint()) {
-        return failure(step, ErrorCode::Cancelled, QStringLiteral("SYSTEM_STATUS was cancelled"));
+        return failure(step,
+                       ErrorCode::Cancelled,
+                       QStringLiteral("%1 was cancelled").arg(m_commandName));
     }
-    if (step.algorithmId != QStringLiteral("mbddf.system_status")) {
+    if (step.algorithmId != m_algorithmId) {
         return failure(step, ErrorCode::CapabilityUnsupported,
                        QStringLiteral("Unsupported algorithm id '%1'").arg(step.algorithmId));
     }
@@ -283,11 +305,15 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     QString error;
     QByteArray payload;
     if (!encodePayload(*m_request, requestValues, sequence, &payload, &error)) {
-        return protocolFailure(step, QStringLiteral("Cannot encode SYSTEM_STATUS request: %1").arg(error));
+        return protocolFailure(step,
+                               QStringLiteral("Cannot encode %1 request: %2")
+                                   .arg(m_commandName, error));
     }
     QByteArray frame;
     if (!encodeFrame(payload, &frame, &error)) {
-        return protocolFailure(step, QStringLiteral("Cannot frame SYSTEM_STATUS request: %1").arg(error));
+        return protocolFailure(step,
+                               QStringLiteral("Cannot frame %1 request: %2")
+                                   .arg(m_commandName, error));
     }
 
     observer.onProgress(step.stepId, step.testItemId, 25, QStringLiteral("request encoded"));
@@ -295,7 +321,9 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     {
         std::lock_guard<std::mutex> locker(m_transportMutex);
         if (m_stopRequested.load()) {
-            return failure(step, ErrorCode::Cancelled, QStringLiteral("SYSTEM_STATUS was cancelled"));
+            return failure(step,
+                           ErrorCode::Cancelled,
+                           QStringLiteral("%1 was cancelled").arg(m_commandName));
         }
         QString transportError;
         if (!m_transport->open(&transportError)) {
@@ -313,32 +341,45 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
             ? ErrorCode::BusTimeout
             : ErrorCode::RemoteCommandError;
         return failure(step, code,
-                       QStringLiteral("SYSTEM_STATUS transport failed: %1").arg(transportResult.error));
+                       QStringLiteral("%1 transport failed: %2")
+                           .arg(m_commandName, transportResult.error));
     }
     if (m_stopRequested.load() || control.current() == hwtest::biz::RunControl::Stop) {
-        return failure(step, ErrorCode::Cancelled, QStringLiteral("SYSTEM_STATUS was cancelled"));
+        return failure(step,
+                       ErrorCode::Cancelled,
+                       QStringLiteral("%1 was cancelled").arg(m_commandName));
     }
 
     QByteArray responsePayload;
     if (!decodeFrame(transportResult.frame, &responsePayload, &error)) {
-        return protocolFailure(step, QStringLiteral("Cannot decode SYSTEM_STATUS frame: %1").arg(error));
+        return protocolFailure(step,
+                               QStringLiteral("Cannot decode %1 frame: %2")
+                                   .arg(m_commandName, error));
     }
     if (responsePayload.size() < 3) {
-        return protocolFailure(step, QStringLiteral("SYSTEM_STATUS response is shorter than command header"));
+        return protocolFailure(step,
+                               QStringLiteral("%1 response is shorter than command header")
+                                   .arg(m_commandName));
     }
     const MessageDefinition* responseDefinition =
         m_catalog.findByCommand(static_cast<quint8>(responsePayload.at(1)),
                                 static_cast<quint8>(responsePayload.at(2)),
                                 Direction::Response);
     if (responseDefinition == nullptr || responseDefinition != m_response) {
-        return protocolFailure(step, QStringLiteral("Unexpected SYSTEM_STATUS response command"));
+        return protocolFailure(step,
+                               QStringLiteral("Unexpected %1 response command")
+                                   .arg(m_commandName));
     }
     QVariantMap values;
     if (!decodePayload(*responseDefinition, responsePayload, &values, &error)) {
-        return protocolFailure(step, QStringLiteral("Cannot decode SYSTEM_STATUS payload: %1").arg(error));
+        return protocolFailure(step,
+                               QStringLiteral("Cannot decode %1 payload: %2")
+                                   .arg(m_commandName, error));
     }
     if (values.value(QStringLiteral("seq")).toUInt() != sequence) {
-        return protocolFailure(step, QStringLiteral("SYSTEM_STATUS response sequence does not echo request"));
+        return protocolFailure(step,
+                               QStringLiteral("%1 response sequence does not echo request")
+                                   .arg(m_commandName));
     }
     ++m_nextSequence;
 
@@ -374,12 +415,12 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
         values.value(QStringLiteral("err_code")).toInt() != 0) {
         result.verdict = TestVerdict::Error;
         result.errorCode = ErrorCode::RemoteCommandError;
-        result.message = QStringLiteral("SYSTEM_STATUS reported a remote error");
+        result.message = QStringLiteral("%1 reported a remote error").arg(m_commandName);
     }
 
     hwtest::biz::RawSample sample;
     sample.timestampUs = result.endTimeUs;
-    sample.channelId = QStringLiteral("SYSTEM_STATUS");
+    sample.channelId = m_commandName;
     sample.values = values;
     sample.tags.insert(QStringLiteral("requestFrameHex"), result.rawData.value(QStringLiteral("requestFrameHex")));
     observer.onSample(step.stepId, sample);
@@ -389,8 +430,10 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     event.timestampUs = result.endTimeUs;
     event.level = result.verdict == TestVerdict::Pass ? QStringLiteral("INFO") : QStringLiteral("ERROR");
     event.source = QStringLiteral("algorithm");
-    event.category = QStringLiteral("mbddf.system_status");
-    event.message = result.message.isEmpty() ? QStringLiteral("SYSTEM_STATUS completed") : result.message;
+    event.category = m_algorithmId;
+    event.message = result.message.isEmpty()
+        ? QStringLiteral("%1 completed").arg(m_commandName)
+        : result.message;
     event.requestId = m_context.requestId;
     event.context.insert(QStringLiteral("requestFrameHex"), result.rawData.value(QStringLiteral("requestFrameHex")));
     event.context.insert(QStringLiteral("responseFrameHex"), result.rawData.value(QStringLiteral("responseFrameHex")));
@@ -457,8 +500,8 @@ bool SystemStatusAlgorithmExecutor::evaluateCriteria(const TestStep& step,
         const auto iterator = values.constFind(criterion.metric);
         if (iterator == values.cend()) {
             if (failureMessage != nullptr) {
-                *failureMessage = QStringLiteral("Metric '%1' is not present in SYSTEM_STATUS response")
-                                       .arg(criterion.metric);
+                *failureMessage = QStringLiteral("Metric '%1' is not present in %2 response")
+                                       .arg(criterion.metric, m_commandName);
             }
             return false;
         }

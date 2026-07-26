@@ -1,10 +1,12 @@
 set(ALGORITHM_PUBLIC_HEADERS
+    include/algorithm/elec_health_status_executor.h
     include/algorithm/mbddf_protocol.h
     include/algorithm/mbddf_transport.h
     include/algorithm/system_status_executor.h
 )
 
 set(ALGORITHM_SOURCES
+    src/elec_health_status_executor.cpp
     src/mbddf_protocol.cpp
     src/mbddf_transport.cpp
     src/system_status_executor.cpp

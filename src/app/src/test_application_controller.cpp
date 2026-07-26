@@ -1,5 +1,6 @@
 #include <app/test_application_controller.h>
 
+#include <algorithm/elec_health_status_executor.h>
 #include <algorithm/mbddf_transport.h>
 #include <algorithm/system_status_executor.h>
 
@@ -129,7 +130,8 @@ public:
     HalServicePtr hal{nullptr, &hwtest::hal::destroyHalService};
     hwtest::hal::SessionId sessionId;
     hwtest::hal::IHalDevice* device = nullptr;
-    std::unique_ptr<hwtest::algorithm::mbddf::SystemStatusAlgorithmExecutor> executor;
+    std::unique_ptr<hwtest::biz::IAlgorithmExecutor> executor;
+    QString selectedAlgorithmId;
     TestServicePtr runner{nullptr, &hwtest::biz::destroyTestRunService};
     hwtest::logging::LogService logService;
     std::unique_ptr<hwtest::logging::JsonLineFileSink> fileSink;
@@ -183,20 +185,24 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
         return failure(QStringLiteral("test_config"), testConfig.status.error.message);
     }
 
-    int enabledSystemStatusSteps = 0;
+    int enabledSteps = 0;
+    QString selectedAlgorithmId;
     for (const hwtest::biz::TestStep& step : testConfig.value.steps) {
         if (!step.enabled) {
             continue;
         }
-        if (step.algorithmId != QStringLiteral("mbddf.system_status")) {
+        if (step.algorithmId != QStringLiteral("mbddf.system_status") &&
+            step.algorithmId != QStringLiteral("mbddf.elec_health_status")) {
             return failure(QStringLiteral("unsupported_algorithm"),
-                           QStringLiteral("This application only supports mbddf.system_status"));
+                           QStringLiteral("Unsupported MB_DDF algorithm '%1'")
+                               .arg(step.algorithmId));
         }
-        ++enabledSystemStatusSteps;
+        ++enabledSteps;
+        selectedAlgorithmId = step.algorithmId;
     }
-    if (enabledSystemStatusSteps != 1) {
+    if (enabledSteps != 1) {
         return failure(QStringLiteral("test_config"),
-                       QStringLiteral("Exactly one enabled SYSTEM_STATUS step is required"));
+                       QStringLiteral("Exactly one enabled MB_DDF step is required"));
     }
 
     QVariantMap halConfig;
@@ -239,6 +245,7 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
 
     m_impl->testConfigPath = absoluteTestPath;
     m_impl->halConfigPath = absoluteHalPath;
+    m_impl->selectedAlgorithmId = selectedAlgorithmId;
     m_impl->halConfig = halConfig;
     m_impl->controls = controls;
     m_impl->runTimeoutMs = timeoutMs;
@@ -402,8 +409,19 @@ ActionResult TestApplicationController::prepare()
 
     auto transport = std::make_unique<hwtest::algorithm::mbddf::HalControlTransport>(
         m_impl->device, m_impl->snapshot.controlResourceId);
-    m_impl->executor = std::make_unique<hwtest::algorithm::mbddf::SystemStatusAlgorithmExecutor>(
-        std::move(transport));
+    if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.system_status")) {
+        m_impl->executor = std::make_unique<
+            hwtest::algorithm::mbddf::SystemStatusAlgorithmExecutor>(std::move(transport));
+    } else if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.elec_health_status")) {
+        m_impl->executor = std::make_unique<
+            hwtest::algorithm::mbddf::ElecHealthStatusAlgorithmExecutor>(std::move(transport));
+    } else {
+        const ActionResult result = failure(QStringLiteral("unsupported_algorithm"),
+                                            QStringLiteral("Unsupported MB_DDF algorithm '%1'")
+                                                .arg(m_impl->selectedAlgorithmId));
+        shutdown();
+        return result;
+    }
     m_impl->runner.reset(hwtest::biz::createTestRunService(m_impl->executor.get()));
     if (!m_impl->runner) {
         const ActionResult result = failure(QStringLiteral("biz_create"),

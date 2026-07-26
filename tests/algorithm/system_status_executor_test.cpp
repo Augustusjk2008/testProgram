@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm/elec_health_status_executor.h>
 #include <algorithm/mbddf_transport.h>
 #include <algorithm/system_status_executor.h>
 
@@ -497,6 +498,168 @@ TEST(SystemStatusExecutorTest, ConfigBIZSimulatorAndGoldenFrameFormOneClosedLoop
               QStringLiteral("55AA301101013412") + QString(86, QLatin1Char('0')) + QStringLiteral("AC1C"));
     EXPECT_EQ(simulatorPtr->transactionCount(), 1);
     ASSERT_EQ(simulatorPtr->lastRequest().left(5).toHex().toUpper(), QByteArray("55AA301101"));
+
+    ASSERT_TRUE(service->shutdown().ok());
+}
+
+TEST(ElecHealthStatusExecutorTest, ConfigBIZScriptedTransportProducesReadOnlyExchange)
+{
+    const QString assets = catalogDirectory();
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present: " << assets.toStdString();
+    }
+
+    const QString configPath = QStringLiteral(HWTEST_MBDDF_ELEC_HEALTH_CONFIG);
+    ASSERT_TRUE(QFileInfo(configPath).isFile()) << configPath.toStdString();
+    qputenv("MB_DDF_PROTOCOL_CSV_DIR", assets.toUtf8());
+
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+    const MessageDefinition* responseDefinition =
+        catalog.findByName(QStringLiteral("elec_health_status_response"));
+    ASSERT_NE(responseDefinition, nullptr);
+
+    QByteArray capturedRequest;
+    auto transport = std::make_unique<ScriptedByteTransport>(
+        [&](const QByteArray& request, int) {
+            capturedRequest = request;
+            QByteArray requestPayload;
+            QString transportError;
+            if (!decodeFrame(request, &requestPayload, &transportError)) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       transportError};
+            }
+            const MessageDefinition* requestDefinition =
+                catalog.findByCommand(static_cast<quint8>(requestPayload.at(1)),
+                                      static_cast<quint8>(requestPayload.at(2)),
+                                      Direction::Request);
+            QVariantMap requestValues;
+            if (requestDefinition == nullptr ||
+                !decodePayload(*requestDefinition,
+                               requestPayload,
+                               &requestValues,
+                               &transportError)) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       transportError.isEmpty()
+                                           ? QStringLiteral("request definition is missing")
+                                           : transportError};
+            }
+
+            const QVariantMap responseValues{
+                {QStringLiteral("status"), 0},
+                {QStringLiteral("err_code"), 0},
+                {QStringLiteral("c_volt"), 28.51},
+                {QStringLiteral("b_volt"), 27.90},
+                {QStringLiteral("activate_bits"), 1},
+                {QStringLiteral("external_vol"), 3.30},
+                {QStringLiteral("core_vol"), 1.00},
+                {QStringLiteral("assist_vol"), 1.80},
+                {QStringLiteral("v28_5"), 28.50},
+                {QStringLiteral("js_5V"), 5.01},
+                {QStringLiteral("dyt_5V"), 4.99},
+                {QStringLiteral("power_24V"), 24.00},
+                {QStringLiteral("value_YX"), 5.045},
+            };
+            QByteArray responsePayload;
+            if (!encodePayload(*responseDefinition,
+                               responseValues,
+                               static_cast<quint16>(requestValues.value(
+                                   QStringLiteral("seq")).toUInt()),
+                               &responsePayload,
+                               &transportError)) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       transportError};
+            }
+            QByteArray responseFrame;
+            if (!encodeFrame(responsePayload, &responseFrame, &transportError)) {
+                return TransportResult{false,
+                                       TransportResult::Error::Io,
+                                       {},
+                                       transportError};
+            }
+            return TransportResult{true, TransportResult::Error::None, responseFrame, {}};
+        });
+    ScriptedByteTransport* transportPtr = transport.get();
+    ElecHealthStatusAlgorithmExecutor executor(std::move(transport));
+
+    std::unique_ptr<hwtest::biz::ITestRunService,
+                    void (*)(hwtest::biz::ITestRunService*)>
+        service(hwtest::biz::createTestRunService(&executor),
+                &hwtest::biz::destroyTestRunService);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+
+    ResultCollector results;
+    StateCollector states;
+    QVector<hwtest::biz::RawSample> samples;
+    QObject::connect(service.get(),
+                     &hwtest::biz::ITestRunService::resultProduced,
+                     [&results](const hwtest::biz::TaskId&,
+                                const hwtest::biz::TestResult& result) {
+                         results.append(result);
+                     });
+    QObject::connect(service.get(),
+                     &hwtest::biz::ITestRunService::stateChanged,
+                     [&states](const hwtest::biz::TaskId&, hwtest::biz::TestState state) {
+                         states.append(state);
+                     });
+    QObject::connect(service.get(),
+                     &hwtest::biz::ITestRunService::sampleProduced,
+                     [&samples](const hwtest::biz::TaskId&,
+                                const hwtest::biz::StepId&,
+                                const hwtest::biz::RawSample& sample) {
+                         samples.push_back(sample);
+                     });
+
+    ASSERT_TRUE(service->loadConfiguration(configPath).ok());
+    ASSERT_TRUE(service->startTest().ok());
+    ASSERT_TRUE(results.waitForResult(3000));
+    ASSERT_TRUE(states.waitForTerminal(3000));
+
+    const auto result = results.result();
+    EXPECT_EQ(result.stepId, QStringLiteral("ELEC_HEALTH_STATUS"));
+    EXPECT_EQ(result.algorithmId, QStringLiteral("mbddf.elec_health_status"));
+    EXPECT_EQ(result.verdict, hwtest::biz::TestVerdict::Pass);
+    EXPECT_EQ(result.errorCode, hwtest::biz::ErrorCode::Ok);
+    EXPECT_NEAR(result.rawData.value(QStringLiteral("responseValues"))
+                    .toMap()
+                    .value(QStringLiteral("c_volt"))
+                    .toDouble(),
+                28.51,
+                1e-6);
+    EXPECT_NEAR(result.rawData.value(QStringLiteral("responseValues"))
+                    .toMap()
+                    .value(QStringLiteral("value_YX"))
+                    .toDouble(),
+                5.045,
+                0.0025);
+    ASSERT_EQ(samples.size(), 1);
+    EXPECT_EQ(samples.first().channelId, QStringLiteral("ELEC_HEALTH_STATUS"));
+    EXPECT_EQ(transportPtr->transactionCount(), 1);
+
+    QByteArray requestPayload;
+    ASSERT_TRUE(decodeFrame(capturedRequest, &requestPayload, &error))
+        << error.toStdString();
+    EXPECT_EQ(static_cast<quint8>(requestPayload.at(1)), 0x05u);
+    EXPECT_EQ(static_cast<quint8>(requestPayload.at(2)), 0x01u);
+    const MessageDefinition* requestDefinition =
+        catalog.findByName(QStringLiteral("elec_health_status_request"));
+    ASSERT_NE(requestDefinition, nullptr);
+    QVariantMap requestValues;
+    ASSERT_TRUE(decodePayload(*requestDefinition,
+                              requestPayload,
+                              &requestValues,
+                              &error))
+        << error.toStdString();
+    EXPECT_EQ(requestValues.value(QStringLiteral("seq")).toUInt(), 0x1234u);
+    EXPECT_EQ(requestPayload.mid(5), QByteArray(43, '\0'));
 
     ASSERT_TRUE(service->shutdown().ok());
 }

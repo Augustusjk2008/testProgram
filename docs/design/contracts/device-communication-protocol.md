@@ -2,7 +2,7 @@
 
 > 适用项目：多产品通用硬件测试软件（Qt 5.15 兼容、Qt 6 Core/Network/SerialPort fallback / C++17 / Windows）
 > 本文定位：产品协议资产、当前 MB_DDF CSV 解析规则、帧编解码和算法运行期语义。
-> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/src/system_status_executor.cpp`。
+> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/src/system_status_executor.cpp` 和 `src/algorithm/src/elec_health_status_executor.cpp`。
 > 状态标记：**当前**表示已实现或已由用户确认的资产基线，**目标**表示已确认但尚未实现。
 
 原始建模参考来自 `H:/WorkSpace/PythonWorkspace/openEulerEnvironment/docs/protocol_modeling_workbench_definition.md`。该外部绝对路径只作来源追溯，不是本仓库可复现的发布输入；本项目当前实现与该参考不一致时，以本节明确列出的“当前规则”为准。
@@ -22,7 +22,7 @@ BIZ -> IAlgorithmExecutor -> hwtest_algorithm_mbddf -> IByteTransport
                                                    -> HalSerialTransport -> hwtest_hal
 ```
 
-统一生产路径如下；当前 `SYSTEM_STATUS` 控制通道已按该边界落地，通用 Provider 架构仍未完成：
+统一生产路径如下；当前 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 控制通道已按该边界落地，通用 Provider 架构仍未完成：
 
 ```text
 BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据）
@@ -54,11 +54,12 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 | `encodePayload()` / `decodePayload()` | 按定义编解码 B4 至产品 payload 末尾 |
 | `encodeFrame()` / `decodeFrame()` | 处理 `55 AA + LEN + payload + CRC16/XMODEM` |
 | `SystemStatusAlgorithmExecutor` | 执行 `mbddf.system_status` 单步算法 |
+| `ElecHealthStatusAlgorithmExecutor` | 执行 `mbddf.elec_health_status` 单步算法 |
 | `SystemStatusSimulator` | 协议级成功、超时、坏 CRC 和无效响应模拟 |
 | `HalControlTransport` | 经 `IControlChannel` 发送原始字节，并累积短读、搜索同步字、按长度分帧及保留剩余帧 |
 | `HalSerialTransport` | 将算法字节事务桥接到现有 `ISerialBus` |
 
-当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，完成单次和三轮 PC 周期 SYSTEM_STATUS。该次实机 smoke 证明固定组合可成功往返，但每轮出现 Qt 工作线程计时器警告。BIZ worker 后续已迁移为 QThread 并有 dispatcher/计时器回归；无响应 COM3 诊断不再告警，但尚无修复后的成功复测。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
+当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，分别完成 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 的单次及三轮 PC 周期。早期 SYSTEM_STATUS 实机执行每轮出现 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，两个测试项均再次成功，后端完整诊断未再出现该警告。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
 
 ---
 
@@ -79,12 +80,12 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 
 ### 3.1 已确认基线与测试对齐
 
-截至 2026-07-19，该目录有 32 个 CSV，包含 `system_status_request.csv` 与 `system_status_response.csv`，不包含 `ad_read_response.csv`。
+截至 2026-07-19，该目录有 32 个 CSV，包含 `system_status_request.csv`、`system_status_response.csv`、`elec_health_status_request.csv` 与 `elec_health_status_response.csv`，不包含 `ad_read_response.csv`。
 
 因此：
 
 - `ProtocolCatalog` 按一文件一定义加载，当前期望为 32 个定义；
-- `SYSTEM_STATUS` 所需两份 CSV 当前存在；
+- `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 各自所需的两份 CSV 当前存在；
 - 原测试源码中的 36 项断言和 `ad_read_response` 引用是相对批准基线的陈旧预期，现已按当前定义修正；
 - 后续修改该目录时，必须同步协议测试和本节清单；测试结果应记录基线路径、观测时间和实际清单。
 
@@ -175,9 +176,11 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 ---
 
-## 7. `SYSTEM_STATUS` 配置与执行
+## 7. `SYSTEM_STATUS` 与 `ELEC_HEALTH_STATUS` 配置与执行
 
-当前 `SystemStatusAlgorithmExecutor` 只支持 `algorithmId = "mbddf.system_status"`。BIZ 将 `TestConfig.executionConfig` 原样传给 `prepare()`；执行器实际收到的 map 形状为：
+当前应用控制器接受两个已知的独立单步算法：`mbddf.system_status` 和 `mbddf.elec_health_status`。每份配置只能启用其中一个步骤；不支持把两个项目拼成一个多步骤生产测试。BIZ 将 `TestConfig.executionConfig` 原样传给对应的固定命令执行器；两个执行器共享一次有界请求-响应生命周期，PC 周期由 BIZ 调度。
+
+`SYSTEM_STATUS` 的 `executionConfig` 形状为：
 
 ```json
 {
@@ -204,9 +207,11 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 - 响应必须匹配配置的响应命令，并回显请求序号；
 - CRC、命令或序号失败由算法返回 `ProtocolParseError`，传输超时返回 `BusTimeout`。
 
+`ELEC_HEALTH_STATUS` 使用独立的 `configs/mbddf_elec_health.testcfg.json`，配置只把 Profile 替换为 `elec_health_status_request` / `elec_health_status_response`。请求命令为 `type_group=0x05`、`sub_type=0x01`，其保留填充字节由 CSV 定义；响应解码为 `status`、`err_code`、`c_volt`、`b_volt`、`activate_bits`、`external_vol`、`core_vol`、`assist_vol`、`v28_5`、`js_5V`、`dyt_5V`、`power_24V` 和 `value_YX`。当前判定标准只有 `status == 0` 且 `err_code == 0`，电压和模拟量仅作为样本输出，不在配置中推导或增加未经批准的阈值。该命令没有设备侧 START/STOP 配对，因此支持单次和 PC 周期，不支持 `device_stream`。
+
 算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。
 
-当前 `ProtocolProfile` 列表由 BIZ 保存和透传，但 `SystemStatusAlgorithmExecutor` 没有把它与 `executionConfig.protocol.*ProfileId`、CSV 命令键或 HAL 资源做交叉校验。该绑定仍是未实现项，不能仅凭两个同名 Profile 宣称映射已建立。
+当前 `ProtocolProfile` 列表由 BIZ 保存和透传，但 MB_DDF 固定命令执行器没有把它与 `executionConfig.protocol.*ProfileId`、CSV 命令键或 HAL 资源做完整交叉校验。该绑定仍是未实现项，不能仅凭两个同名 Profile 宣称映射已建立。
 
 目标映射应显式包含：
 
@@ -234,7 +239,7 @@ operationId
 
 单次 HAL 读取返回短字节块不是协议错误。只有算法在 deadline 内仍无法形成合法候选帧时，才产生超时或产品协议诊断。
 
-当前 `HalControlTransport` 已实现同步字搜索、长度分帧、短读累积、前导噪声丢弃和剩余帧保留，并以一次事务总预算驱动 HAL 读写。CRC、方向、命令和序号仍由 `SystemStatusAlgorithmExecutor`/协议 codec 校验。旧 `HalSerialTransport` 仍是一次 `transactSerial()` 的兼容骨架，不作为当前产品路径。
+当前 `HalControlTransport` 已实现同步字搜索、长度分帧、短读累积、前导噪声丢弃和剩余帧保留，并以一次事务总预算驱动 HAL 读写。CRC、方向、命令和序号仍由 MB_DDF 固定命令执行器/协议 codec 校验。旧 `HalSerialTransport` 仍是一次 `transactSerial()` 的兼容骨架，不作为当前产品路径。
 
 CAN/CANFD 的帧边界由总线提供，但 payload 内的 MB_DDF 字段、CRC、命令、序号及响应关系仍由算法解释。
 
@@ -274,7 +279,8 @@ CAN/CANFD 的帧边界由总线提供，但 payload 内的 MB_DDF 字段、CRC�
 - 定义：公共字段、48/123 长度、连续布局、BIT 8 位覆盖和尾部 CRC；
 - 编解码：常量、保留字节、定标、符号扩展、F32、小端和 CRC16/XMODEM；
 - `SYSTEM_STATUS`：golden request、成功响应、坏 CRC、错误命令、序号不匹配和超时；
+- `ELEC_HEALTH_STATUS`：独立配置加载、`0x05/0x01` 请求、响应字段解码、`status/err_code` 判定和经 HAL 的 UDP/串口路径；
 - 纯协议单测可直连 Simulator；产品模拟和算法集成必须经过 HAL，并标明是 HAL Mock 或标准 Provider 隔离模拟目标；
 - 真实硬件协议测试单独标记，不进入默认 CI。
 
-当前验收限制：`dut/` 已保存来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 的 32 份 CSV 同步副本，但宿主运行期仍使用仓库外批准基线，且尚无 manifest/hash 自动机制；控制通道 Mock Provider 未实现。Qt UDP 本机模拟目标和流式分帧已有自动化证据；BIZ QThread dispatcher 回归已补齐，但真实 COM3/DUT 仍只有一次带历史告警的成功 smoke，修复后的成功复测和长时/异常收尾尚未完成。完整证据等级和执行命令统一见 [测试规范](../testing/testing-specification.md)。
+当前验收限制：`dut/` 已保存来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 的 32 份 CSV 同步副本，但宿主运行期仍使用仓库外批准基线，且尚无 manifest/hash 自动机制；控制通道 Mock Provider 未实现。Qt UDP 本机模拟目标和流式分帧已有自动化证据；BIZ QThread dispatcher 回归已补齐，真实 COM3/DUT 也已有迁移后成功且无目标计时器警告的短时复测，但长时、自动化异常路径和物理安全收尾尚未完成。完整证据等级和执行命令统一见 [测试规范](../testing/testing-specification.md)。

@@ -107,6 +107,140 @@ TEST(TestApplicationControllerTest, LoadsAndSelectsConfiguredControlResourcesWit
     EXPECT_EQ(controller.snapshot().providerId, QStringLiteral("qt.udp"));
 }
 
+TEST(TestApplicationControllerTest, LoadsAndPreparesElectricalHealthConfiguration)
+{
+    ensureQtApplication();
+    const QString assets = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_ELEC_HEALTH_CONFIG),
+        QStringLiteral(HWTEST_APP_HAL_CONFIG));
+    ASSERT_TRUE(loaded.ok) << loaded.code.toStdString() << ": "
+                           << loaded.message.toStdString();
+    ASSERT_TRUE(controller.selectControl(QStringLiteral("CONTROL_NETWORK")).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, RunsElectricalHealthThroughTheSelectedUdpControlResource)
+{
+    ensureQtApplication();
+    const QString assets = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
+
+    TestApplicationController controller;
+    QVector<ApplicationSample> samples;
+    QObject::connect(&controller,
+                     &TestApplicationController::sampleReceived,
+                     &controller,
+                     [&](const ApplicationSample& sample) { samples.push_back(sample); });
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_ELEC_HEALTH_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    ASSERT_TRUE(controller.start().ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(
+                    QStringLiteral("elec_health_status_response"),
+                    {{QStringLiteral("status"), 0},
+                     {QStringLiteral("err_code"), 0},
+                     {QStringLiteral("c_volt"), 28.51},
+                     {QStringLiteral("external_vol"), 3.30},
+                     {QStringLiteral("value_YX"), 5.045}},
+                    &peerError))
+        << peerError.toStdString();
+
+    const ActionResult waited = controller.waitForTerminal(3000);
+    ASSERT_TRUE(waited.ok) << waited.message.toStdString();
+    const ApplicationSnapshot finished = controller.snapshot();
+    EXPECT_EQ(finished.phase, QStringLiteral("finished"));
+    EXPECT_EQ(finished.stepId, QStringLiteral("ELEC_HEALTH_STATUS"));
+    EXPECT_EQ(finished.algorithmId, QStringLiteral("mbddf.elec_health_status"));
+    EXPECT_EQ(finished.verdict, QStringLiteral("Pass"));
+    EXPECT_EQ(finished.errorCode, QStringLiteral("Ok"));
+    ASSERT_EQ(samples.size(), 1);
+    EXPECT_EQ(samples.first().channelId, QStringLiteral("ELEC_HEALTH_STATUS"));
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, ElectricalHealthPcPeriodicForwardsOneSamplePerCycle)
+{
+    ensureQtApplication();
+    const QString assets = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
+
+    TestApplicationController controller;
+    QVector<ApplicationSample> samples;
+    QObject::connect(&controller,
+                     &TestApplicationController::sampleReceived,
+                     &controller,
+                     [&](const ApplicationSample& sample) { samples.push_back(sample); });
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_ELEC_HEALTH_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+
+    TestRunOptions options;
+    options.mode = QStringLiteral("pc_periodic");
+    options.intervalMs = 10;
+    options.maxCycles = 2;
+    ASSERT_TRUE(controller.start(options).ok);
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+        ASSERT_TRUE(peer.replyToLastRequest(
+                        QStringLiteral("elec_health_status_response"),
+                        {{QStringLiteral("status"), 0},
+                         {QStringLiteral("err_code"), 0},
+                         {QStringLiteral("c_volt"), 28.51 + cycle * 0.01},
+                         {QStringLiteral("external_vol"), 3.30},
+                         {QStringLiteral("value_YX"), 5.045}},
+                        &peerError))
+            << peerError.toStdString();
+    }
+
+    ASSERT_TRUE(controller.waitForTerminal(3000).ok);
+    ASSERT_EQ(samples.size(), 2);
+    EXPECT_EQ(samples.at(0).cycleIndex, 1u);
+    EXPECT_EQ(samples.at(1).cycleIndex, 2u);
+    EXPECT_EQ(samples.at(0).stepId, QStringLiteral("ELEC_HEALTH_STATUS"));
+    EXPECT_EQ(samples.at(0).channelId, QStringLiteral("ELEC_HEALTH_STATUS"));
+    EXPECT_EQ(controller.snapshot().runMode, QStringLiteral("pc_periodic"));
+    EXPECT_EQ(controller.snapshot().cycleIndex, 2u);
+    EXPECT_EQ(controller.snapshot().sampleCount, 2u);
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
 TEST(TestApplicationControllerTest, RejectsAnUnknownControlResource)
 {
     TestApplicationController controller;
