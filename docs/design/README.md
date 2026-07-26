@@ -38,9 +38,9 @@ docs/design/
 | 应用 | `src/app/`、`front/` | `hwtest_app_core` 统一组合生命周期；`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与回环 `hwtest_web` 是独立 C++ 入口；`front/` 是独立 React/Vite 遥测控制台 |
 | 测试 | `tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/`、`tests/app/` | 七个 GoogleTest 目标，经 CTest 注册 |
 
-`[当前实现]` 仓库已有行式 TUI、Qt Widgets GUI、WebSocket 后端和浏览器遥测控制台。浏览器提供贯穿所有页面的单次/PC 周期控制、SYSTEM_STATUS 总览、可选字段同图/分图/自定义分组曲线和诊断视图；设备持续回告模式的通用边界已保留，但当前 SYSTEM_STATUS 协议不支持。TCP Provider、真实厂家链和真实硬件验收仍未实现。Qt SerialPort/Network 已用于控制通道，UDP 已有本机模拟目标闭环，真实串口尚未联调。测试目标、源码清单和统计口径统一见 `testing/testing-specification.md`。
+`[当前实现]` 仓库已有行式 TUI、Qt Widgets GUI、WebSocket 后端和浏览器遥测控制台。浏览器提供贯穿所有页面的单次/PC 周期控制、SYSTEM_STATUS 总览、可选字段同图/分图/自定义分组曲线和诊断视图；设备持续回告模式的通用边界已保留，但当前 SYSTEM_STATUS 协议不支持。TCP Provider、真实厂家链和全面真实硬件验收仍未实现。Qt UDP 已有本机模拟目标闭环；Qt 串口已有一次受控 COM3 真实板端 SYSTEM_STATUS smoke，但仍存在 Qt 工作线程计时器警告和长时/异常收尾缺口。测试目标、源码清单、实机证据和限制统一见 `testing/testing-specification.md`。
 
-外部目录 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容已批准为 MB_DDF 协议 CSV 基线，但尚未形成仓库内可复现快照；当前清单和约束统一见 `contracts/device-communication-protocol.md`。
+外部目录 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容已批准为 MB_DDF 协议 CSV 基线；`dut/` 已同步来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 及其中 32 份 CSV，但尚无 manifest、内容哈希和不可变快照自动机制。宿主运行期仍显式使用外部资产目录，当前清单和约束统一见 `contracts/device-communication-protocol.md`。
 
 ## 阅读顺序
 

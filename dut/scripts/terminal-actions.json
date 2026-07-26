@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "actions": [
+    {
+      "id": "run",
+      "label": "运行",
+      "icon": "Play",
+      "windowsCommand": ".\\debug.bat run",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
+      "confirm": false,
+      "enabled": true
+    },
+    {
+      "id": "codegraph",
+      "label": "代码同步",
+      "icon": "Terminal",
+      "windowsCommand": "codegraph sync",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
+      "confirm": false,
+      "enabled": true
+    },
+    {
+      "id": "zip",
+      "label": "压缩",
+      "icon": "Terminal",
+      "windowsCommand": "if (Test-Path .gitignore) { git archive -o archive.zip HEAD } else { \"No .gitignore found, skipping.\" }",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
+      "confirm": false,
+      "enabled": true
+    }
+  ]
+}

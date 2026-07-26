@@ -29,11 +29,11 @@
 
 | 目标 | 当前已覆盖的行为 | 证据边界 |
 | --- | --- | --- |
-| HAL | 错误映射、资源映射、安全校验、会话、Mock AD/DA、DI/DO、宿主串口枚举、串口 echo、CANFD loopback、AdapterLoader fixture、控制资源路由、Qt UDP 回环和 timeout | 串口枚举不打开设备；Qt UDP 仅是本机 Provider 证据；没有真实串口、真实网口或厂家 SDK 证据 |
+| HAL | 错误映射、资源映射、安全校验、会话、Mock AD/DA、DI/DO、宿主串口枚举、串口 echo、CANFD loopback、AdapterLoader fixture、控制资源路由、Qt UDP 回环和 timeout | 自动化测试中的串口枚举不打开设备；Qt UDP 仅是本机 Provider 证据；COM3 实机结果属于下述独立手工 smoke，不是默认 CTest 或厂家 SDK 证据 |
 | 日志 | LogService、JsonLineFileSink、HalLogEvent 到 LogEvent 桥接 | 不覆盖 UI 或真实设备日志链 |
 | BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
 | 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器及 Qt UDP 成功/超时/坏 CRC 路径、SYSTEM_STATUS 拒绝设备流 | 当前只实现 mbddf.system_status；本机 UDP 模拟目标不等同于真实板端通讯；拒绝设备流不证明其他算法已实现设备持续回告 |
-| 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、控制资源与会话串口选择、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | 串口选择只证明配置覆盖，不证明端口可打开；offscreen、WebSocket 回环与 UDP 模拟目标不证明真实串口、真实网口或真实 DUT |
+| 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、控制资源与会话串口选择、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | 默认自动化中的串口选择只证明配置覆盖；下述 COM3 实机 smoke 独立于 CTest，不能外推到真实网口、其他 DUT 或长期稳定性 |
 | 浏览器前端 | Vitest 下的类型化协议、有界数据结构、字段发现、时间窗、降采样和图组；TypeScript/Vite 生产构建 | 不替代 WebSocket/UDP C++ 集成测试，也不证明真实硬件、长期浏览器稳定性或设备流算法 |
 
 下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
@@ -42,7 +42,18 @@
 - BIZ 的导入附件样例测试依赖 tmp/hwtest_BIZ/configs/sample_product.testcfg；tmp 不是仓库实现事实。
 - 算法测试中有 9 个自包含的帧、传输、能力判定或临时 CSV 用例；其余 12 个依赖外部 MB_DDF CSV。
 
-协议 CSV 是运行期资产。用户已批准 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容作为 MB_DDF 基线，当前为 32 个 CSV；协议测试按一文件一定义及当前实际字段校验。仓库不保存这些 CSV fixture，因此测试仍可能因目录缺失而跳过；基线已批准不等于 manifest/hash 可复现快照已经实现。
+协议 CSV 是运行期资产。用户已批准 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容作为 MB_DDF 基线，当前为 32 个 CSV；协议测试按一文件一定义及当前实际字段校验。`dut/` 保存同步副本，但宿主测试未把它接成默认 fixture，仍可能因外部目录缺失而跳过；基线已批准和文件已复制都不等于 manifest/hash 自动机制已经实现。
+
+### 2.1 2026-07-26 COM3 实机 smoke
+
+本次是在用户明确授权、MB_DDF_v2 电路板已上电的条件下执行的独立手工证据，不进入默认 CTest：
+
+- DUT 源码为 `H:/Resources/RTLinux/Demos/MB_DDF_v2` 的提交 `982b3f5bbce222aea061e9ce1523ba926c801658`；使用 `HW_TEST Release` 画像交叉构建并部署到 `root@192.168.1.29:/home/sast8/tmp`。目标为 AArch64 Linux，工具链为 Arm GNU `aarch64-none-linux-gnu 11.3 rel1`，sysroot 为 `D:/Program Files (x86)/Arm GNU Toolchain aarch64-none-linux-gnu/origin/armv8a-ucas-linux`。
+- 板端通过 `/dev/xdma0` 的 COM3 窗口和 event 2 运行产品协议服务；PC 端使用 `COM3`、`614400 / 8E1 / 无流控`。宿主只启动 `hwtest_web`，未启动浏览器前端，并通过 WebSocket 手工发送 `load -> prepare -> start -> quit`。
+- 单次 SYSTEM_STATUS 到达 `finished`，结果为 `Pass/Ok`，`status=0`、`err_code=0`，收到一个 `SYSTEM_STATUS` 样本。随后 `pc_periodic` 以 `intervalMs=100`、`maxCycles=3` 完成三轮，轮次为 `1,2,3`，快照和客户端均收到三个样本，最终仍为 `Pass/Ok`。
+- 三轮最后一次解码值包括 CPU 小/大核频率 `1704/2016 MHz`、CPU/RK/K7 温度 `37/37/43 C`、内存占用约 `3.6435%`、PCIe `5 GT/s x4`、上电时间 `1158 s`。这些是一次运行观测值，不是产品阈值或稳定性基线。
+- 风险：连接和 `prepare` 阶段无 Qt 警告，但三个实际串口周期在同一 BIZ 工作线程各产生一次 `QObject::startTimer: Timers can only be used with threads started with QThread`。本次字节交互仍成功；在修正线程模型并完成长时、超时、拔插、停止与物理安全收尾前，不得把该 smoke 写成生产验收。
+- 同一来源提交的 `HW_TEST Release` 和完整 `MB_DDF_HW_Tests` 目标交叉构建通过；更新提交新增的 `HwXdmaTransport.WaitEventReportsReadinessWithoutReadingEventFd` 已部署到同一目标板并通过。测试结束后宿主后端和板端产品协议服务均已停止。
 
 ## 3. 五级证据模型
 
@@ -52,9 +63,9 @@
 | --- | --- | --- | --- |
 | 1. 协议 Simulator | 配置 -> BIZ -> SystemStatusAlgorithmExecutor -> SystemStatusSimulator -> golden request frame | 已有；遗留的非 HAL 跨层替身回归，依赖外部 CSV | 仅证明当前 SYSTEM_STATUS 的模拟器闭环、CRC 和超时处理；不是产品模拟或集成验收范式 |
 | 2. HAL Mock 集成 | 算法 -> IControlChannel -> HAL Mock Provider | SYSTEM_STATUS 正向闭环未实现 | 现有 MockAdapter 回环不是控制通道 Mock Provider；算法 fake 只作传输契约测试 |
-| 3. Qt Provider | `qt.serial`/`qt.udp` 标准 Qt 通讯 Provider | 部分实现 | Qt UDP 已有原始回环及经 BIZ/算法/HAL 的本机模拟目标闭环；Qt 串口只有配置错误契约和可编译证据，无实机联调；TCP 未实现 |
+| 3. Qt Provider | `qt.serial`/`qt.udp` 标准 Qt 通讯 Provider | 部分实现 | Qt UDP 已有原始回环及经 BIZ/算法/HAL 的本机模拟目标闭环；Qt 串口已有上述 COM3/DUT 短时 smoke，但存在线程告警且无自动化异常路径；TCP 未实现 |
 | 4. Vendor Adapter | 真实厂家 Adapter DLL/SDK 经 C ABI 接入 | 未实现 | AdapterLoader fixture 仅证明最小加载器行为；CAbiAdapter 当前仍委托 MockAdapter |
-| 5. 真实硬件 | 隔离台架上的真实目标和测试设备 | 未实现 | 当前没有真实硬件测试目标，也没有 CTest hardware label |
+| 5. 真实硬件 | 隔离台架上的真实目标和测试设备 | 部分手工证据 | 已有上述授权 COM3 SYSTEM_STATUS smoke；没有宿主 CTest hardware target、长期稳定性、异常收尾或完整物理安全验收 |
 
 新增五级中的任何目标时，文档、CMake 和测试必须同时标明其级别、依赖资产、隔离条件和通过证据。在代码与测试落地前，一律标记为“未实现”。
 
@@ -71,7 +82,7 @@
 
 跨层验收必须明确是契约测试、协议测试、HAL Mock 集成、Provider 集成、Vendor Adapter 集成或真实硬件验收。不得把串口 echo、CANFD loopback 或 Simulator 结果描述为真实通讯证据。
 
-SYSTEM_STATUS 当前同时有 Simulator golden 链和“BIZ -> 算法 -> HalControlTransport -> HAL -> qt.udp -> 本机模拟目标”成功链。HAL Mock Provider 正向链、真实串口/目标板链和 `ProtocolProfile -> CSV -> HAL ResourceId` 一致性校验仍是未实现验收项。
+SYSTEM_STATUS 当前有 Simulator golden 链、“BIZ -> 算法 -> HalControlTransport -> HAL -> qt.udp -> 本机模拟目标”自动化成功链，以及上述 `qt.serial -> COM3 -> MB_DDF_v2` 手工成功链。HAL Mock Provider 正向链、真实串口自动化/异常路径和 `ProtocolProfile -> CSV -> HAL ResourceId` 一致性校验仍是未实现验收项。
 
 ## 5. 测试准入
 
@@ -79,7 +90,7 @@ SYSTEM_STATUS 当前同时有 Simulator golden 链和“BIZ -> 算法 -> HalCont
 - 修改 BIZ 时，必须运行 hwtest_biz_tests 和 BIZ 架构扫描；BIZ 测试不得引入硬件执行依赖。
 - 修改协议 CSV 规则、解析器或资产引用时，必须同步 device-communication-protocol.md 和协议契约测试，并记录基线路径、观测时间与清单；manifest/hash 机制落地后再记录固定版本和内容哈希。
 - 修改 Mock 行为时，必须说明证据级别；可配置超时/错误注入和 SYSTEM_STATUS 控制通道 Mock Provider 集成仍未实现，不得作为既有能力验收。
-- 修改 Qt Provider、Vendor Adapter 或真实硬件路径时，必须新增相应级别的隔离测试；当前 Qt UDP 有本机隔离测试，Qt 串口实机、真实 Adapter、CTest hardware label 和真实硬件验收仍未实现。
+- 修改 Qt Provider、Vendor Adapter 或真实硬件路径时，必须新增相应级别的隔离测试；当前 Qt UDP 有本机隔离测试，Qt 串口只有一次手工实机 smoke，真实 Adapter、CTest hardware label、串口线程告警回归和全面真实硬件验收仍未实现。
 - 修改共享应用控制器、runner 或 TUI 命令时，必须运行 `hwtest_app_tests`；修改 Qt GUI 时还必须运行 `hwtest_gui_tests`；修改 WebSocket 协议、服务器、入口或脚本时必须运行 `hwtest_web_tests`、`ctest -L websocket` 和 `HwtestWeb*` 进程测试。修改 `front/` 时必须运行 `npm test` 和 `npm run build`。Qt GUI、WebSocket 后端和浏览器 Web UI 必须复用控制器 DTO/事件，不得以新增前端为由复制组合根。
 - 修复行为缺陷时，先补能复现问题的回归测试，再修改实现。
 

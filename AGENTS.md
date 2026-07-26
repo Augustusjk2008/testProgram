@@ -17,7 +17,7 @@
 - `docs/plan/`、`docs/superpowers/plans/` 是历史执行记录，不是现行接口事实源。
 - 审查、搜索和统计默认忽略 `tmp/`、`build*/`、`cmake-build*/`、`out/` 和 `.git/`；不得把附件、生成物或旧构建结果当作仓库实现事实。
 - `dut/` 是随仓库导入的嵌入式 MB_DDF_v2 被测对象（DUT）快照；该目录内的 `AGENTS.md` 对其子树具有更高优先级。DUT 的 C++20/AArch64 工程、协议 CSV、目标板测试和部署脚本与宿主 Qt/C++17 工程分开维护。
-- DUT 快照来源为 `H:/Resources/RTLinux/Demos/MB_DDF_v2`，导入提交为 `32d961fbaccc3411378241dd1fa850d662354e4c`。
+- DUT 快照来源为 `H:/Resources/RTLinux/Demos/MB_DDF_v2`；首次导入提交为 `32d961fbaccc3411378241dd1fa850d662354e4c`，当前快照来源提交为 `982b3f5bbce222aea061e9ce1523ba926c801658`。
 
 ## 当前实现
 
@@ -29,8 +29,8 @@
 - 算法：`src/algorithm/` 已提供 `hwtest_algorithm_mbddf`、MB_DDF CSV 协议编解码和 `SYSTEM_STATUS` 执行器，命名空间为 `hwtest::algorithm::mbddf`。
 - 应用：`src/app/` 提供共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support`、`hwtest_web_support`，以及独立的 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui`、`hwtest_web`；四个入口均通过 `TestApplicationController` 从 BIZ 测试配置和 HAL 部署配置组装当前唯一的 `mbddf.system_status` 测试。
 - 测试：`tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/`、`tests/app/` 使用 GoogleTest 并通过 CTest 注册；当前清单和统计只以 `docs/design/testing/testing-specification.md` 为准。
-- 当前已有行式 TUI、Qt Widgets GUI、仅监听 `127.0.0.1` 的 `hwtest_web` WebSocket 后端，以及 `front/` 中独立构建的 React/Vite 浏览器遥测控制台。BIZ 已实现 `single`、`pc_periodic`、`device_stream` 三种运行语义；当前 SYSTEM_STATUS 支持单次和 PC 周期，因缺少设备流启动/停止命令而明确拒绝设备持续模式。TCP Provider、真实厂家链和真实硬件验收仍未实现。HAL 控制通道已实现 `qt.serial` 和 `qt.udp`，其中 UDP 已有经应用控制器/BIZ/算法/HAL 的本机模拟目标闭环；真实串口尚未联调。`SystemStatusSimulator` 仍只作为纯协议替身。
-- `dut/docs/design/product_protocol_csv/` 是已导入的 MB_DDF 协议 CSV 快照，导入提交时清单为 32 个 CSV；源事实目录仍为 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv`。仓库尚未实现协议 manifest、内容哈希和不可变快照的自动机制。
+- 当前已有行式 TUI、Qt Widgets GUI、仅监听 `127.0.0.1` 的 `hwtest_web` WebSocket 后端，以及 `front/` 中独立构建的 React/Vite 浏览器遥测控制台。BIZ 已实现 `single`、`pc_periodic`、`device_stream` 三种运行语义；当前 SYSTEM_STATUS 支持单次和 PC 周期，因缺少设备流启动/停止命令而明确拒绝设备持续模式。TCP Provider、真实厂家链和全面真实硬件验收仍未实现。HAL 控制通道已实现 `qt.serial` 和 `qt.udp`：UDP 已有经应用控制器/BIZ/算法/HAL 的本机模拟目标闭环；`qt.serial` 于 2026-07-26 在授权隔离条件下完成 PC COM3 到 MB_DDF_v2 目标板的 SYSTEM_STATUS 单次及三轮 PC 周期 smoke，但每轮均观察到 Qt 线程计时器警告，长时、拔插、停止和物理安全收尾仍未验收。`SystemStatusSimulator` 仍只作为纯协议替身。
+- `dut/docs/design/product_protocol_csv/` 是已导入的 MB_DDF 协议 CSV 快照，当前快照清单为 32 个 CSV；源事实目录仍为 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv`。仓库尚未实现协议 manifest、内容哈希和不可变快照的自动机制。
 
 ## 分层与 I/O 边界
 
@@ -68,6 +68,28 @@
 - 修改公共 API、配置字段、状态语义、错误码、构建依赖或测试边界时，同步相应事实源文档和契约测试。
 - 跨文档概念只保留一个主定义：总览写职责和依赖，契约写接口和语义，实现报告写当前落地细节，测试规范写验证边界；其他文档使用链接引用，不复制大段定义。
 - 历史计划若与当前实现不一致，应保留历史内容并在顶部标注“已被替代”及现行事实源，不把旧计划改写成当前设计。
+
+## 本地前后端服务管理
+
+- 自动化代理不得主动启动、重启或在后台保留 `hwtest_web`、Vite 开发服务器或其他常驻前后端服务。只有用户在当前对话中明确要求启动时才允许启动；构建、测试、页面开发或浏览器验证需求本身不构成启动授权。
+- 未得到明确授权时，验证应使用会自行退出的单元测试、集成测试或 smoke test。若发现已有常驻服务，默认只检查状态，不复用、不停止、不重启；需要变更其运行状态时先取得用户指令。
+- 仓库 WebSocket 后端默认使用 `18765`，不得主动改用可能被其他程序占用的 `8765`。用户手动启动时，在仓库根目录打开第一个 PowerShell 终端并运行：
+
+```powershell
+.\hwtest.ps1 -Ui web -WebPort 18765
+```
+
+- 上述脚本会按需构建并以前台方式运行后端。已有最新构建产物时可运行 `.\hwtest.ps1 -Ui web -WebPort 18765 -SkipBuild` 跳过构建。
+- 用户手动启动浏览器前端时，在仓库根目录打开第二个 PowerShell 终端；首次安装依赖或 `package-lock.json` 变化后先运行 `npm ci`，随后启动 Vite：
+
+```powershell
+Set-Location .\front
+npm ci
+npm run dev
+```
+
+- 日常依赖未变化时可省略 `npm ci`。浏览器访问 `http://127.0.0.1:5173/`，前端默认连接 `ws://127.0.0.1:18765/ws`。如用户手动改用其他后端端口，应在 `front/.env.local` 中设置 `VITE_HWTEST_WS_URL=ws://127.0.0.1:<端口>/ws`，再重新启动 Vite。
+- 两个服务都以前台方式运行；用户在各自终端按 `Ctrl+C` 即可关闭。自动化代理不得为了方便将它们改为后台常驻启动。
 
 ## 构建与验证
 

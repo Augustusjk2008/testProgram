@@ -22,6 +22,7 @@ public:
         return Status::error(StatusCode::Unsupported, 0, "event fd is not supported");
     }
 
+    /// 0 表示超时，正值只表示事件已就绪，不保证是驱动事件计数。
     virtual Result<int> wait_event(Timeout timeout) = 0;
 
     virtual Result<size_t> dma_write(int channel, BufferView data, uint64_t device_offset) {

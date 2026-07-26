@@ -209,24 +209,10 @@ Result<int> XdmaTransport::wait_event(Timeout timeout) {
     if (wait.value() == 0) {
         return 0;
     }
-    // XDMA 驱动的 poll 和 read 共用 events_irq：epoll 就绪表示计数非零，read 会原子
-    // 取出并清零该计数。只关闭 event fd 不会清除计数，必须在每次就绪后消费它。
-    // 每个 events_N 必须保持单消费者，避免其他读者在 epoll 与 read 之间抢先消费。
-    uint32_t event_count = 0;
-    ssize_t bytes_read = -1;
-    do {
-        bytes_read = ::read(event_fd_.get(), &event_count, sizeof(event_count));
-    } while (bytes_read < 0 && errno == EINTR);
-    if (bytes_read < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        return 0;
-    }
-    if (bytes_read < 0) {
-        return Status::error(StatusCode::IoError, errno, "event read failed");
-    }
-    if (bytes_read != static_cast<ssize_t>(sizeof(event_count))) {
-        return Status::error(StatusCode::IoError, 0, "event read returned an invalid size");
-    }
-    return static_cast<int>(event_count);
+    // 目标板实际加载的 XDMA 驱动会在 poll/epoll 报告可读时清除 events_irq；其
+    // event read 又忽略 O_NONBLOCK。就绪后再次 read 会等待下一次中断并绕过调用方
+    // 的 Timeout，因此这里只返回 epoll 结果。设备层负责核对状态并清除硬件中断源。
+    return wait.value();
 }
 
 Result<size_t> XdmaTransport::dma_write(int channel, BufferView data, uint64_t device_offset) {

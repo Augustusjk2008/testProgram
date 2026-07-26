@@ -115,7 +115,7 @@ TEST(HwNullTransport, ReadAfterCloseReturnsNotOpen) {
     EXPECT_EQ(result.status().code, StatusCode::NotOpen);
 }
 
-TEST(HwXdmaTransport, WaitEventConsumesDriverEventCount) {
+TEST(HwXdmaTransport, WaitEventReportsReadinessWithoutReadingEventFd) {
     TemporaryXdmaNodes nodes;
     ASSERT_TRUE(nodes.create());
 
@@ -128,12 +128,17 @@ TEST(HwXdmaTransport, WaitEventConsumesDriverEventCount) {
               static_cast<ssize_t>(sizeof(event_count)));
 
     const auto observed = transport.wait_event(Timeout::after_us(100000));
-    transport.close();
-    ASSERT_TRUE(transport.open());
-    const auto after_reopen = transport.wait_event(Timeout::poll());
-
     ASSERT_TRUE(observed);
-    EXPECT_EQ(observed.value(), static_cast<int>(event_count));
-    ASSERT_TRUE(after_reopen);
-    EXPECT_EQ(after_reopen.value(), 0);
+    EXPECT_EQ(observed.value(), 1);
+
+    const auto event_fd = transport.event_fd();
+    ASSERT_TRUE(event_fd);
+    uint32_t unread_event_count = 0;
+    ASSERT_EQ(::read(event_fd.value(), &unread_event_count, sizeof(unread_event_count)),
+              static_cast<ssize_t>(sizeof(unread_event_count)));
+    EXPECT_EQ(unread_event_count, event_count);
+
+    const auto after_consume = transport.wait_event(Timeout::poll());
+    ASSERT_TRUE(after_consume);
+    EXPECT_EQ(after_consume.value(), 0);
 }

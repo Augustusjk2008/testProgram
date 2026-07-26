@@ -42,7 +42,7 @@ safeStateHalConfig() 为 DA_MAIN_0 设置 0.0，为 DO_POWER_EN 设置 Low。所
 | resource_mapper_test.cpp | 4 | 默认设备、资源、能力和 safeState |
 | safety_guard_test.cpp | 3 | 模拟量钳位、数字量、串口和 CANFD 输入边界 |
 
-在对应 CTest 实际通过后，当前 HAL 覆盖可证明 HAL 公共接口、内存 Mock 和本机 Qt UDP Provider 的基础行为；源级用例存在本身不能证明通过，也不能证明真实串口、真实网口、厂家 SDK、厂商 Adapter 或真实目标板的行为。
+在对应 CTest 实际通过后，当前自动化 HAL 覆盖可证明 HAL 公共接口、内存 Mock 和本机 Qt UDP Provider 的基础行为；源级用例存在本身不能证明通过，也不能证明真实串口、真实网口、厂家 SDK、厂商 Adapter 或真实目标板的行为。另有一次手工 COM3 实机 smoke，证据与限制统一记录在[测试规范](testing-specification.md)。
 
 ## 4. 证据边界
 
@@ -50,7 +50,7 @@ safeStateHalConfig() 为 DA_MAIN_0 设置 0.0，为 DO_POWER_EN 设置 Low。所
 - 串口 echo 是 MockAdapter 内存 buffer 的读写；CANFD loopback 是内存队列。另有 `qt.udp` 的真实 `QUdpSocket` 本机回环，但它不是物理网口或 DUT 证据。
 - AdapterLoader 的 DLL fixture 只验证加载器最小契约，不能证明 Vendor Adapter 集成。
 - `SYSTEM_STATUS` 的 Qt UDP 成功/超时/坏 CRC 跨层闭环位于算法测试目标；本报告只把它引用为 Provider 集成证据，不重复其断言。
-- Qt 串口 Provider 已编译并覆盖配置拒绝路径，但未在真实或虚拟串口上联调。TCP、Vendor Adapter、真实硬件测试和 CTest hardware label 均未实现。
+- Qt 串口 Provider 已编译并覆盖配置拒绝路径；2026-07-26 的手工 COM3 smoke 证明 SYSTEM_STATUS 短时成功链，但未形成自动化 hardware target，且每轮有 Qt 工作线程计时器警告。TCP、Vendor Adapter 和 CTest hardware label 均未实现。
 
 ## 5. 当前缺口
 
@@ -61,6 +61,6 @@ safeStateHalConfig() 为 DA_MAIN_0 设置 0.0，为 DO_POWER_EN 设置 Low。所
 - HalDevice 的空 backend、串口 transact 读写失败、flushSerial、setCanFilters、receiveCanBatch 和失败日志分支。
 - 多设备、多资源、物理通道、safeState 串口/CAN 关闭和并发/长时 IO 验证。
 - SYSTEM_STATUS -> IControlChannel -> HAL Mock Provider 的正向事务闭环。
-- Qt 串口实机、TCP、Vendor Adapter 和真实硬件五级证据中的更高级别测试。
+- Qt 串口长时/拔插/超时/停止及线程告警回归、TCP、Vendor Adapter 和真实硬件五级证据中的更高级别测试。
 
 新增 HAL 公共接口、ABI、资源、安全规则或 Mock 行为时，按 [测试规范](testing-specification.md) 的全局准入同步契约、回归测试和证据等级。

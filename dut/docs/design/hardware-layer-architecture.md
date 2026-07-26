@@ -242,16 +242,16 @@ Device。
 
 1. 通过 epoll 等待 `_events_N` 可读。
 2. 超时返回 0。
-3. 可读后从 event fd 读取 4 字节事件计数并返回，同时消费驱动中的 pending 计数。
-4. 读取被信号中断时重试；短读或其他读取错误返回 `IoError`。
+3. 可读后直接返回 epoll 事件数，不再读取 event fd。
 
-Xilinx XDMA Reference Driver 的 `poll` 与 `read` 使用同一个 `events_irq`：epoll 可读
-表示计数已经非零，紧随其后的单消费者 `read()` 会取出并清零当前计数。只关闭并重新
-打开 event fd 不会清零该驱动计数，因此不能只返回 epoll 事件数。具体设备寄存器中的
-中断源清除和重新使能仍由 Device 负责，两者不能互相替代。
+目标板实际加载的 XDMA 2020.2.2 驱动会在 `poll` 报告可读时清零 `events_irq`；event
+`read()` 又不检查 `O_NONBLOCK`，而是等待 `events_irq` 再次非零。因此 epoll 就绪后
+追加 `read()` 会等待下一次中断，使调用方传入的 `Timeout` 失效。Transport 只负责等待
+通知；Device 仍须回读业务状态确认真实完成，并通过设备命令清除硬件中断源和重新使能。
 
-同一个 `_events_N` 必须只有一个消费者。Reference Driver 的 event `read()` 不遵循
-`O_NONBLOCK`；若另一消费者在 epoll 返回后抢先清空计数，后续读取可能等待下一次中断。
+同一个 `_events_N` 必须只有一个消费者，避免多个 poll/epoll 等待者竞争驱动事件。
+该约定针对当前目标板驱动；若替换为 poll 不消费 `events_irq` 的 XDMA 驱动，必须同步
+调整 Transport、测试和本文档，不能直接复用当前等待实现。
 
 ### 5.6 DMA
 
@@ -834,7 +834,7 @@ target_link_libraries(my_application PRIVATE MB_DDF_HW_DDS_Adapter)
 - XADC `Data[15:4]` 提取、`value_YX` 定标和只读访问。
 - DIDO 极性转换。
 - DH 命令编码、批量去重和不足四路尾批的重复填充。
-- COM RAM 打包、XDMA 事件计数消费、旧事件防御等待、超时和缓冲区不足。
+- COM RAM 打包、XDMA event 就绪后不二次读取、旧事件防御等待、超时和缓冲区不足。
 - Flash 寄存器顺序、读写长度编码、统一 D16=1 完成、WREN/RDSR/ChipErase 顺序和超时。
 - CPU SPI Flash 的四字节命令帧、WEL/Flag Status、页/子扇区/容量边界和跨 die 拆分。
 - CPU SPI Flash 完整工作流的明确地址读取、4 KiB 正常恢复、测试写失败恢复，以及

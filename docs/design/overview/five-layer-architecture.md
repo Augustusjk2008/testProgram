@@ -20,7 +20,7 @@
 
 ## 2. 边界模型
 
-`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法、共享应用控制器、一次性 runner、行式 TUI、Qt Widgets GUI、回环 WebSocket 后端和独立 React/Vite 浏览器遥测控制台。BIZ 已支持单次、PC 周期和设备持续回告三种调度语义；当前 `SYSTEM_STATUS` 支持前两者，并明确拒绝缺少产品协议命令的设备持续模式。TCP Provider、真实厂家链和真实硬件验收仍未实现。
+`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法、共享应用控制器、一次性 runner、行式 TUI、Qt Widgets GUI、回环 WebSocket 后端和独立 React/Vite 浏览器遥测控制台。BIZ 已支持单次、PC 周期和设备持续回告三种调度语义；当前 `SYSTEM_STATUS` 支持前两者，并明确拒绝缺少产品协议命令的设备持续模式。Qt 串口已有一次受控 COM3 真实板端 smoke；TCP Provider、真实厂家链和全面真实硬件验收仍未实现。
 
 ```text
 front/ 浏览器控制台 -> ws://127.0.0.1:<port>/ws -> hwtest_web
@@ -101,12 +101,12 @@ BIZ 编排 TestPlan / TestContext / executionConfig
 - 根 CMake 构建 HAL、日志、BIZ、算法、共享应用核心、TUI/GUI/Web 支持库和四个应用入口，并查找同一 Qt 主版本的 Core、Network、SerialPort、Widgets、WebSockets。
 - 根 `hwtest.ps1` 是 Windows 单命令入口，负责配置、构建、测试、通过 `-Ui tui|gui|web` 启动前端、启动 runner 和列出串口；`-WebPort` 只传给 WebSocket 后端。它不复制测试流程或绕过 `hwtest_app_core`。
 - 当前测试目标、源码清单和统计口径以 `../testing/testing-specification.md` 为主定义，不以源级数量代替通过结果。
-- `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容是已批准的 MB_DDF 协议 CSV 基线。它仍是仓库外依赖，当前清单与可复现性限制见 `../contracts/device-communication-protocol.md`。
+- `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容是已批准的 MB_DDF 协议 CSV 基线。`dut/` 保存同步副本，但宿主运行期仍显式依赖外部目录；当前清单与可复现性限制见 `../contracts/device-communication-protocol.md`。
 
 ## 7. 边界验收
 
 - BIZ 保持硬件无关，只有 `IAlgorithmExecutor` 是其执行出口。
-- 新生产硬件/通讯 I/O 必须进入 HAL；当前只声明控制通道支持 Qt 串口和 UDP，不声明 TCP、真实串口联调、通用 Router 或真实厂家链。
+- 新生产硬件/通讯 I/O 必须进入 HAL；当前控制通道支持 Qt 串口和 UDP，Qt 串口只声明已记录的 COM3 SYSTEM_STATUS smoke，不据此声明长时/异常收尾、TCP、通用 Router、真实厂家链或全面硬件验收。
 - 协议/golden 单测与产品模拟/集成测试按第 5 节隔离；后者以“实际经过 HAL”为证据边界，并继续区分 Mock、Qt Provider 和真实硬件等级。
 - 新配置只写 `executionConfig`，旧 `halConfig` 仅作为迁移读入键。
 - 日志映射不在本文复制，统一引用 `../contracts/log-interface-protocol.md`。

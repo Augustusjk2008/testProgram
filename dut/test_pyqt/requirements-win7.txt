@@ -1,0 +1,7 @@
+PyQt5==5.15.9
+PyQt5-Qt5==5.15.2
+PyQt5-sip==12.15.0
+matplotlib==3.3.4
+numpy==1.19.3
+pytest==8.3.5
+pytest-qt==4.4.0
