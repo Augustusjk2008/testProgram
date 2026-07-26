@@ -2,13 +2,16 @@ import {
   ChartLine,
   CirclesThreePlus,
   Gauge,
+  Moon,
   Pulse,
+  Sun,
   TerminalWindow,
 } from '@phosphor-icons/react'
 import type { ReactNode } from 'react'
 
 import { RunControlBar } from '../features/session/RunControlBar'
 import { useSession } from '../features/session/SessionProvider'
+import { useTheme } from './ThemeProvider'
 
 export type PageId = 'overview' | 'charts' | 'diagnostics'
 
@@ -26,6 +29,7 @@ interface AppShellProps {
 
 export function AppShell({ page, onPageChange, children }: AppShellProps) {
   const { connectionDetail, connectionState, snapshot, wsUrl } = useSession()
+  const { theme, toggleTheme } = useTheme()
   const activePage = NAV_ITEMS.find(({ id }) => id === page) ?? NAV_ITEMS[0]
   const descriptor = snapshot.descriptor
   const productLabel = descriptor.productModel || 'MB_DDF'
@@ -79,10 +83,22 @@ export function AppShell({ page, onPageChange, children }: AppShellProps) {
             <span className="topbar__path">HWTEST / {activePage.caption}</span>
             <h1>{activePage.label}</h1>
           </div>
-          <div className="topbar__session">
-            <span><small>控制资源</small><strong>{snapshot.controlResourceId || '未配置'}</strong></span>
-            <span><small>任务 ID</small><strong title={snapshot.taskId}>{snapshot.taskId ? snapshot.taskId.slice(0, 8) : '—'}</strong></span>
-            <span><small>算法</small><strong>{snapshot.algorithmId || descriptor.algorithmId || '未选择'}</strong></span>
+          <div className="topbar__controls">
+            <div className="topbar__session">
+              <span><small>控制资源</small><strong>{snapshot.controlResourceId || '未配置'}</strong></span>
+              <span><small>任务 ID</small><strong title={snapshot.taskId}>{snapshot.taskId ? snapshot.taskId.slice(0, 8) : '—'}</strong></span>
+              <span><small>算法</small><strong>{snapshot.algorithmId || descriptor.algorithmId || '未选择'}</strong></span>
+            </div>
+            <button
+              aria-label="浅色主题"
+              aria-pressed={theme === 'light'}
+              className="theme-toggle"
+              onClick={toggleTheme}
+              title={theme === 'dark' ? '切换为浅色主题' : '切换为深色主题'}
+              type="button"
+            >
+              {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
           </div>
         </header>
 

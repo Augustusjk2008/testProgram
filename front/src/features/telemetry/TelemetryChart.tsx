@@ -2,18 +2,10 @@ import { useLayoutEffect, useRef } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
+import { useTheme } from '../../app/ThemeProvider'
 import { fieldLabel, fieldUnit } from '../../shared/format'
+import { getChartPalette } from '../../shared/theme'
 import type { SampleBuffer } from './sample-buffer'
-
-const SERIES_COLORS = [
-  '#b6f34a',
-  '#45d6d0',
-  '#f5b84b',
-  '#d18cff',
-  '#ff6b6b',
-  '#7ca8ff',
-  '#f0f3e8',
-]
 
 interface TelemetryChartProps {
   title: string
@@ -30,9 +22,11 @@ export function TelemetryChart({
   dataVersion,
   windowSeconds,
 }: TelemetryChartProps) {
+  const { theme } = useTheme()
   const hostRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const fieldsKey = fields.join('|')
+  const palette = getChartPalette(theme)
 
   useLayoutEffect(() => {
     const host = hostRef.current
@@ -56,16 +50,16 @@ export function TelemetryChart({
       },
       axes: [
         {
-          stroke: '#77827f',
-          grid: { stroke: '#1a2425', width: 1 },
-          ticks: { stroke: '#2a3637', width: 1 },
+          stroke: palette.axis,
+          grid: { stroke: palette.grid, width: 1 },
+          ticks: { stroke: palette.ticks, width: 1 },
           font: '11px Geist Mono, monospace',
           size: 46,
         },
         {
-          stroke: '#77827f',
-          grid: { stroke: '#1a2425', width: 1 },
-          ticks: { stroke: '#2a3637', width: 1 },
+          stroke: palette.axis,
+          grid: { stroke: palette.grid, width: 1 },
+          ticks: { stroke: palette.ticks, width: 1 },
           font: '11px Geist Mono, monospace',
           size: 54,
         },
@@ -74,7 +68,7 @@ export function TelemetryChart({
         { label: '时间' },
         ...fields.map((field, index) => ({
           label: fieldLabel(field),
-          stroke: SERIES_COLORS[index % SERIES_COLORS.length],
+          stroke: palette.series[index % palette.series.length],
           width: 1.5,
           spanGaps: false,
           points: { show: false },
@@ -108,7 +102,7 @@ export function TelemetryChart({
     }
     // fieldsKey intentionally represents the complete series identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buffer, fieldsKey])
+  }, [buffer, fieldsKey, palette])
 
   useLayoutEffect(() => {
     const plot = plotRef.current
