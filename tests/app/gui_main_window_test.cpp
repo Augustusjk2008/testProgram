@@ -3,6 +3,7 @@
 #include <app/tui_shell.h>
 
 #include "support/mbddf_udp_test_peer.h"
+#include "support/application_snapshot_test_utils.h"
 
 #include <gtest/gtest.h>
 
@@ -68,25 +69,6 @@ bool prepareUdpPeer(test::MbddfUdpTestPeer* peer,
                              directory,
                              halConfigPath,
                              error);
-}
-
-void expectEquivalentSnapshot(const ApplicationSnapshot& tui,
-                              const ApplicationSnapshot& gui)
-{
-    EXPECT_EQ(tui.phase, gui.phase);
-    EXPECT_EQ(tui.testState, gui.testState);
-    EXPECT_EQ(tui.controlResourceId, gui.controlResourceId);
-    EXPECT_EQ(tui.providerId, gui.providerId);
-    EXPECT_EQ(tui.serialPortName, gui.serialPortName);
-    EXPECT_EQ(tui.stepId, gui.stepId);
-    EXPECT_EQ(tui.testItemId, gui.testItemId);
-    EXPECT_EQ(tui.algorithmId, gui.algorithmId);
-    EXPECT_EQ(tui.hasResult, gui.hasResult);
-    EXPECT_EQ(tui.verdict, gui.verdict);
-    EXPECT_EQ(tui.errorCode, gui.errorCode);
-    EXPECT_EQ(tui.message, gui.message);
-    EXPECT_EQ(tui.attempts, gui.attempts);
-    EXPECT_TRUE(tui.rawData == gui.rawData);
 }
 
 enum class RunScenario {
@@ -512,7 +494,8 @@ TEST(FrontendEquivalenceTest, TuiAndGuiProduceEquivalentConfiguredSnapshot)
     GuiMainWindow window(&guiController, defaultOptions());
     window.loadConfigurations();
 
-    expectEquivalentSnapshot(tuiController.snapshot(), guiController.snapshot());
+    test::expectSemanticallyEquivalentSnapshots(tuiController.snapshot(),
+                                                guiController.snapshot());
     EXPECT_TRUE(tuiController.shutdown().ok);
     EXPECT_TRUE(guiController.shutdown().ok);
 }
@@ -526,7 +509,7 @@ TEST(FrontendEquivalenceTest, TuiAndGuiProduceEquivalentUdpPassResult)
     ASSERT_TRUE(tui.ok) << tui.error.toStdString();
     const ScenarioResult gui = runGuiScenario(RunScenario::Pass);
     ASSERT_TRUE(gui.ok) << gui.error.toStdString();
-    expectEquivalentSnapshot(tui.snapshot, gui.snapshot);
+    test::expectSemanticallyEquivalentSnapshots(tui.snapshot, gui.snapshot);
 }
 
 TEST(FrontendEquivalenceTest, TuiAndGuiProduceEquivalentTimeoutError)
@@ -538,7 +521,7 @@ TEST(FrontendEquivalenceTest, TuiAndGuiProduceEquivalentTimeoutError)
     ASSERT_TRUE(tui.ok) << tui.error.toStdString();
     const ScenarioResult gui = runGuiScenario(RunScenario::Timeout);
     ASSERT_TRUE(gui.ok) << gui.error.toStdString();
-    expectEquivalentSnapshot(tui.snapshot, gui.snapshot);
+    test::expectSemanticallyEquivalentSnapshots(tui.snapshot, gui.snapshot);
 }
 
 TEST(FrontendEquivalenceTest, TuiAndGuiConvergeToEquivalentStoppedState)
@@ -550,7 +533,7 @@ TEST(FrontendEquivalenceTest, TuiAndGuiConvergeToEquivalentStoppedState)
     ASSERT_TRUE(tui.ok) << tui.error.toStdString();
     const ScenarioResult gui = runGuiScenario(RunScenario::Stop);
     ASSERT_TRUE(gui.ok) << gui.error.toStdString();
-    expectEquivalentSnapshot(tui.snapshot, gui.snapshot);
+    test::expectSemanticallyEquivalentSnapshots(tui.snapshot, gui.snapshot);
 }
 
 TEST(GuiArchitectureTest, LinksOnlyAppCoreAndQtWidgets)

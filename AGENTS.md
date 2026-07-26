@@ -9,32 +9,33 @@
 - BIZ 契约：`docs/design/contracts/business-scheduling-layer.md`。
 - HAL 契约：`docs/design/contracts/hal-interface-protocol.md`。
 - 设备通讯契约：`docs/design/contracts/device-communication-protocol.md`。
+- WebSocket 前端契约：`docs/design/contracts/websocket-frontend-protocol.md`。
 - 日志契约：`docs/design/contracts/log-interface-protocol.md`。
 - 测试规范：`docs/design/testing/testing-specification.md`。
 - `[当前实现]` 只陈述公共 API、CMake 目标、测试注册和已核对源码事实；`[目标契约-未实现]` 是已批准的边界，不得写成已落地行为。
 - 公共 API、CMake 目标和测试注册是“当前已实现行为”的代码事实。代码与文档冲突时，先判断代码是否违反分层、安全或公共契约；代码合理则同步文档，代码明显有缺陷则修代码并补回归测试。
 - `docs/plan/`、`docs/superpowers/plans/` 是历史执行记录，不是现行接口事实源。
 - 审查、搜索和统计默认忽略 `tmp/`、`build*/`、`cmake-build*/`、`out/` 和 `.git/`；不得把附件、生成物或旧构建结果当作仓库实现事实。
-- `dut/mb_ddf_v2/` 是随仓库导入的嵌入式 MB_DDF_v2 被测对象（DUT）快照；该目录内的 `AGENTS.md` 对其子树具有更高优先级。DUT 的 C++20/AArch64 工程、Python/PyQt 串口工具、协议 CSV、目标板测试和部署脚本与宿主 Qt/C++17 工程分开维护。
-- DUT 快照来源为 `H:/Resources/RTLinux/Demos/MB_DDF_v2`，导入提交为 `32d961fbaccc3411378241dd1fa850d662354e4c`；导入边界、排除的生成物和校验统计见 `dut/mb_ddf_v2/IMPORT_METADATA.md`。
+- `dut/` 是随仓库导入的嵌入式 MB_DDF_v2 被测对象（DUT）快照；该目录内的 `AGENTS.md` 对其子树具有更高优先级。DUT 的 C++20/AArch64 工程、协议 CSV、目标板测试和部署脚本与宿主 Qt/C++17 工程分开维护。
+- DUT 快照来源为 `H:/Resources/RTLinux/Demos/MB_DDF_v2`，导入提交为 `32d961fbaccc3411378241dd1fa850d662354e4c`。
 
 ## 当前实现
 
-- 根构建入口：`CMakeLists.txt`，先查找 Qt 5.15 Core/Network/SerialPort/Widgets，失败后使用同一 Qt 6 组件集。
+- 根构建入口：`CMakeLists.txt`，先查找 Qt 5.15 Core/Network/SerialPort/Widgets/WebSockets，失败后使用同一 Qt 6 组件集；若已选中 Qt 5 但缺少 WebSockets，则配置明确失败，不混用 Qt 6 模块。
 - HAL：`src/hal/`，产物 `hwtest_hal`；公共头位于 `src/hal/include/hal/`，内部实现位于 `src/hal/src/`。
 - 日志类型：`src/logging/` 中的 `hwtest_log_types`，只包含 `LogEvent` 等值类型和元类型函数，仅依赖 Qt Core，不得依赖 HAL。
 - 日志服务：`src/logging/` 中的 `hwtest_log`，包含日志服务、文件 sink 和 HAL 日志桥接，可以依赖 `hwtest_hal`。
 - 业务调度：`src/biz/`，产物 `hwtest_biz`；公共头位于 `src/biz/include/biz/`，实现位于 `src/biz/src/`。
 - 算法：`src/algorithm/` 已提供 `hwtest_algorithm_mbddf`、MB_DDF CSV 协议编解码和 `SYSTEM_STATUS` 执行器，命名空间为 `hwtest::algorithm::mbddf`。
-- 应用：`src/app/` 提供共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support`，以及独立的 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui`；三个入口均通过 `TestApplicationController` 从 BIZ 测试配置和 HAL 部署配置组装当前唯一的 `mbddf.system_status` 测试。
+- 应用：`src/app/` 提供共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support`、`hwtest_web_support`，以及独立的 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui`、`hwtest_web`；四个入口均通过 `TestApplicationController` 从 BIZ 测试配置和 HAL 部署配置组装当前唯一的 `mbddf.system_status` 测试。
 - 测试：`tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/`、`tests/app/` 使用 GoogleTest 并通过 CTest 注册；当前清单和统计只以 `docs/design/testing/testing-specification.md` 为准。
-- 当前已有行式 TUI 和 Qt Widgets GUI，但没有 Web UI、TCP Provider、真实厂家链或真实硬件验收。HAL 控制通道已实现 `qt.serial` 和 `qt.udp`，其中 UDP 已有经应用控制器/BIZ/算法/HAL 的本机模拟目标闭环；真实串口尚未联调。`SystemStatusSimulator` 仍只作为纯协议替身。
-- `dut/mb_ddf_v2/docs/design/product_protocol_csv/` 是已导入的 MB_DDF 协议 CSV 快照，导入提交时清单为 32 个 CSV；源事实目录仍为 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv`，本次观测时间和提交记录见 `dut/mb_ddf_v2/IMPORT_METADATA.md`。仓库尚未实现协议 manifest、内容哈希和不可变快照的自动机制。
+- 当前已有行式 TUI、Qt Widgets GUI 和仅监听 `127.0.0.1` 的 `hwtest_web` WebSocket 后端；`front/` 仍只有说明文件，没有浏览器页面、组件或构建工具，因此不能宣称完整 Web UI 已落地。TCP Provider、真实厂家链和真实硬件验收仍未实现。HAL 控制通道已实现 `qt.serial` 和 `qt.udp`，其中 UDP 已有经应用控制器/BIZ/算法/HAL 的本机模拟目标闭环；真实串口尚未联调。`SystemStatusSimulator` 仍只作为纯协议替身。
+- `dut/docs/design/product_protocol_csv/` 是已导入的 MB_DDF 协议 CSV 快照，导入提交时清单为 32 个 CSV；源事实目录仍为 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv`。仓库尚未实现协议 manifest、内容哈希和不可变快照的自动机制。
 
 ## 分层与 I/O 边界
 
 ```text
-TUI / Qt GUI / batch CLI（当前实现）；Web UI（未实现）
+TUI / Qt GUI / batch CLI / WebSocket 后端（当前实现）；浏览器 Web UI（未实现）
   -> hwtest_app_core::TestApplicationController
   -> hwtest_biz
   -> biz::IAlgorithmExecutor（算法层实现）
@@ -43,7 +44,7 @@ TUI / Qt GUI / batch CLI（当前实现）；Web UI（未实现）
 ```
 
 - BIZ 负责配置、计划、稳定拓扑排序、运行状态、重试、结果编排和报告，保持硬件无关。它只能直接依赖 Qt Core、`hwtest_log_types` 和自身公共模型；禁止 include、link、call 或持有 HAL、Adapter、Socket、codec、测量基类/工厂或安全输出执行对象。
-- TUI、Qt GUI 和未来 Web UI 只能消费应用层 DTO、动作结果和快照事件；HAL 会话、算法执行器、BIZ 服务及其收尾顺序统一由 `hwtest_app_core` 组合，不得在各前端复制。控制器动作和快照只能在其 QObject 亲和线程调用，其他线程必须排队投递；GUI 不调用 `waitForTerminal()`，只通过 `snapshotChanged` 异步观察运行和终态。
+- TUI、Qt GUI、WebSocket 后端和未来浏览器 Web UI 只能消费应用层 DTO、动作结果和快照事件；HAL 会话、算法执行器、BIZ 服务及其收尾顺序统一由 `hwtest_app_core` 组合，不得在各前端复制。控制器动作和快照只能在其 QObject 亲和线程调用，其他线程必须排队投递；GUI 和 WebSocket 后端不调用 `waitForTerminal()`，只通过 `snapshotChanged`、`stopAsync()` 和 `stopCompleted` 异步观察运行、停止和终态。这里禁止的是前端持有 DUT/生产 I/O Socket；`QWebSocketServer`/`QWebSocket` 只属于前端传输边界。
 - `[目标契约-未实现]` 算法层负责产品协议 CSV、编解码、序列/流程和判定，并通过 HAL 请求设备生命周期；它不持有具体连接对象，也不直接执行生产原始 I/O、deadline 或物理 safe state。
 - `[目标契约-未实现]` 面向测试设备或 DUT 的所有生产态硬件和通讯 I/O 必须统一经 HAL。HAL 持有具体连接对象，执行原始 I/O 和 deadline，归一化错误，并执行物理 safe state。
 - `[当前实现]` `module = "control"` 的资源按显式 `providerId` 路由 `qt.serial` 或 `qt.udp`，直接使用 Qt 标准 API 并绕过 Vendor Adapter；其他资源仍走现有 `CAbiAdapter -> MockAdapter`。通用 Provider Router、TCP、控制通道 Mock Provider 和 Vendor Provider 尚未实现。
@@ -85,7 +86,6 @@ ctest --test-dir build_vs -C Release --output-on-failure
 
 ### DUT 构建与验证边界
 
-- 宿主工程的 `CMakeLists.txt` 不加入 `dut/mb_ddf_v2/`；宿主 Debug/Release 构建和 CTest 不会隐式编译或运行 DUT。
-- 进入 `dut/mb_ddf_v2/` 后，按其局部 `AGENTS.md` 和 `README.md` 使用 `build.ps1`、`debug.ps1`、`tests/test-dds-only.ps1`、`tests/test-all.ps1` 与 `tests/test-deploy.ps1`。
+- 宿主工程的 `CMakeLists.txt` 不加入 `dut/`；宿主 Debug/Release 构建和 CTest 不会隐式编译或运行 DUT。
+- 进入 `dut/` 后，按其局部 `AGENTS.md` 和 `README.md` 使用 `build.ps1`、`debug.ps1`、`tests/test-dds-only.ps1`、`tests/test-all.ps1` 与 `tests/test-deploy.ps1`。
 - DUT 的协议 CSV、板端单元测试、目标板 smoke/performance/stress 结果属于 DUT 证据；除非明确记录 AArch64 工具链、sysroot、部署目标和运行结果，不得把它们写成宿主应用或真实硬件验收证据。
-- `dut/mb_ddf_v2/` 内的 `src/MB_DDF_HW`、`src/MB_DDF_HW_Test` 和 `test_pyqt` 可能执行真实硬件读写或写入 PWM/方向/使能状态。运行 `HW_TEST`、`DEMO` 或全量硬件测试前，必须确认目标板隔离、串口/链路配置和恢复责任；默认只做源码审查和无硬件的静态验证。

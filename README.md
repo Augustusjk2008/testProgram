@@ -1,6 +1,6 @@
 # testProgram
 
-当前版本提供 MB_DDF_v2 `SYSTEM_STATUS` 的一次性 runner、分步 TUI 和 Qt Widgets GUI。TUI 与 GUI 共享同一个应用控制器和生命周期；板端当前通讯基线是串口，PC 端仍保留 UDP 控制资源，用于本机模拟和后续网口扩展。
+当前版本提供 MB_DDF_v2 `SYSTEM_STATUS` 的一次性 runner、分步 TUI、Qt Widgets GUI 和本机 WebSocket 后端。四个入口共享同一个应用控制器和生命周期；板端当前通讯基线是串口，PC 端仍保留 UDP 控制资源，用于本机模拟和后续网口扩展。
 
 从仓库根目录执行一条命令即可配置、构建和启动：
 
@@ -8,6 +8,7 @@
 .\hwtest.ps1 ports
 .\hwtest.ps1 -Ui tui
 .\hwtest.ps1 -Ui gui
+.\hwtest.ps1 -Ui web -WebPort 8765
 .\hwtest.ps1 start -Ui gui -Port COM7
 .\hwtest.ps1 run -Port COM7
 .\hwtest.ps1 test
@@ -15,7 +16,9 @@
 
 第一次使用命令行界面时，先阅读 [TUI 使用指南](docs/user/tui-usage-guide.md)。其中包含可直接照抄的串口流程、全部命令和状态说明、常见错误恢复，以及后续新增测试项目时的操作兼容规则。
 
-`tui` 和 `gui` 仍是兼容别名，例如 `.\hwtest.ps1 tui -Port COM7` 与 `.\hwtest.ps1 gui -Port COM7`。无参数执行脚本只显示帮助，不启动前端。
+`tui`、`gui` 和 `web` 是兼容别名，例如 `.\hwtest.ps1 tui -Port COM7`、`.\hwtest.ps1 gui -Port COM7` 与 `.\hwtest.ps1 web -WebPort 8765`。无参数执行脚本只显示帮助，不启动前端。
+
+`hwtest_web` 只监听 `127.0.0.1`，默认暴露 `ws://127.0.0.1:8765/ws`，启动后打印机器可读的 `ready wsUrl=...`。它是控制器的 WebSocket 适配后端，不提供 HTTP 或静态文件服务；根目录 [front/README.md](front/README.md) 仍只说明未来浏览器前端预留，因此当前不能称为完整 Web UI。消息、动作和安全关闭规则见 [WebSocket 前端协议契约](docs/design/contracts/websocket-frontend-protocol.md)。
 
 `-Port` 只覆盖本次进程，不修改配置文件。也可以在独立的 HAL 部署配置中设置 `hardware.resources.<ResourceId>.properties.portName`，再用 `-HalConfig` 指定：
 

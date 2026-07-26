@@ -1,6 +1,6 @@
 # 多产品通用硬件测试软件五层架构
 
-> 本文只定义分层边界和依赖方向。BIZ API 见 `../contracts/business-scheduling-layer.md`，HAL API 见 `../contracts/hal-interface-protocol.md`，协议 CSV 和帧规则见 `../contracts/device-communication-protocol.md`，日志模型与映射见 `../contracts/log-interface-protocol.md`，测试边界见 `../testing/testing-specification.md`。
+> 本文只定义分层边界和依赖方向。BIZ API 见 `../contracts/business-scheduling-layer.md`，HAL API 见 `../contracts/hal-interface-protocol.md`，协议 CSV 和帧规则见 `../contracts/device-communication-protocol.md`，WebSocket 前端消息见 `../contracts/websocket-frontend-protocol.md`，日志模型与映射见 `../contracts/log-interface-protocol.md`，测试边界见 `../testing/testing-specification.md`。
 >
 > `[当前实现]` 是已由代码、CMake 或测试注册核对的事实；`[目标契约-未实现]` 是批准的目标，不能作为已落地能力或验收结论。
 
@@ -12,6 +12,7 @@
 | `contracts/business-scheduling-layer.md` | BIZ 服务、模型、调度与算法端口 |
 | `contracts/hal-interface-protocol.md` | HAL 对上接口、资源和 Adapter ABI |
 | `contracts/device-communication-protocol.md` | 测试设备与 DUT 的协议 CSV、字段和物理帧 |
+| `contracts/websocket-frontend-protocol.md` | `hwtest_web` 的 JSON、动作、错误、顺序和关闭语义 |
 | `contracts/log-interface-protocol.md` | `LogEvent`、来源、追踪和 HAL/Adapter 日志映射 |
 | `testing/testing-specification.md` | 测试分层、范围和运行方式 |
 
@@ -19,10 +20,10 @@
 
 ## 2. 边界模型
 
-`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法、共享应用控制器、一次性 runner、行式 TUI 和 Qt Widgets GUI；仓库没有 Web UI、TCP Provider、真实厂家链或真实硬件验收。
+`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法、共享应用控制器、一次性 runner、行式 TUI、Qt Widgets GUI 和回环 WebSocket 后端；`front/` 尚无浏览器页面，因此仓库仍没有完整 Web UI、TCP Provider、真实厂家链或真实硬件验收。
 
 ```text
-hwtest_tui / hwtest_gui / hwtest_pc_runner
+hwtest_tui / hwtest_gui / hwtest_pc_runner / hwtest_web
   -> hwtest_app_core::TestApplicationController
   -> hwtest_biz
   -> biz::IAlgorithmExecutor
@@ -36,10 +37,10 @@ hwtest_tui / hwtest_gui / hwtest_pc_runner
 
 控制资源按 HAL 部署配置中的 `control.resourceId` 和资源 `providerId` 选择串口或 UDP；Qt 标准接口不经过 Vendor Adapter。AD/DA、DI/DO、旧 `ISerialBus` 和 CANFD 等既有资源仍走 `CAbiAdapter -> MockAdapter`。纯协议 golden 测试仍可注入 `SystemStatusSimulator`。
 
-`[目标契约-未实现]` 完整依赖方向如下。Web UI、通用 Router、Vendor Provider 和控制通道 Mock Provider 不代表当前已实现。
+`[目标契约-未实现]` 完整依赖方向如下。浏览器 Web UI、通用 Router、Vendor Provider 和控制通道 Mock Provider 不代表当前已实现。
 
 ```text
-TUI / Qt GUI / Web UI
+TUI / Qt GUI / hwtest_web / 浏览器 Web UI
   -> hwtest_app_core
   -> hwtest_biz
   -> biz::IAlgorithmExecutor
@@ -57,7 +58,7 @@ TUI / Qt GUI / Web UI
 
 | 层或边界 | 负责 | 不负责 |
 | --- | --- | --- |
-| UI / 应用组合 | `[当前实现]` `hwtest_app_core` 统一组装 HAL、算法、BIZ 和日志；runner 一次运行，TUI 与 Qt GUI 支持配置加载、控制口/串口选择、准备、启停和结果查看；`[目标契约-未实现]` Web UI | 解释协议、持有 Socket/串口、绕过应用控制器或 BIZ 直接执行测试判定 |
+| UI / 应用组合 | `[当前实现]` `hwtest_app_core` 统一组装 HAL、算法、BIZ 和日志；runner 一次运行，TUI、Qt GUI 与 `hwtest_web` 支持配置加载、控制口/串口选择、准备、启停和结果查看；`[目标契约-未实现]` 浏览器 Web UI | 解释产品协议、持有 DUT/生产 I/O Socket 或串口、绕过应用控制器或 BIZ 直接执行测试判定；`hwtest_web` 的 `QWebSocketServer/QWebSocket` 仅作前端传输 |
 | BIZ | 配置、计划、稳定拓扑排序、重试、运行状态、结果编排和报告 | 解释协议字段、执行单步判定、持有硬件或通讯对象、执行安全动作 |
 | 算法 | `[当前实现]` MB_DDF CSV、编解码、流式分帧、命令/序号匹配和 `SYSTEM_STATUS` 判定 | BIZ 流程、UI、具体 Qt/厂家连接、物理 safe state |
 | HAL | `[当前实现]` 提供资源、会话、安全 API 和控制通道原始 I/O；控制资源持有 Qt 串口/UDP 对象并执行操作 timeout | 业务调度、产品协议字段解释和测试判定 |
@@ -68,7 +69,7 @@ BIZ 只能直接依赖 Qt Core、`hwtest_log_types`、自身公共模型和 `biz
 ## 4. 生产 I/O 与配置边界
 
 - 面向测试设备或 DUT 的全部生产态硬件和通讯 I/O 必须统一经 HAL；当前控制通道已遵守该边界，算法不持有 `QSerialPort` 或 `QUdpSocket`。
-- 各前端只允许调用 `hwtest_app_core` 的动作、快照和事件；不得分别复制 HAL 会话、算法执行器、BIZ 服务或日志收尾。控制器公共动作和 `snapshot()` 具有 QObject 线程亲和约束，Web 请求线程或 GUI worker 必须排队投递。`waitForTerminal()` 是 batch/TUI 的阻塞辅助方法，具有重入/运行代次保护；当前 Qt GUI 订阅 `snapshotChanged`，并通过 `stopAsync()`/`stopCompleted` 执行不阻塞亲和线程的停止，不调用该等待方法。未来 Web UI 也必须保持异步。
+- 各前端只允许调用 `hwtest_app_core` 的动作、快照和事件；不得分别复制 HAL 会话、算法执行器、BIZ 服务或日志收尾。控制器公共动作和 `snapshot()` 具有 QObject 线程亲和约束，Web 请求线程或 GUI worker 必须排队投递。`waitForTerminal()` 是 batch/TUI 的阻塞辅助方法，具有重入/运行代次保护；当前 Qt GUI 与 `hwtest_web` 都订阅 `snapshotChanged`，并通过 `stopAsync()`/`stopCompleted` 执行不阻塞亲和线程的停止，不调用该等待方法。未来浏览器 Web UI 只通过 WebSocket 契约消费 DTO，也必须保持异步。
 - 控制资源当前使用显式 `providerId` 路由 `qt.serial`/`qt.udp`；没有 `INetworkBus`，TCP、通用 Provider Router、Vendor Provider 和控制通道 Mock Provider 仍未实现。
 - 配置、日志和报告文件 I/O 不属于上述生产硬件/通讯 I/O 规则。
 - 新写出的 BIZ 配置只使用不透明的 `executionConfig`；旧根字段 `halConfig` 只允许在读取迁移阶段出现。BIZ 的字段和迁移语义见 `../contracts/business-scheduling-layer.md`。
@@ -93,9 +94,9 @@ BIZ 编排 TestPlan / TestContext / executionConfig
 ## 6. 当前落地范围
 
 - `src/algorithm/` 已有 `hwtest_algorithm_mbddf`、协议目录加载、payload/物理帧编解码、流式 `HalControlTransport`、`SystemStatusAlgorithmExecutor` 和 `SYSTEM_STATUS` 测试配置。
-- `src/app/` 的 `hwtest_app_core` 提供 `TestApplicationController` 和共享启动配置；`hwtest_tui_support` 与 `hwtest_gui_support` 只承载各自前端，`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 是三个独立进程入口。TUI 和 GUI 的会话覆盖都只修改内存中的控制资源或串口属性；PC 可在串口和 UDP 间选择，DUT 端无需切换模式。
-- 根 CMake 构建 HAL、日志、BIZ、算法、共享应用核心、TUI/GUI 支持库和三个应用入口，并查找同一 Qt 主版本的 Core、Network、SerialPort、Widgets。
-- 根 `hwtest.ps1` 是 Windows 单命令入口，负责配置、构建、测试、通过 `-Ui tui|gui` 启动前端、启动 runner 和列出串口；它不复制测试流程或绕过 `hwtest_app_core`。
+- `src/app/` 的 `hwtest_app_core` 提供 `TestApplicationController` 和共享启动配置；`hwtest_tui_support`、`hwtest_gui_support`、`hwtest_web_support` 只承载各自前端适配，`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui`、`hwtest_web` 是四个独立进程入口。TUI、GUI 和 WebSocket 请求中的会话覆盖都只修改内存中的控制资源或串口属性；PC 可在串口和 UDP 间选择，DUT 端无需切换模式。
+- 根 CMake 构建 HAL、日志、BIZ、算法、共享应用核心、TUI/GUI/Web 支持库和四个应用入口，并查找同一 Qt 主版本的 Core、Network、SerialPort、Widgets、WebSockets。
+- 根 `hwtest.ps1` 是 Windows 单命令入口，负责配置、构建、测试、通过 `-Ui tui|gui|web` 启动前端、启动 runner 和列出串口；`-WebPort` 只传给 WebSocket 后端。它不复制测试流程或绕过 `hwtest_app_core`。
 - 当前测试目标、源码清单和统计口径以 `../testing/testing-specification.md` 为主定义，不以源级数量代替通过结果。
 - `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容是已批准的 MB_DDF 协议 CSV 基线。它仍是仓库外依赖，当前清单与可复现性限制见 `../contracts/device-communication-protocol.md`。
 

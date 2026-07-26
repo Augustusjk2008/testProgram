@@ -1,0 +1,792 @@
+#include "web_socket_frontend_server.h"
+
+#include "web_protocol.h"
+
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QPointer>
+#include <QTimer>
+#include <QWebSocket>
+#include <QWebSocketCorsAuthenticator>
+#include <QWebSocketProtocol>
+#include <QWebSocketServer>
+
+#include <limits>
+#include <memory>
+#include <utility>
+
+namespace hwtest::app::web {
+
+namespace {
+
+ActionResult protocolError(const QString& code, const QString& message)
+{
+    return ActionResult{false, code, message};
+}
+
+bool isAllowedOrigin(const QString& origin)
+{
+    const QString normalized = origin.trimmed();
+    if (normalized.isEmpty()) {
+        return true;
+    }
+
+    const QUrl url(normalized);
+    if (!url.isValid() || url.host().isEmpty()) {
+        return false;
+    }
+    const QString scheme = url.scheme().toLower();
+    const QString host = url.host().toLower();
+    return (scheme == QStringLiteral("http") || scheme == QStringLiteral("https")) &&
+        (host == QStringLiteral("localhost") || host == QStringLiteral("127.0.0.1"));
+}
+
+quint64 qtIncomingLimit(quint64 protocolLimit)
+{
+    if (protocolLimit == std::numeric_limits<quint64>::max()) {
+        return protocolLimit;
+    }
+    return protocolLimit + 1;
+}
+
+} // namespace
+
+class WebSocketFrontendServer::Impl final {
+public:
+    enum class PendingOperation {
+        None,
+        Stop,
+        Disconnect,
+        Quit,
+        DropCleanup,
+    };
+
+    Impl(WebSocketFrontendServer* owner,
+         TestApplicationController* controllerValue,
+         FrontendLaunchOptions launchOptionsValue,
+         WebSocketServerOptions optionsValue)
+        : q(owner)
+        , controller(controllerValue)
+        , launchOptions(std::move(launchOptionsValue))
+        , options(optionsValue)
+        , server(QStringLiteral("hwtest_web"), QWebSocketServer::NonSecureMode)
+    {
+        if (controller != nullptr) {
+            cachedSnapshot = controller->snapshot();
+            QObject::connect(controller,
+                             &TestApplicationController::snapshotChanged,
+                             q,
+                             [this](const ApplicationSnapshot& snapshot) {
+                                 cachedSnapshot = snapshot;
+                                 ++snapshotSequence;
+                                 if (activeClient != nullptr &&
+                                     activeClient->state() ==
+                                         QAbstractSocket::ConnectedState) {
+                                     send(activeClient,
+                                          makeSnapshot(snapshotSequence,
+                                                       cachedSnapshot));
+                                 }
+                             });
+            QObject::connect(controller,
+                             &TestApplicationController::stopCompleted,
+                             q,
+                             [this](const ActionResult& result) {
+                                 handleStopCompleted(result);
+                             });
+        }
+
+        server.setMaxPendingConnections(2);
+        server.setHandshakeTimeout(options.handshakeTimeoutMs);
+        QObject::connect(&server,
+                         &QWebSocketServer::originAuthenticationRequired,
+                         q,
+                         [](QWebSocketCorsAuthenticator* authenticator) {
+                             authenticator->setAllowed(
+                                 isAllowedOrigin(authenticator->origin()));
+                         });
+        QObject::connect(&server,
+                         &QWebSocketServer::newConnection,
+                         q,
+                         [this] { acceptPendingConnections(); });
+    }
+
+    ~Impl()
+    {
+        close();
+    }
+
+    bool listen(QString* errorMessage)
+    {
+        if (errorMessage != nullptr) {
+            errorMessage->clear();
+        }
+        if (server.isListening()) {
+            return true;
+        }
+        if (server.listen(QHostAddress::LocalHost, options.port)) {
+            serverClosing = false;
+            return true;
+        }
+        if (errorMessage != nullptr) {
+            *errorMessage = server.errorString();
+        }
+        return false;
+    }
+
+    void close()
+    {
+        serverClosing = true;
+        server.close();
+        if (activeClient != nullptr) {
+            QWebSocket* socket = activeClient;
+            suppressDisconnectCleanup = socket;
+            socket->close(QWebSocketProtocol::CloseCodeNormal,
+                          QStringLiteral("Server closed"));
+        }
+    }
+
+    void closeRejectedConnection(QWebSocket* socket,
+                                 const QByteArray& pingPayload,
+                                 const QString& reason)
+    {
+        const auto waitingForPong = std::make_shared<bool>(true);
+        QObject::connect(socket,
+                         &QWebSocket::pong,
+                         socket,
+                         [socket, waitingForPong, pingPayload, reason](
+                             quint64,
+                             const QByteArray& payload) {
+                             if (!*waitingForPong || payload != pingPayload) {
+                                 return;
+                             }
+                             *waitingForPong = false;
+                             socket->close(
+                                 QWebSocketProtocol::CloseCodePolicyViolated,
+                                 reason);
+                         });
+        QTimer::singleShot(options.handshakeTimeoutMs,
+                           socket,
+                           [socket, waitingForPong, reason] {
+            if (*waitingForPong) {
+                *waitingForPong = false;
+                socket->close(QWebSocketProtocol::CloseCodePolicyViolated,
+                              reason);
+            }
+        });
+        socket->ping(pingPayload);
+    }
+
+    void acceptPendingConnections()
+    {
+        while (server.hasPendingConnections()) {
+            QWebSocket* socket = server.nextPendingConnection();
+            if (socket == nullptr) {
+                continue;
+            }
+            QObject::connect(socket,
+                             &QWebSocket::disconnected,
+                             socket,
+                             &QObject::deleteLater);
+
+            if (socket->requestUrl().path() != QStringLiteral("/ws")) {
+                closeRejectedConnection(socket,
+                                        QByteArrayLiteral("hwtest-path-close"),
+                                        QStringLiteral("Only /ws is available"));
+                continue;
+            }
+            if ((activeClient != nullptr &&
+                 activeClient->state() != QAbstractSocket::UnconnectedState) ||
+                pendingOperation != PendingOperation::None) {
+                send(socket,
+                     makeReply(QString(),
+                               protocolError(
+                                   QStringLiteral("server_busy"),
+                                   QStringLiteral(
+                                       "Another client is already active"))));
+                closeRejectedConnection(socket,
+                                        QByteArrayLiteral("hwtest-close"),
+                                        QStringLiteral("server_busy"));
+                continue;
+            }
+            activate(socket);
+        }
+    }
+
+    void activate(QWebSocket* socket)
+    {
+        activeClient = socket;
+        const quint64 hardLimit = qtIncomingLimit(options.maxIncomingMessageBytes);
+        socket->setMaxAllowedIncomingFrameSize(hardLimit);
+        socket->setMaxAllowedIncomingMessageSize(hardLimit);
+
+        QObject::connect(socket,
+                         &QWebSocket::textMessageReceived,
+                         q,
+                         [this, socket](const QString& text) {
+                             if (socket == activeClient) {
+                                 receiveText(socket, text);
+                             }
+                         });
+        QObject::connect(socket,
+                         &QWebSocket::binaryMessageReceived,
+                         q,
+                         [this, socket](const QByteArray&) {
+                             if (socket != activeClient) {
+                                 return;
+                             }
+                             send(socket,
+                                  makeReply(
+                                      QString(),
+                                      protocolError(
+                                          QStringLiteral("invalid_envelope"),
+                                          QStringLiteral(
+                                              "Binary messages are not supported"))));
+                             socket->close(
+                                 QWebSocketProtocol::CloseCodeDatatypeNotSupported,
+                                 QStringLiteral("Binary messages are not supported"));
+                         });
+        QObject::connect(socket,
+                         &QWebSocket::disconnected,
+                         q,
+                         [this, socket] {
+                             if (socket == activeClient) {
+                                 activeClient.clear();
+                                 if (socket == suppressDisconnectCleanup) {
+                                     suppressDisconnectCleanup.clear();
+                                     return;
+                                 }
+                                 if (!serverClosing) {
+                                     handleActiveClientDropped();
+                                 }
+                             }
+                         });
+
+        send(socket, makeHello());
+        send(socket, makeSnapshot(snapshotSequence, cachedSnapshot));
+    }
+
+    void receiveText(QWebSocket* socket, const QString& text)
+    {
+        if (static_cast<quint64>(text.toUtf8().size()) >
+            options.maxIncomingMessageBytes) {
+            send(socket,
+                 makeReply(QString(),
+                           protocolError(QStringLiteral("message_too_large"),
+                                         QStringLiteral(
+                                             "Message exceeds the 16 KiB limit"))));
+            socket->close(QWebSocketProtocol::CloseCodeTooMuchData,
+                          QStringLiteral("message_too_large"));
+            return;
+        }
+
+        const ProtocolParseResult parsed = parseRequest(text);
+        if (!parsed.ok) {
+            send(socket,
+                 makeReply(parsed.request.id,
+                           protocolError(parsed.code, parsed.message)));
+            return;
+        }
+
+        const WebRequest& request = parsed.request;
+        if (request.action == QStringLiteral("snapshot")) {
+            const QJsonObject snapshot = makeSnapshot(snapshotSequence,
+                                                      cachedSnapshot);
+            const QJsonObject data{
+                {QStringLiteral("seq"), snapshot.value(QStringLiteral("seq"))},
+                {QStringLiteral("snapshot"),
+                 snapshot.value(QStringLiteral("snapshot"))},
+            };
+            send(socket, makeReply(request.id, ActionResult{}, data));
+            return;
+        }
+
+        if (pendingOperation != PendingOperation::None &&
+            !isReadAction(request.action)) {
+            send(socket,
+                 makeReply(request.id,
+                           protocolError(QStringLiteral("command_in_progress"),
+                                         QStringLiteral(
+                                             "Another command is still in progress"))));
+            return;
+        }
+
+        ActionResult validation;
+        if (!validateAction(request, &validation)) {
+            send(socket, makeReply(request.id, validation));
+            return;
+        }
+
+        if (request.action == QStringLiteral("stop")) {
+            pendingOperation = PendingOperation::Stop;
+            pendingRequestId = request.id;
+            pendingSocket = socket;
+            startStop(request.id, socket);
+            return;
+        }
+
+        if (request.action == QStringLiteral("disconnect")) {
+            beginCleanup(PendingOperation::Disconnect, request.id, socket);
+            return;
+        }
+        if (request.action == QStringLiteral("quit")) {
+            beginCleanup(PendingOperation::Quit, request.id, socket);
+            return;
+        }
+
+        dispatchControllerAction(request, socket);
+    }
+
+    static bool isReadAction(const QString& action)
+    {
+        return action == QStringLiteral("snapshot") ||
+            action == QStringLiteral("controls") ||
+            action == QStringLiteral("ports");
+    }
+
+    static bool validateRequiredString(const WebRequest& request,
+                                       const QString& field,
+                                       ActionResult* error)
+    {
+        if (!request.params.contains(field) ||
+            (request.params.value(field).isString() &&
+             request.params.value(field).toString().trimmed().isEmpty())) {
+            if (error != nullptr) {
+                *error = protocolError(
+                    QStringLiteral("missing_field"),
+                    QStringLiteral("Parameter '%1' is required").arg(field));
+            }
+            return false;
+        }
+        if (!request.params.value(field).isString()) {
+            if (error != nullptr) {
+                *error = protocolError(
+                    QStringLiteral("invalid_envelope"),
+                    QStringLiteral("Parameter '%1' must be a string").arg(field));
+            }
+            return false;
+        }
+        return true;
+    }
+
+    static bool validateAction(const WebRequest& request, ActionResult* error)
+    {
+        if (request.action == QStringLiteral("load") && !request.params.isEmpty()) {
+            if (error != nullptr) {
+                *error = protocolError(
+                    QStringLiteral("invalid_envelope"),
+                    QStringLiteral("The load action does not accept client paths"));
+            }
+            return false;
+        }
+        if (request.action == QStringLiteral("selectControl")) {
+            return validateRequiredString(request,
+                                          QStringLiteral("resourceId"),
+                                          error);
+        }
+        if (request.action == QStringLiteral("selectSerialPort")) {
+            return validateRequiredString(request,
+                                          QStringLiteral("portName"),
+                                          error);
+        }
+        return true;
+    }
+
+    void dispatchControllerAction(const WebRequest& request, QWebSocket* socket)
+    {
+        if (controller == nullptr) {
+            send(socket,
+                 makeReply(request.id,
+                           protocolError(QStringLiteral("invalid_state"),
+                                         QStringLiteral("Controller is unavailable"))));
+            return;
+        }
+
+        const QPointer<WebSocketFrontendServer> owner(q);
+        const QPointer<TestApplicationController> controllerGuard(controller);
+        const QPointer<QWebSocket> socketGuard(socket);
+        const FrontendLaunchOptions optionsCopy = launchOptions;
+        QMetaObject::invokeMethod(
+            controller,
+            [owner,
+             controllerGuard,
+             socketGuard,
+             request,
+             optionsCopy] {
+                if (owner == nullptr || controllerGuard == nullptr) {
+                    return;
+                }
+
+                ActionResult result;
+                QJsonObject data;
+                if (request.action == QStringLiteral("load")) {
+                    result = configureController(*controllerGuard, optionsCopy);
+                } else if (request.action == QStringLiteral("controls")) {
+                    QJsonArray controls;
+                    for (const ControlResource& control :
+                         controllerGuard->availableControls()) {
+                        controls.push_back(QJsonObject{
+                            {QStringLiteral("resourceId"), control.resourceId},
+                            {QStringLiteral("providerId"), control.providerId},
+                        });
+                    }
+                    data.insert(QStringLiteral("controls"), controls);
+                } else if (request.action == QStringLiteral("ports")) {
+                    QJsonArray ports;
+                    for (const SerialPortInfo& port :
+                         controllerGuard->availableSerialPorts()) {
+                        ports.push_back(QJsonObject{
+                            {QStringLiteral("portName"), port.portName},
+                            {QStringLiteral("description"), port.description},
+                            {QStringLiteral("manufacturer"), port.manufacturer},
+                            {QStringLiteral("serialNumber"), port.serialNumber},
+                            {QStringLiteral("systemLocation"), port.systemLocation},
+                        });
+                    }
+                    data.insert(QStringLiteral("ports"), ports);
+                } else if (request.action == QStringLiteral("selectControl")) {
+                    result = controllerGuard->selectControl(
+                        request.params.value(QStringLiteral("resourceId")).toString());
+                } else if (request.action == QStringLiteral("selectSerialPort")) {
+                    result = controllerGuard->selectSerialPort(
+                        request.params.value(QStringLiteral("portName")).toString());
+                } else if (request.action == QStringLiteral("prepare")) {
+                    result = controllerGuard->prepare();
+                } else if (request.action == QStringLiteral("start")) {
+                    result = controllerGuard->start();
+                } else if (request.action == QStringLiteral("pause")) {
+                    result = controllerGuard->pause();
+                } else if (request.action == QStringLiteral("resume")) {
+                    result = controllerGuard->resume();
+                } else {
+                    result = protocolError(QStringLiteral("unknown_action"),
+                                           QStringLiteral("Action is not implemented"));
+                }
+
+                QMetaObject::invokeMethod(
+                    owner.data(),
+                    [owner, socketGuard, id = request.id, result, data] {
+                        if (owner == nullptr || owner->m_impl == nullptr ||
+                            socketGuard == nullptr) {
+                            return;
+                        }
+                        send(socketGuard, makeReply(id, result, data));
+                    },
+                    Qt::QueuedConnection);
+            },
+            Qt::QueuedConnection);
+    }
+
+    void startStop(const QString& id, QWebSocket* socket)
+    {
+        if (controller == nullptr) {
+            clearPending();
+            send(socket,
+                 makeReply(id,
+                           protocolError(QStringLiteral("invalid_state"),
+                                         QStringLiteral("Controller is unavailable"))));
+            return;
+        }
+
+        const QPointer<WebSocketFrontendServer> owner(q);
+        const QPointer<TestApplicationController> controllerGuard(controller);
+        const QPointer<QWebSocket> socketGuard(socket);
+        QMetaObject::invokeMethod(
+            controller,
+            [owner, controllerGuard, socketGuard, id] {
+                if (owner == nullptr || controllerGuard == nullptr) {
+                    return;
+                }
+                const ActionResult result = controllerGuard->stopAsync(5000);
+                QMetaObject::invokeMethod(
+                    owner.data(),
+                    [owner, socketGuard, id, result] {
+                        if (owner == nullptr || owner->m_impl == nullptr) {
+                            return;
+                        }
+                        owner->m_impl->handleStopStarted(socketGuard, id, result);
+                    },
+                    Qt::QueuedConnection);
+            },
+            Qt::QueuedConnection);
+    }
+
+    void handleStopStarted(QWebSocket* socket,
+                           const QString& id,
+                           const ActionResult& result)
+    {
+        if (pendingOperation != PendingOperation::Stop ||
+            pendingRequestId != id || result.ok) {
+            return;
+        }
+        clearPending();
+        send(socket, makeReply(id, result));
+    }
+
+    void handleStopCompleted(const ActionResult& result)
+    {
+        if (pendingOperation == PendingOperation::Stop) {
+            const QString id = pendingRequestId;
+            const QPointer<QWebSocket> socket = pendingSocket;
+            clearPending();
+            send(socket, makeReply(id, result));
+            return;
+        }
+        if (pendingOperation == PendingOperation::Disconnect ||
+            pendingOperation == PendingOperation::Quit) {
+            if (result.ok) {
+                scheduleShutdown();
+            } else {
+                finishCleanup(result);
+            }
+            return;
+        }
+        if (pendingOperation == PendingOperation::DropCleanup) {
+            scheduleShutdown();
+        }
+    }
+
+    void beginCleanup(PendingOperation operation,
+                      const QString& id,
+                      QWebSocket* socket)
+    {
+        pendingOperation = operation;
+        pendingRequestId = id;
+        pendingSocket = socket;
+        inspectCleanupState();
+    }
+
+    void inspectCleanupState()
+    {
+        if (controller == nullptr) {
+            finishCleanup(protocolError(QStringLiteral("invalid_state"),
+                                        QStringLiteral("Controller is unavailable")));
+            return;
+        }
+
+        const QPointer<WebSocketFrontendServer> owner(q);
+        const QPointer<TestApplicationController> controllerGuard(controller);
+        QMetaObject::invokeMethod(
+            controller,
+            [owner, controllerGuard] {
+                if (owner == nullptr || controllerGuard == nullptr) {
+                    return;
+                }
+                const ApplicationSnapshot snapshot = controllerGuard->snapshot();
+                const bool needsStop = snapshot.phase == QStringLiteral("running") ||
+                    snapshot.phase == QStringLiteral("paused");
+                const ActionResult result = needsStop
+                    ? controllerGuard->stopAsync(5000)
+                    : ActionResult{};
+                QMetaObject::invokeMethod(
+                    owner.data(),
+                    [owner, needsStop, result] {
+                        if (owner == nullptr || owner->m_impl == nullptr) {
+                            return;
+                        }
+                        owner->m_impl->handleCleanupInspected(needsStop, result);
+                    },
+                    Qt::QueuedConnection);
+            },
+            Qt::QueuedConnection);
+    }
+
+    void handleCleanupInspected(bool needsStop, const ActionResult& result)
+    {
+        if (pendingOperation != PendingOperation::Disconnect &&
+            pendingOperation != PendingOperation::Quit &&
+            pendingOperation != PendingOperation::DropCleanup) {
+            return;
+        }
+        if (!result.ok) {
+            if (pendingOperation == PendingOperation::DropCleanup) {
+                scheduleShutdown();
+            } else {
+                finishCleanup(result);
+            }
+            return;
+        }
+        if (!needsStop) {
+            scheduleShutdown();
+        }
+    }
+
+    void scheduleShutdown()
+    {
+        if (controller == nullptr) {
+            finishCleanup(protocolError(QStringLiteral("invalid_state"),
+                                        QStringLiteral("Controller is unavailable")));
+            return;
+        }
+
+        const QPointer<WebSocketFrontendServer> owner(q);
+        const QPointer<TestApplicationController> controllerGuard(controller);
+        QMetaObject::invokeMethod(
+            controller,
+            [owner, controllerGuard] {
+                if (owner == nullptr || controllerGuard == nullptr) {
+                    return;
+                }
+                const ActionResult result = controllerGuard->shutdown();
+                QMetaObject::invokeMethod(
+                    owner.data(),
+                    [owner, result] {
+                        if (owner == nullptr || owner->m_impl == nullptr) {
+                            return;
+                        }
+                        owner->m_impl->finishCleanup(result);
+                    },
+                    Qt::QueuedConnection);
+            },
+            Qt::QueuedConnection);
+    }
+
+    void finishCleanup(const ActionResult& result)
+    {
+        const PendingOperation completedOperation = pendingOperation;
+        const QString id = pendingRequestId;
+        const QPointer<QWebSocket> socket = pendingSocket;
+        clearPending();
+
+        if (completedOperation == PendingOperation::DropCleanup) {
+            return;
+        }
+        if (completedOperation != PendingOperation::Disconnect &&
+            completedOperation != PendingOperation::Quit) {
+            return;
+        }
+
+        send(socket, makeReply(id, result));
+        if (!result.ok) {
+            return;
+        }
+
+        const bool quitting = completedOperation == PendingOperation::Quit;
+        if (quitting) {
+            server.close();
+        }
+        if (socket == nullptr) {
+            if (quitting) {
+                const QPointer<WebSocketFrontendServer> owner(q);
+                QTimer::singleShot(0, q, [owner] {
+                    if (owner != nullptr) {
+                        emit owner->quitRequested();
+                    }
+                });
+            }
+            return;
+        }
+        suppressDisconnectCleanup = socket;
+        if (quitting) {
+            const QPointer<WebSocketFrontendServer> owner(q);
+            QObject::connect(socket,
+                             &QWebSocket::disconnected,
+                             q,
+                             [owner] {
+                                 if (owner != nullptr) {
+                                     emit owner->quitRequested();
+                                 }
+                             });
+        }
+        socket->close(QWebSocketProtocol::CloseCodeNormal,
+                      quitting ? QStringLiteral("quit")
+                               : QStringLiteral("disconnect"));
+    }
+
+    void handleActiveClientDropped()
+    {
+        if (pendingOperation == PendingOperation::Stop) {
+            pendingOperation = PendingOperation::DropCleanup;
+            pendingRequestId.clear();
+            pendingSocket.clear();
+            return;
+        }
+        if (pendingOperation == PendingOperation::Disconnect ||
+            pendingOperation == PendingOperation::Quit ||
+            pendingOperation == PendingOperation::DropCleanup) {
+            pendingSocket.clear();
+            return;
+        }
+        beginCleanup(PendingOperation::DropCleanup, QString(), nullptr);
+    }
+
+    void clearPending()
+    {
+        pendingOperation = PendingOperation::None;
+        pendingRequestId.clear();
+        pendingSocket.clear();
+    }
+
+    static void send(QWebSocket* socket, const QJsonObject& message)
+    {
+        if (socket != nullptr && socket->state() == QAbstractSocket::ConnectedState) {
+            const QString text = compactJson(message);
+            socket->sendTextMessage(text);
+        }
+    }
+
+    WebSocketFrontendServer* q = nullptr;
+    QPointer<TestApplicationController> controller;
+    FrontendLaunchOptions launchOptions;
+    WebSocketServerOptions options;
+    QWebSocketServer server;
+    QPointer<QWebSocket> activeClient;
+    ApplicationSnapshot cachedSnapshot;
+    quint64 snapshotSequence = 0;
+    PendingOperation pendingOperation = PendingOperation::None;
+    QString pendingRequestId;
+    QPointer<QWebSocket> pendingSocket;
+    QPointer<QWebSocket> suppressDisconnectCleanup;
+    bool serverClosing = false;
+};
+
+WebSocketFrontendServer::WebSocketFrontendServer(
+    TestApplicationController* controller,
+    FrontendLaunchOptions launchOptions,
+    WebSocketServerOptions options,
+    QObject* parent)
+    : QObject(parent)
+    , m_impl(std::make_unique<Impl>(this,
+                                    controller,
+                                    std::move(launchOptions),
+                                    options))
+{
+}
+
+WebSocketFrontendServer::~WebSocketFrontendServer() = default;
+
+bool WebSocketFrontendServer::listen(QString* errorMessage)
+{
+    return m_impl->listen(errorMessage);
+}
+
+void WebSocketFrontendServer::close()
+{
+    m_impl->close();
+}
+
+bool WebSocketFrontendServer::isListening() const
+{
+    return m_impl->server.isListening();
+}
+
+quint16 WebSocketFrontendServer::serverPort() const
+{
+    return m_impl->server.serverPort();
+}
+
+QHostAddress WebSocketFrontendServer::serverAddress() const
+{
+    return m_impl->server.serverAddress();
+}
+
+QUrl WebSocketFrontendServer::webSocketUrl() const
+{
+    QUrl url;
+    url.setScheme(QStringLiteral("ws"));
+    url.setHost(QStringLiteral("127.0.0.1"));
+    url.setPort(serverPort());
+    url.setPath(QStringLiteral("/ws"));
+    return url;
+}
+
+} // namespace hwtest::app::web

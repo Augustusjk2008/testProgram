@@ -46,6 +46,17 @@
       "enabled": true
     },
     {
+      "id": "start_web",
+      "label": "启动 WebSocket 后端",
+      "icon": "RadioTower",
+      "windowsCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\hwtest.ps1 -Ui web -WebPort 8765",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
+      "confirm": false,
+      "enabled": true
+    },
+    {
       "id": "zip",
       "label": "压缩",
       "icon": "Package",

@@ -6,6 +6,7 @@ if(NOT TARGET GTest::gtest)
 endif()
 
 add_library(hwtest_app_test_support STATIC
+    support/application_snapshot_test_utils.h
     support/mbddf_udp_test_peer.h
     support/mbddf_udp_test_peer.cpp
 )
@@ -100,6 +101,74 @@ endif()
 
 gtest_discover_tests(hwtest_gui_tests)
 
+add_executable(hwtest_web_tests
+    web_test_main.cpp
+    web_protocol_test.cpp
+    web_socket_frontend_server_test.cpp
+    web_controller_integration_test.cpp
+    web_architecture_test.cpp
+    support/websocket_test_client.h
+    support/websocket_test_client.cpp
+)
+
+target_compile_features(hwtest_web_tests PRIVATE cxx_std_17)
+
+target_compile_definitions(hwtest_web_tests
+    PRIVATE
+        HWTEST_APP_TEST_CONFIG="${HWTEST_APP_TEST_CONFIG}"
+        HWTEST_APP_HAL_CONFIG="${HWTEST_APP_HAL_CONFIG}"
+        HWTEST_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+target_include_directories(hwtest_web_tests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/app/web
+)
+
+target_link_libraries(hwtest_web_tests
+    PRIVATE
+        hwtest_web_support
+        hwtest_tui_support
+        hwtest_app_test_support
+        ${HWTEST_QT_WEBSOCKETS_TARGET}
+        GTest::gtest
+)
+
+add_dependencies(hwtest_web_tests hwtest_web)
+
+if(MSVC)
+    target_compile_options(hwtest_web_tests PRIVATE /utf-8)
+endif()
+
+gtest_discover_tests(hwtest_web_tests
+    PROPERTIES
+        LABELS "app_websocket"
+        TIMEOUT 20
+)
+
+add_test(NAME HwtestWebHelp
+    COMMAND $<TARGET_FILE:hwtest_web> --help
+)
+set_tests_properties(HwtestWebHelp PROPERTIES
+    PASS_REGULAR_EXPRESSION "web-port.*WebSocket"
+    TIMEOUT 5
+)
+
+add_test(NAME HwtestWebStartsLoopback
+    COMMAND $<TARGET_FILE:hwtest_web> --smoke-test
+)
+set_tests_properties(HwtestWebStartsLoopback PROPERTIES
+    PASS_REGULAR_EXPRESSION "ready wsUrl=ws://127\\.0\\.0\\.1:[0-9]+/ws"
+    TIMEOUT 5
+)
+
+set_tests_properties(
+    HwtestWebHelp
+    HwtestWebStartsLoopback
+    PROPERTIES
+        LABELS "app;websocket;process"
+)
+
 add_test(NAME HwtestGuiStartsOffscreen
     COMMAND $<TARGET_FILE:hwtest_gui> --smoke-test
 )
@@ -133,7 +202,7 @@ if(WIN32)
             help
     )
     set_tests_properties(HwtestScriptHelp PROPERTIES
-        PASS_REGULAR_EXPRESSION "hwtest.ps1 <action>"
+        PASS_REGULAR_EXPRESSION "WebSocket backend"
         TIMEOUT 5
     )
 

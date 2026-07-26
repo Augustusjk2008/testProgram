@@ -1,10 +1,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('help', 'configure', 'build', 'test', 'start', 'tui', 'gui', 'run', 'ports', 'clean')]
+    [ValidateSet('help', 'configure', 'build', 'test', 'start', 'tui', 'gui', 'web', 'run', 'ports', 'clean')]
     [string]$Action = 'help',
 
-    [ValidateSet('tui', 'gui')]
+    [ValidateSet('tui', 'gui', 'web')]
     [string]$Ui = 'tui',
 
     [ValidateSet('Debug', 'Release')]
@@ -16,6 +16,8 @@ param(
     [string]$ProtocolCsvDir = '',
     [string]$Control = '',
     [string]$Port = '',
+    [ValidateRange(0, 65535)]
+    [int]$WebPort = 8765,
     [string]$QtPrefix = '',
     [string]$TestRegex = '',
     [switch]$SkipBuild
@@ -44,6 +46,7 @@ Actions:
   start      Build and start the selected SYSTEM_STATUS frontend.
   tui        Compatibility alias for "start -Ui tui".
   gui        Compatibility alias for "start -Ui gui".
+  web        Compatibility alias for "start -Ui web".
   run        Build and run SYSTEM_STATUS once.
   ports      Build the TUI and list serial ports without opening one.
   clean      Run the CMake clean target; keep the configured build tree.
@@ -56,7 +59,8 @@ Common options:
   -ProtocolCsvDir <path>
   -Control <ResourceId>
   -Port <port-name>
-  -Ui tui|gui
+  -Ui tui|gui|web
+  -WebPort <0-65535> (WebSocket backend only; no browser frontend is implemented)
   -QtPrefix <Qt CMake prefix>
   -TestRegex <CTest regex>
   -SkipBuild
@@ -68,6 +72,7 @@ Examples:
   .\hwtest.ps1 ports
   .\hwtest.ps1 -Ui tui
   .\hwtest.ps1 start -Ui gui
+  .\hwtest.ps1 -Ui web -WebPort 8765
   .\hwtest.ps1 tui -Port COM7
   .\hwtest.ps1 gui -Port COM7
   .\hwtest.ps1 run -Control CONTROL_SERIAL -Port COM7
@@ -188,7 +193,7 @@ function Application-Arguments {
     return $arguments
 }
 
-function Start-Frontend([ValidateSet('tui', 'gui')][string]$Frontend) {
+function Start-Frontend([ValidateSet('tui', 'gui', 'web')][string]$Frontend) {
     $frontendId = $Frontend.ToLowerInvariant()
     Assert-File $TestConfigPath 'Test configuration'
     Assert-File $HalConfigPath 'HAL configuration'
@@ -200,7 +205,11 @@ function Start-Frontend([ValidateSet('tui', 'gui')][string]$Frontend) {
 
     $executable = Join-Path $BuildPath "src\app\$Configuration\hwtest_$frontendId.exe"
     Assert-File $executable "$($frontendId.ToUpperInvariant()) executable"
-    & $executable @(Application-Arguments)
+    $arguments = @(Application-Arguments)
+    if ($frontendId -eq 'web') {
+        $arguments += @('--web-port', $WebPort.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+    }
+    & $executable @arguments
     exit $LASTEXITCODE
 }
 
@@ -248,6 +257,9 @@ try {
         }
         'gui' {
             Start-Frontend 'gui'
+        }
+        'web' {
+            Start-Frontend 'web'
         }
         'run' {
             Assert-File $TestConfigPath 'Test configuration'

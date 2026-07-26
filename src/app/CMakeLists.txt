@@ -78,6 +78,31 @@ if(MSVC)
     target_compile_options(hwtest_gui_support PRIVATE /utf-8)
 endif()
 
+add_library(hwtest_web_support STATIC
+    web/web_protocol.h
+    web/web_protocol.cpp
+    web/web_socket_frontend_server.h
+    web/web_socket_frontend_server.cpp
+)
+
+target_include_directories(hwtest_web_support
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/web
+)
+
+target_link_libraries(hwtest_web_support
+    PUBLIC
+        hwtest_app_core
+        ${HWTEST_QT_CORE_TARGET}
+        ${HWTEST_QT_WEBSOCKETS_TARGET}
+)
+
+target_compile_features(hwtest_web_support PUBLIC cxx_std_17)
+
+if(MSVC)
+    target_compile_options(hwtest_web_support PRIVATE /utf-8)
+endif()
+
 add_executable(hwtest_pc_runner
     main.cpp
 )
@@ -122,4 +147,19 @@ target_compile_features(hwtest_gui PRIVATE cxx_std_17)
 
 if(MSVC)
     target_compile_options(hwtest_gui PRIVATE /utf-8)
+endif()
+
+add_executable(hwtest_web
+    web/web_main.cpp
+)
+
+target_link_libraries(hwtest_web
+    PRIVATE
+        hwtest_web_support
+)
+
+target_compile_features(hwtest_web PRIVATE cxx_std_17)
+
+if(MSVC)
+    target_compile_options(hwtest_web PRIVATE /utf-8)
 endif()
