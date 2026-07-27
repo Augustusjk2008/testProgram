@@ -17,6 +17,17 @@ void default_sleep(std::chrono::microseconds duration) {
     }
 }
 
+std::string bytes_to_hex(std::span<const uint8_t> bytes) {
+    static constexpr char digits[] = "0123456789ABCDEF";
+    std::string result;
+    result.reserve(bytes.size() * 2);
+    for (const uint8_t byte : bytes) {
+        result.push_back(digits[byte >> 4]);
+        result.push_back(digits[byte & 0x0F]);
+    }
+    return result;
+}
+
 } // namespace
 
 HardwareTestService::HardwareTestService(HW::IByteEndpoint& endpoint,
@@ -173,6 +184,11 @@ bool HardwareTestService::process_once(HW::Timeout timeout) {
     const auto parsed = protocol_.parse_request(
         std::span<const uint8_t>(buffer.data(), received.value()));
     if (!parsed) {
+        LOG_WARN << "[HW-TEST] 产品协议请求解析失败：err_code=0x"
+                 << std::hex << static_cast<uint16_t>(parsed.error().code)
+                 << "，detail=0x" << parsed.error().detail
+                 << "，payload=" << bytes_to_hex(std::span<const uint8_t>(
+                        buffer.data(), received.value()));
         auto response = protocol_.create_error_response(parsed.error(), false);
         return send_message(response, parsed.error().orig_sequence);
     }

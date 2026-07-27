@@ -33,6 +33,7 @@ public:
     struct Snapshot {
         int prepareCalls = 0;
         int executeCalls = 0;
+        int finishCalls = 0;
         QVector<QThread*> threads;
         bool allOffApplicationThread = true;
         bool allHaveEventDispatcher = true;
@@ -43,7 +44,7 @@ public:
                    const TestContext&,
                    const QVariantMap&) override
     {
-        recordProbe(true);
+        recordProbe(Probe::Prepare);
         return Status{};
     }
 
@@ -53,8 +54,14 @@ public:
     {
         Q_UNUSED(control);
         Q_UNUSED(observer);
-        recordProbe(false);
+        recordProbe(Probe::Execute);
         return test::successfulResult(step);
+    }
+
+    Status finishRun() override
+    {
+        recordProbe(Probe::Finish);
+        return Status{};
     }
 
     Status requestStop(int timeoutMs) override
@@ -81,7 +88,13 @@ public:
     }
 
 private:
-    void recordProbe(bool preparing)
+    enum class Probe {
+        Prepare,
+        Execute,
+        Finish,
+    };
+
+    void recordProbe(Probe probe)
     {
         QThread* const currentThread = QThread::currentThread();
         QTimer timer;
@@ -90,7 +103,17 @@ private:
         timer.stop();
 
         QMutexLocker locker(&m_mutex);
-        preparing ? ++m_snapshot.prepareCalls : ++m_snapshot.executeCalls;
+        switch (probe) {
+        case Probe::Prepare:
+            ++m_snapshot.prepareCalls;
+            break;
+        case Probe::Execute:
+            ++m_snapshot.executeCalls;
+            break;
+        case Probe::Finish:
+            ++m_snapshot.finishCalls;
+            break;
+        }
         m_snapshot.threads.append(currentThread);
         m_snapshot.allOffApplicationThread =
             m_snapshot.allOffApplicationThread &&
@@ -735,9 +758,11 @@ TEST(TestRunServiceTest, PcPeriodicWorkerProvidesQtEventDispatcher)
     const QtEventDispatcherProbeExecutor::Snapshot snapshot = executor.snapshot();
     EXPECT_EQ(snapshot.prepareCalls, 1);
     EXPECT_EQ(snapshot.executeCalls, 2);
-    ASSERT_EQ(snapshot.threads.size(), 3);
+    EXPECT_EQ(snapshot.finishCalls, 1);
+    ASSERT_EQ(snapshot.threads.size(), 4);
     EXPECT_EQ(snapshot.threads.at(0), snapshot.threads.at(1));
     EXPECT_EQ(snapshot.threads.at(0), snapshot.threads.at(2));
+    EXPECT_EQ(snapshot.threads.at(0), snapshot.threads.at(3));
     EXPECT_TRUE(snapshot.allOffApplicationThread);
     EXPECT_TRUE(snapshot.allHaveEventDispatcher);
     EXPECT_TRUE(snapshot.allTimersRegistered);

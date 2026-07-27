@@ -206,7 +206,9 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 - `transport.openTimeoutMs` 和 `readChunkBytes` 必须为正整数；
 - 串口部署参数由 HAL 资源 `properties` 提供，并按 MB_DDF 当前基线配置为 614400、8E1、无流控；旧 `executionConfig.serial` 仍只作兼容校验输入；
 - `initialSequence` 必须是 16 位整数；每次执行后递增；
+- 控制通道在一次 BIZ 任务的 `prepare()` 中打开，在该任务的步骤重试、PC 周期各轮及可选跟随请求之间复用，并在同一 worker 的 `finishRun()` 中关闭；不同 `start` 任务仍按各自专用 worker 建立独立连接；
 - 响应必须匹配配置的响应命令，并回显请求序号；
+- 若 DUT 返回 `error_response`，且原命令与当前请求一致、原序号不是当前序号、错误码为 `0x0102` 且 `detail=0`，算法将其识别为已实测的陈旧 RX bank 回放，并以相同序号原帧重发一次；该内部重发不增加 BIZ `attempts`。当前序号错误响应、CRC、其他命令、其他错误码、超时及第二次失败均保持原有错误语义，不做宽泛自动重试；
 - CRC、命令或序号失败由算法返回 `ProtocolParseError`，传输超时返回 `BusTimeout`。
 
 `ELEC_HEALTH_STATUS` 使用独立的 `configs/mbddf_elec_health.testcfg.json`，配置只把 Profile 替换为 `elec_health_status_request` / `elec_health_status_response`。请求命令为 `type_group=0x05`、`sub_type=0x01`，其保留填充字节由 CSV 定义；响应解码为 `status`、`err_code`、`c_volt`、`b_volt`、`activate_bits`、`external_vol`、`core_vol`、`assist_vol`、`v28_5`、`js_5V`、`dyt_5V`、`power_24V` 和 `value_YX`。当前判定标准只有 `status == 0` 且 `err_code == 0`，电压和模拟量仅作为样本输出，不在配置中推导或增加未经批准的阈值。该命令没有设备侧 START/STOP 配对，因此支持单次和 PC 周期，不支持 `device_stream`。

@@ -18,6 +18,7 @@ using ExecuteStepSignature = Result<TestResult> (IAlgorithmExecutor::*)(const Te
 using RequestStopSignature = Status (IAlgorithmExecutor::*)(int);
 using ResetSignature = Status (IAlgorithmExecutor::*)();
 using ShutdownSignature = Status (IAlgorithmExecutor::*)(int);
+using FinishRunSignature = Status (IAlgorithmExecutor::*)();
 using CurrentSignature = RunControl (IRunControl::*)() const;
 using CheckpointSignature = bool (IRunControl::*)() const;
 using ProgressSignature = void (IAlgorithmObserver::*)(const StepId&,
@@ -33,6 +34,7 @@ static_assert(std::is_same_v<decltype(&IAlgorithmExecutor::executeStep), Execute
 static_assert(std::is_same_v<decltype(&IAlgorithmExecutor::requestStop), RequestStopSignature>);
 static_assert(std::is_same_v<decltype(&IAlgorithmExecutor::reset), ResetSignature>);
 static_assert(std::is_same_v<decltype(&IAlgorithmExecutor::shutdown), ShutdownSignature>);
+static_assert(std::is_same_v<decltype(&IAlgorithmExecutor::finishRun), FinishRunSignature>);
 static_assert(std::is_same_v<decltype(&IRunControl::current), CurrentSignature>);
 static_assert(std::is_same_v<decltype(&IRunControl::checkpoint), CheckpointSignature>);
 static_assert(std::is_same_v<decltype(&IAlgorithmObserver::onProgress), ProgressSignature>);

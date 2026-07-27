@@ -102,6 +102,7 @@ signals:
 - `startTest()` 保持既有单次语义，并等价于 `startTestWithOptions(RunOptions{})`。接口为外部派生类提供默认实现：`Single` 委托旧方法，其他模式默认返回 `CapabilityUnsupported`。
 - 空 `testItems` 表示全部启用步骤；`priority == -1` 使用 `RuntimeConfig::taskPriorityDefault`，其他值只接受 1 到 3。
 - `loadConfiguration()` 仅允许 `Idle` 或 `Finished`；`stopTest()` 在 `Idle` 幂等成功。
+- 活动任务的 `stopTest(timeoutMs)` 先请求算法停止，再在剩余时限内等待任务 worker 完成 `finishRun()`；成功返回时状态已收敛，超时返回 `ResourceTimeout` 且不得伪造 `Idle`。
 - `generateReport()` 只读取已编排的结果和日志摘要，不触发算法、日志存储或硬件操作。
 
 报告和工厂的公开接口为：
@@ -149,7 +150,7 @@ void destroyReportGenerator(IReportGenerator* generator);
 - 每轮开始先发出 `cycleStarted`；结果和样本均标记当前 `cycleIndex`。算法未给样本时间戳时，BIZ 使用当前 UTC epoch 微秒补齐，再发出 `sampleProduced`。当前服务不额外长期缓存样本，避免无限周期会话在 BIZ 内形成无界样本副本。
 - BIZ 把 `runMode`、`intervalMs` 和 `maxCycles` 写入 `TestContext::tags`，但不据此解释产品命令。设备是否支持 `DeviceStream` 由算法决定；当前 `mbddf.system_status` 没有设备流启动/停止命令，准备阶段返回 `CapabilityUnsupported`。
 - PC 周期会话中的硬件或协议执行错误结束整个会话；普通判定失败是否中止同轮后续步骤仍由 `RuntimeConfig::stopOnFirstFailure` 控制。
-- `[当前实现]` 每个任务在一个专用 `QThread` 中同步执行 `prepare()`、各轮 `executeStep()` 和轮间等待；该线程提供 Qt event dispatcher，测试锁定同一任务的准备与执行均不在应用亲和线程且能够注册 Qt 计时器。这里不承诺在同步算法调用期间持续泵送事件，也不改变 `requestStop()` 由调用线程发起的既有语义；不得据此宣称 HAL 连接已实现 actor 化或跨线程取消。
+- `[当前实现]` 每个任务在一个专用 `QThread` 中同步执行 `prepare()`、各轮 `executeStep()`、轮间等待和 `finishRun()`；该线程提供 Qt event dispatcher，测试锁定同一任务的准备、执行和运行收尾均位于同一非应用线程且能够注册 Qt 计时器。这里不承诺在同步算法调用期间持续泵送事件，也不改变 `requestStop()` 由调用线程发起的既有语义；不得据此宣称 HAL 连接已实现 actor 化或跨线程取消。
 
 ## 4. BIZ 到算法层端口
 
@@ -181,10 +182,12 @@ public:
     virtual Status requestStop(int timeoutMs) = 0;
     virtual Status reset() = 0;
     virtual Status shutdown(int timeoutMs) = 0;
+    virtual Status finishRun() { return {}; }
 };
 ```
 
 - BIZ 先构建 `TestPlan` 和 `TestContext`，再调用 `prepare()`；`executeStep()` 只接收已排序的单步。
+- `prepare()` 成功后，无论任务正常完成、停止还是执行错误，BIZ 都在同一任务 worker 上调用一次 `finishRun()`；该调用用于释放任务范围资源，失败会使任务进入 `Error`。`prepare()` 失败时不调用 `finishRun()`。
 - 依赖失败、禁用、重试和任务级停止策略由 BIZ 编排；算法端口返回单步结果、样本、进度和日志。
 - 一次 `executeStep()` 可以产生零到多条 `RawSample`；这既用于单轮观测，也为设备持续回告保留，不意味着 BIZ 自行读取设备。
 - `IRunControl`、`IAlgorithmObserver` 的引用只在对应 `executeStep()` 调用期间有效，算法实现不得缓存。

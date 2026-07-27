@@ -43,6 +43,9 @@ public:
     virtual Status reset() = 0;
     // Implementations must honor timeoutMs and must not retain BIZ callbacks.
     virtual Status shutdown(int timeoutMs) = 0;
+    // Called on the worker thread after the current run has ended, including
+    // stopped and failed runs. Implementations may release run-scoped I/O here.
+    virtual Status finishRun() { return {}; }
 };
 
 } // namespace hwtest::biz

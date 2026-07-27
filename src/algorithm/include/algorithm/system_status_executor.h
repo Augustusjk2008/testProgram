@@ -28,6 +28,7 @@ public:
     hwtest::biz::Status requestStop(int timeoutMs) override;
     hwtest::biz::Status reset() override;
     hwtest::biz::Status shutdown(int timeoutMs) override;
+    hwtest::biz::Status finishRun() override;
 
     const ProtocolCatalog& catalog() const noexcept;
 

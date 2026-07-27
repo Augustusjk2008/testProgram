@@ -11,24 +11,6 @@ namespace hwtest::algorithm::mbddf {
 
 namespace {
 
-class TransportCloseGuard {
-public:
-    explicit TransportCloseGuard(IByteTransport* transport)
-        : m_transport(transport)
-    {
-    }
-
-    ~TransportCloseGuard()
-    {
-        if (m_transport != nullptr) {
-            m_transport->close();
-        }
-    }
-
-private:
-    IByteTransport* m_transport = nullptr;
-};
-
 using hwtest::biz::CmpOp;
 using hwtest::biz::ErrorCode;
 using hwtest::biz::Result;
@@ -87,6 +69,40 @@ QString effectiveAssetRoot(const QVariantMap& executionConfig)
         root = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
     }
     return root;
+}
+
+bool isStaleReceiveBankError(const ProtocolCatalog& catalog,
+                             const MessageDefinition& request,
+                             const QByteArray& frame,
+                             quint16 sequence)
+{
+    // The faulty RX bank replays an old request whose reserved bytes are non-zero.
+    // The DUT reports that as ParamOutOfRange/detail=0 with the replayed sequence.
+    // Keep this signature narrow so ordinary protocol errors are never retried.
+    QByteArray payload;
+    QString error;
+    if (!decodeFrame(frame, &payload, &error) || payload.size() < 3) {
+        return false;
+    }
+
+    const MessageDefinition* definition =
+        catalog.findByCommand(static_cast<quint8>(payload.at(1)),
+                              static_cast<quint8>(payload.at(2)),
+                              Direction::Response);
+    if (definition == nullptr || definition->name != QStringLiteral("error_response")) {
+        return false;
+    }
+
+    QVariantMap values;
+    if (!decodePayload(*definition, payload, &values, &error)) {
+        return false;
+    }
+
+    return values.value(QStringLiteral("orig_tg")).toUInt() == request.typeGroup &&
+        values.value(QStringLiteral("orig_st")).toUInt() == request.subType &&
+        values.value(QStringLiteral("orig_seq")).toUInt() != sequence &&
+        values.value(QStringLiteral("err_code")).toUInt() == 0x0102U &&
+        values.value(QStringLiteral("detail")).toUInt() == 0U;
 }
 
 } // namespace
@@ -304,6 +320,17 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
     m_context = context;
     m_nextSequence = initialSequence;
     m_stopRequested.store(false);
+
+    QString transportError;
+    {
+        const std::lock_guard<std::mutex> locker(m_transportMutex);
+        if (!m_transport->open(&transportError)) {
+            return makeStatus(ErrorCode::DriverMissing,
+                              QStringLiteral("Unable to open MB_DDF byte transport: %1")
+                                  .arg(transportError),
+                              QStringLiteral("mbddf.prepare"));
+        }
+    }
     m_prepared = true;
     return Status{};
 }
@@ -379,14 +406,16 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
                            ErrorCode::Cancelled,
                            QStringLiteral("%1 was cancelled").arg(m_commandName));
         }
-        QString transportError;
-        if (!m_transport->open(&transportError)) {
+        transportResult = m_transport->transact(frame, qMax(1, step.timeoutMs));
+    }
+    if (transportResult.ok &&
+        isStaleReceiveBankError(m_catalog, *m_request, transportResult.frame, sequence)) {
+        std::lock_guard<std::mutex> locker(m_transportMutex);
+        if (m_stopRequested.load() || control.current() == hwtest::biz::RunControl::Stop) {
             return failure(step,
-                           ErrorCode::DriverMissing,
-                           QStringLiteral("Unable to open MB_DDF byte transport: %1")
-                               .arg(transportError));
+                           ErrorCode::Cancelled,
+                           QStringLiteral("%1 was cancelled").arg(m_commandName));
         }
-        TransportCloseGuard closeGuard(m_transport.get());
         transportResult = m_transport->transact(frame, qMax(1, step.timeoutMs));
     }
     if (!transportResult.ok) {
@@ -460,16 +489,8 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
             TransportResult followUpTransportResult;
             {
                 std::lock_guard<std::mutex> locker(m_transportMutex);
-                QString transportError;
-                if (!m_transport->open(&transportError)) {
-                    followUpSucceeded = false;
-                    followUpError = QStringLiteral("Unable to open MB_DDF follow-up transport: %1")
-                                        .arg(transportError);
-                } else {
-                    TransportCloseGuard closeGuard(m_transport.get());
-                    followUpTransportResult = m_transport->transact(
-                        followUpRequestFrame, m_followUpTimeoutMs);
-                }
+                followUpTransportResult = m_transport->transact(
+                    followUpRequestFrame, m_followUpTimeoutMs);
             }
             if (followUpSucceeded && !followUpTransportResult.ok) {
                 followUpSucceeded = false;
@@ -607,11 +628,10 @@ Status SystemStatusAlgorithmExecutor::requestStop(int timeoutMs)
                           QStringLiteral("Stop timeout must not be negative"),
                           QStringLiteral("mbddf.requestStop"));
     }
+    // transact() is bounded and owns the transport mutex. Closing here would
+    // move a Qt transport onto the caller thread; finishRun() closes it on the
+    // task worker after executeStep() observes this flag.
     m_stopRequested.store(true);
-    if (m_transport != nullptr) {
-        const std::lock_guard<std::mutex> locker(m_transportMutex);
-        m_transport->close();
-    }
     return Status{};
 }
 
@@ -654,6 +674,16 @@ Status SystemStatusAlgorithmExecutor::shutdown(int timeoutMs)
     m_followUpCommandName.clear();
     m_followUpRequestValues.clear();
     m_followUpTimeoutMs = 0;
+    return Status{};
+}
+
+Status SystemStatusAlgorithmExecutor::finishRun()
+{
+    if (m_transport != nullptr) {
+        const std::lock_guard<std::mutex> locker(m_transportMutex);
+        m_transport->close();
+    }
+    m_prepared = false;
     return Status{};
 }
 

@@ -20,6 +20,7 @@
 #include <QTemporaryDir>
 #include <QUdpSocket>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -93,6 +94,90 @@ private:
     std::mutex m_mutex;
     std::condition_variable m_condition;
     hwtest::biz::TestState m_state = hwtest::biz::TestState::Uninitialized;
+};
+
+class BlockingByteTransport final : public IByteTransport {
+public:
+    bool open(QString* error) override
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (error != nullptr) {
+            error->clear();
+        }
+        m_open = true;
+        m_openThread = std::this_thread::get_id();
+        return true;
+    }
+
+    TransportResult transact(const QByteArray&, int) override
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_transactionStarted = true;
+        m_condition.notify_all();
+        m_condition.wait(lock, [this] { return m_released; });
+
+        TransportResult result;
+        result.errorCode = TransportResult::Error::Timeout;
+        result.error = QStringLiteral("released blocking transaction");
+        return result;
+    }
+
+    void close() override
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_open) {
+            return;
+        }
+        m_open = false;
+        m_closeThread = std::this_thread::get_id();
+        m_closed = true;
+        m_condition.notify_all();
+    }
+
+    bool waitForTransaction(int timeoutMs)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_condition.wait_for(lock,
+                                    std::chrono::milliseconds(timeoutMs),
+                                    [this] { return m_transactionStarted; });
+    }
+
+    bool waitForClose(int timeoutMs)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_condition.wait_for(lock,
+                                    std::chrono::milliseconds(timeoutMs),
+                                    [this] { return m_closed; });
+    }
+
+    void release()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_released = true;
+        m_condition.notify_all();
+    }
+
+    std::thread::id openThread() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_openThread;
+    }
+
+    std::thread::id closeThread() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_closeThread;
+    }
+
+private:
+    mutable std::mutex m_mutex;
+    std::condition_variable m_condition;
+    std::thread::id m_openThread;
+    std::thread::id m_closeThread;
+    bool m_open = false;
+    bool m_transactionStarted = false;
+    bool m_released = false;
+    bool m_closed = false;
 };
 
 using hwtest::hal::HalResult;
@@ -350,6 +435,34 @@ bool makeSystemStatusResponseFrame(const ProtocolCatalog& catalog,
     };
     QByteArray payload;
     if (!encodePayload(*response, values, sequence, &payload, error)) {
+        return false;
+    }
+    return encodeFrame(payload, frame, error);
+}
+
+bool makeStaleSystemStatusErrorFrame(const ProtocolCatalog& catalog,
+                                     quint16 staleSequence,
+                                     QByteArray* frame,
+                                     QString* error)
+{
+    const MessageDefinition* response =
+        catalog.findByName(QStringLiteral("error_response"));
+    if (response == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("error_response is missing");
+        }
+        return false;
+    }
+
+    const QVariantMap values = {
+        {QStringLiteral("orig_tg"), 0x01},
+        {QStringLiteral("orig_st"), 0x01},
+        {QStringLiteral("orig_seq"), staleSequence},
+        {QStringLiteral("err_code"), 0x0102},
+        {QStringLiteral("detail"), 0},
+    };
+    QByteArray payload;
+    if (!encodePayload(*response, values, staleSequence, &payload, error)) {
         return false;
     }
     return encodeFrame(payload, frame, error);
@@ -936,7 +1049,7 @@ TEST(HalControlTransportTest, MapsControlReadTimeoutToTransportTimeout)
     EXPECT_EQ(channel.readCount(), 1);
 }
 
-TEST(SystemStatusExecutorTest, HalControlTransportOpensAndClosesForEveryRetryAttempt)
+TEST(SystemStatusExecutorTest, HalControlTransportOpensOnceForRetryingRun)
 {
     const QString assets = catalogDirectory();
     if (!QFileInfo(assets).isDir()) {
@@ -986,11 +1099,145 @@ TEST(SystemStatusExecutorTest, HalControlTransportOpensAndClosesForEveryRetryAtt
     EXPECT_EQ(result.verdict, hwtest::biz::TestVerdict::Pass);
     EXPECT_EQ(result.errorCode, hwtest::biz::ErrorCode::Ok);
     EXPECT_EQ(result.attempts, 2);
-    EXPECT_EQ(channel.openCount(), 2);
-    EXPECT_EQ(channel.closeCount(), 2);
+    EXPECT_EQ(channel.openCount(), 1);
+    EXPECT_EQ(channel.closeCount(), 1);
     EXPECT_EQ(channel.writeCount(), 2);
     EXPECT_EQ(channel.writeAt(0), expectedSystemStatusRequest());
     EXPECT_EQ(channel.writeAt(1), expectedSystemStatusRequest());
+
+    ASSERT_TRUE(service->shutdown().ok());
+}
+
+TEST(SystemStatusExecutorTest, RetransmitsOnceForStaleBankErrorWithoutReopeningControl)
+{
+    const QString assets = catalogDirectory();
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present: " << assets.toStdString();
+    }
+    qputenv("MB_DDF_PROTOCOL_CSV_DIR", assets.toUtf8());
+
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+    QByteArray staleError;
+    QByteArray response;
+    ASSERT_TRUE(makeStaleSystemStatusErrorFrame(catalog, 0x1030, &staleError, &error))
+        << error.toStdString();
+    ASSERT_TRUE(makeSystemStatusResponseFrame(catalog, 0x1234, &response, &error))
+        << error.toStdString();
+
+    FakeControlChannel channel;
+    channel.enqueueBytes(staleError);
+    channel.enqueueBytes(response);
+    FakeControlDevice device(&channel);
+    auto transport = std::make_unique<HalControlTransport>(&device,
+                                                           QStringLiteral("CONTROL_RETRY"));
+    SystemStatusAlgorithmExecutor executor(std::move(transport));
+
+    RunServiceHandle service = makeRunService(&executor);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+    ResultCollector results;
+    StateCollector states;
+    connectCollectors(service.get(), &results, &states);
+
+    ASSERT_TRUE(service->loadConfiguration(
+        QStringLiteral(HWTEST_MBDDF_SYSTEM_STATUS_CONFIG)).ok());
+    ASSERT_TRUE(service->startTest().ok());
+    ASSERT_TRUE(results.waitForResult(3000));
+    ASSERT_TRUE(states.waitForTerminal(3000));
+
+    const auto result = results.result();
+    EXPECT_EQ(result.verdict, hwtest::biz::TestVerdict::Pass);
+    EXPECT_EQ(result.errorCode, hwtest::biz::ErrorCode::Ok);
+    EXPECT_EQ(result.attempts, 1);
+    EXPECT_EQ(channel.openCount(), 1);
+    EXPECT_EQ(channel.closeCount(), 1);
+    ASSERT_EQ(channel.writeCount(), 2);
+    EXPECT_EQ(channel.writeAt(0), expectedSystemStatusRequest());
+    EXPECT_EQ(channel.writeAt(1), expectedSystemStatusRequest());
+
+    ASSERT_TRUE(service->shutdown().ok());
+}
+
+TEST(SystemStatusExecutorTest, DoesNotRetransmitCurrentRequestError)
+{
+    const QString assets = catalogDirectory();
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present: " << assets.toStdString();
+    }
+    qputenv("MB_DDF_PROTOCOL_CSV_DIR", assets.toUtf8());
+
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+    QByteArray response;
+    ASSERT_TRUE(makeStaleSystemStatusErrorFrame(catalog, 0x1234, &response, &error))
+        << error.toStdString();
+
+    FakeControlChannel channel;
+    channel.enqueueBytes(response);
+    FakeControlDevice device(&channel);
+    auto transport = std::make_unique<HalControlTransport>(&device,
+                                                           QStringLiteral("CONTROL_ERROR"));
+    SystemStatusAlgorithmExecutor executor(std::move(transport));
+
+    RunServiceHandle service = makeRunService(&executor);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+    ResultCollector results;
+    StateCollector states;
+    connectCollectors(service.get(), &results, &states);
+
+    ASSERT_TRUE(service->loadConfiguration(
+        QStringLiteral(HWTEST_MBDDF_SYSTEM_STATUS_CONFIG)).ok());
+    ASSERT_TRUE(service->startTest().ok());
+    ASSERT_TRUE(results.waitForResult(3000));
+    ASSERT_TRUE(states.waitForTerminal(3000));
+
+    const auto result = results.result();
+    EXPECT_EQ(result.verdict, hwtest::biz::TestVerdict::Error);
+    EXPECT_EQ(result.errorCode, hwtest::biz::ErrorCode::ProtocolParseError);
+    EXPECT_EQ(channel.openCount(), 1);
+    EXPECT_EQ(channel.closeCount(), 1);
+    EXPECT_EQ(channel.writeCount(), 1);
+
+    ASSERT_TRUE(service->shutdown().ok());
+}
+
+TEST(SystemStatusExecutorTest, StopWaitsForRunScopedTransportCloseOnWorkerThread)
+{
+    const QString assets = catalogDirectory();
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present: " << assets.toStdString();
+    }
+    qputenv("MB_DDF_PROTOCOL_CSV_DIR", assets.toUtf8());
+
+    auto transport = std::make_unique<BlockingByteTransport>();
+    BlockingByteTransport* transportPtr = transport.get();
+    SystemStatusAlgorithmExecutor executor(std::move(transport));
+    RunServiceHandle service = makeRunService(&executor);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+    ASSERT_TRUE(service->loadConfiguration(
+        QStringLiteral(HWTEST_MBDDF_SYSTEM_STATUS_CONFIG)).ok());
+    ASSERT_TRUE(service->startTest().ok());
+    ASSERT_TRUE(transportPtr->waitForTransaction(3000));
+
+    std::atomic_bool stopReturned{false};
+    hwtest::biz::Status stopStatus;
+    std::thread stopper([&] {
+        stopStatus = service->stopTest(1000);
+        stopReturned.store(true);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_FALSE(stopReturned.load());
+
+    transportPtr->release();
+    stopper.join();
+    EXPECT_TRUE(stopStatus.ok());
+    ASSERT_TRUE(transportPtr->waitForClose(3000));
+    EXPECT_EQ(transportPtr->closeThread(), transportPtr->openThread());
 
     ASSERT_TRUE(service->shutdown().ok());
 }

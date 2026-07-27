@@ -15,18 +15,18 @@
 | tests/hal/ | hwtest_hal_tests | 10 | 51 | HAL 接口、资源、安全、Mock、多 Adapter 路由、真实 C ABI 调用、宿主串口枚举、Qt 控制 Provider、版本化设备投影与可选任务 ABI |
 | tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
 | tests/biz/ | hwtest_biz_tests | 6 | 41 | 配置、计划、单次/PC 周期/设备流调度、Qt 工作线程、样本、报告和架构边界 |
-| tests/algorithm/ | hwtest_algorithm_tests | 3 | 28 | MB_DDF CSV、流式控制传输、固定命令、配置驱动单步交换、DI stimulus、定时器 START/STOP 清理和设备流能力判定 |
+| tests/algorithm/ | hwtest_algorithm_tests | 3 | 31 | MB_DDF CSV、流式控制传输、任务范围控制连接与同 worker 停止收尾、陈旧 RX bank 错误的精确重发、固定命令、配置驱动单步交换、DI stimulus、定时器 START/STOP 清理和设备流能力判定 |
 | tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 91 | 共享启动/控制器、TUI/GUI/WebSocket、DI 双设备准备/安全态校验/收尾、连续运行样本、异步停止与关闭、跨前端等价性、架构边界、配置 descriptor、测试配置白名单选择及既有经 HAL/Qt UDP 的两个独立测试闭环 |
 | src/adapters/ni_daqmx/tests/ | hwtest_ni_daqmx_adapter_fake_tests | 1 | 0 | 原生 NI-DAQmx Adapter 与 Fake NIDAQmx API 的自定义 main/CTest |
-| 合计 | 7 个 GoogleTest + 1 个 Fake CTest | 31 | 218 | 当前源级 GoogleTest 清单及一个非 GoogleTest 测试源 |
+| 合计 | 7 个 GoogleTest + 1 个 Fake CTest | 31 | 221 | 当前源级 GoogleTest 清单及一个非 GoogleTest 测试源 |
 
-218 是当前测试源码中的 GoogleTest 定义数。Windows 完整构建后的 CTest 清单为 229 条：218 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试和 1 条 `NiDaqmxAdapterFakeTest`。清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
+221 是当前测试源码中的 GoogleTest 定义数。Windows 完整构建后的 CTest 清单为 232 条：221 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试和 1 条 `NiDaqmxAdapterFakeTest`。清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
 
-2026-07-27 在 Windows/Visual Studio 2022 x64 构建树中设置已批准的 `MB_DDF_PROTOCOL_CSV_DIR` 后，Debug 与 Release 完整构建均成功，两个配置的 CTest 均为 229/229 通过。该结果包含仓库 Fake NIDAQmx、动态 Adapter fixture 和自退出的应用进程测试；证据等级仍按下文分类。
+2026-07-27 在 Windows/Visual Studio 2022 x64 构建树中设置已批准的 `MB_DDF_PROTOCOL_CSV_DIR` 后，Debug 与 Release 完整构建均成功，两个配置的 CTest 均为 232/232 通过。该结果包含仓库 Fake NIDAQmx、动态 Adapter fixture 和自退出的应用进程测试；证据等级仍按下文分类。
 
-30 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 218。
+30 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 221。
 
-浏览器前端当前有 7 个 `*.test.ts` 文件、32 条 Vitest，用于协议解析/请求、配置 descriptor 与测试配置白名单目录校验、默认配置选择、配置测量标签/单位、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组，以及 DI WebSocket payload 严格解析、命令队列合并、revision、失败回滚、复位串行、active-low、回读位和 settling。它们由 `npm test` 独立运行，不计入上述 229 条 CTest。
+浏览器前端当前有 7 个 `*.test.ts` 文件、32 条 Vitest，用于协议解析/请求、配置 descriptor 与测试配置白名单目录校验、默认配置选择、配置测量标签/单位、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组，以及 DI WebSocket payload 严格解析、命令队列合并、revision、失败回滚、复位串行、active-low、回读位和 settling。它们由 `npm test` 独立运行，不计入上述 232 条 CTest。
 
 ## 2. 当前覆盖与条件资产
 
@@ -35,16 +35,16 @@
 | HAL | 错误映射、严格多设备资源映射、会话、Mock AD/DA/DI/DO、宿主串口枚举、串口 echo、CANFD loopback、控制资源路由、Qt UDP 回环和 timeout；动态 Fake ABI v1 的实际装载/数字批写/状态映射/缺符号、AdapterRouter 惰性多后端路由、逻辑 alias 映射、driver-only 初始化、版本化单设备 open projection、`HalService -> AdapterRouter -> CAbiAdapter -> NI parser/Fake DAQmx` 组合链、核心 ABI v1 的可选 task API 兼容、C ABI I/O/close 串行化、短读任务块、任务先 stop/close 再 safe state，以及 close 错误消费 handle | 自动化测试中的串口枚举不打开设备；动态 DLL 是 `tests/hal/fixtures` 的 Fake，Qt UDP 仅是本机 Provider 证据；COM3 实机结果属于下述独立手工 smoke，不是默认 CTest、NI SDK 或 PXI-6259 证据 |
 | 原生 NI-DAQmx Adapter | 同一生产源码和独立 `ni_daqmx_config.*` 的 Fake 构建；PXI-6259 identity/open projection/占位 serial/topology/速率边界，按需 AI/AO/DI/DO，有限/连续任务路径，内部/外部时钟、start/reference/pause 触发、边沿计数/频率脉冲、短读、overflow/underflow、错误注入、任务状态、安全态/stop/clear 顺序；Vendor C ABI driver-only 初始化与单设备 open projection 交接；默认关闭的真实 SDK 构建路径 | `NiDaqmxAdapterFakeTest` 链接仓库 Fake `NIDAQmx`；独立可选 DLL 构建也使用 Fake 头/导入库。两者均不代表已安装 NI SDK、实际 PXI-6259、MAX 身份、接线、电平兼容、物理输出、触发时序或安全态验收 |
 | 日志 | LogService、JsonLineFileSink、HalLogEvent 到 LogEvent 桥接 | 不覆盖 UI 或真实设备日志链 |
-| BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、专用 QThread 的 event dispatcher/计时器注册、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象；Qt 线程回归只证明同步任务具备 Qt dispatcher，不证明算法调用期间持续泵送事件、HAL actor 或跨线程取消；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
-| 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器、固定命令执行器、配置驱动单步交换、DI_READ golden、DI stimulus 配置/全量批写/active-low/revision/白名单/错误回退、定时器 START/STOP 清理、ELEC_HEALTH_STATUS 字段判定和设备流拒绝 | DI stimulus 使用 `IHalDevice` Fake；其余五项目前只有协议/脚本化执行、Fake 或本机模拟证据，尚无真实板端、NI 或 PXI-6259 验收；本机 UDP 模拟目标不等同于真实板端通讯 |
+| BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、专用 QThread 的 event dispatcher/计时器注册、同线程 `finishRun()`、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象；Qt 线程回归只证明同步任务具备 Qt dispatcher，不证明算法调用期间持续泵送事件、HAL actor 或跨线程取消；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
+| 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、任务内控制通道复用及停止时由 worker 收尾、陈旧 RX bank 错误精确重发及当前序号错误不重发、SYSTEM_STATUS 模拟器、固定命令执行器、配置驱动单步交换、DI_READ golden、DI stimulus 配置/全量批写/active-low/revision/白名单/错误回退、定时器 START/STOP 清理、ELEC_HEALTH_STATUS 字段判定和设备流拒绝 | DI stimulus 使用 `IHalDevice` Fake；其余五项目前只有协议/脚本化执行、Fake 或本机模拟证据，尚无真实板端、NI 或 PXI-6259 验收；本机 UDP 模拟目标不等同于真实板端通讯 |
 | 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、测试配置目录发现及白名单 `configId` 切换、控制资源与会话串口选择、DI descriptor/双设备准备/复位/revision/异步停止安全收尾、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影（含配置 descriptor 和数字刺激 DTO）、DI 动作严格参数白名单、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | DI 应用测试将 `ni.daqmx.libraryPath` 指向动态 Fake DLL，并使用本机 UDP peer；Web 集成当前覆盖参数白名单与权威快照，不覆盖成功 DI 写、revision 冲突或断开安全态的 Web 端到端链。默认自动化不能外推到真实网口、NI/PXI-6259、其他 DUT 或长期稳定性 |
 | 浏览器前端 | Vitest 下的类型化协议、测试目录与 descriptor 校验、默认配置选择、字段标签/单位、有界数据结构、字段发现、时间窗、降采样和图组；DI WebSocket snapshot/reply 严格解析，以及 16 路面板所复用的 32 ms 合并、revision、失败回滚、reset 串行、active-low、`di_state[0]`/`di_state[1]` 回读和 settling；TypeScript/Vite 单文件生产构建 | SessionProvider/总览页面板已由源码接线，但没有独立浏览器组件或真实 WebSocket/PXI-6259 端到端验收；Vitest 不证明真实硬件、长期浏览器稳定性或设备流算法 |
 
 下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
 
-- 5 个 MB_DDF 协议测试和 33 个 MB_DDF 跨层/集成测试依赖 `MB_DDF_PROTOCOL_CSV_DIR` 指向的外部 CSV 资产目录；后者包含应用/TUI/GUI/Web UDP 运行、连续采样、停止、关闭或等价性测试。
+- 5 个 MB_DDF 协议测试和 36 个 MB_DDF 跨层/集成测试依赖 `MB_DDF_PROTOCOL_CSV_DIR` 指向的外部 CSV 资产目录；后者包含应用/TUI/GUI/Web UDP 运行、连续采样、停止、关闭或等价性测试。
 - BIZ 的导入附件样例测试依赖 tmp/hwtest_BIZ/configs/sample_product.testcfg；tmp 不是仓库实现事实。
-- 算法测试中有 9 个自包含的帧、传输、能力判定或临时 CSV 用例；其余 12 个依赖外部 MB_DDF CSV。
+- 算法测试中有 12 个自包含的帧、传输、DI stimulus、能力判定或临时 CSV 用例；其余 19 个依赖外部 MB_DDF CSV。
 
 协议 CSV 是运行期资产。用户已批准 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容作为 MB_DDF 基线，当前为 32 个 CSV；协议测试按一文件一定义及当前实际字段校验。`dut/` 保存同步副本，但宿主测试未把它接成默认 fixture，仍可能因外部目录缺失而跳过；基线已批准和文件已复制都不等于 manifest/hash 自动机制已经实现。
 
@@ -70,6 +70,16 @@
 - 两个测试项的 WebSocket 客户端都执行了 `load -> prepare -> single -> pc_periodic -> quit`，未启动浏览器/Vite。健康测试后端完整诊断中 `QObject::startTimer` 和 `Timers can only be used with threads started with QThread` 均为 0；`quit` 以关闭码 `1000` 完成，随后核对板端身份后发送 `SIGTERM`，18765 无监听、远端无 `MB_DDF_v2`、COM3 可重新独占打开并关闭。
 - 从后端启动到 `quit` 的完整进程诊断输出只有 WebSocket 就绪行，`QObject::startTimer: Timers can only be used with threads started with QThread` 出现次数为 `0`。`quit` 回复成功并以 WebSocket 关闭码 `1000` 结束；随后对身份核对为 `MB_DDF_v2` 的板端进程发送 `SIGTERM`。收尾复核确认 18765 无监听、本地无后端或调试进程、远端无 `MB_DDF_v2`，COM3 可重新独占打开并关闭。
 - 这次复测把 QThread 修复后的短时真实串口单次/三周期成功链补齐，但仍不是默认 CTest 或生产验收；没有覆盖长时稳定性、通信超时、拔插、运行中停止、板端异常退出或物理安全状态恢复。`HW_TEST` 画像本身也不提供状态恢复。
+
+### 2.3 2026-07-27 SYSTEM_STATUS 第二帧诊断
+
+- 在用户明确授权且 DUT 上电连接的条件下，使用 PC 的 COM3 `614400 / 8E1 / 无流控` 直连正在运行的 `HW_TEST Release`。保持同一次串口打开并连续发送合法 `SYSTEM_STATUS` 后，实测响应严格交替为约 `106..125 ms` 的正常 `01/01` 响应和约 `11..28 ms` 的 `FF/00 error_response`；因此复现不依赖 PC 关闭、重开串口。
+- 错误帧解码为原命令 `01/01`、原序号 `0x1031`、`err_code=0x0102`、`detail=0`，而当前请求序号为 `0x1235`。临时板端诊断记录的失败 payload 为固定陈旧数据，非当前请求；COM RX RAM 前后观测进一步显示两个乒乓 bank 中只有一路取得当前帧，另一路反复提供同一陈旧内容。当前证据将根因定位在 DUT/FPGA COM3 RX bank 路径，而不是宿主序号递增或串口重开。
+- 宿主修复把控制连接生命周期改为“一次 BIZ 任务打开一次”，同一任务的步骤重试、PC 周期和跟随请求复用连接，并只对上述原命令匹配、原序号陈旧、`0x0102/detail=0` 的错误响应原帧重发一次。回归同时锁定普通 CRC 错误和当前序号错误响应不得触发该重发；临时 COM RAM 打印已从 DUT 源码移除，板端仅保留解析失败的错误码、detail 和 payload 十六进制诊断。
+- 自动化覆盖任务内一次打开/关闭、停止等待运行收尾且由同一 worker 关闭传输、陈旧错误后成功以及当前请求错误不重发。首次正式镜像复核时，目标 event 2 一度不再增加，随后 PCIe 用户逻辑读回 `0xffffffff` 且 SSH 不再发送协议 banner；目标完整断电重上电后恢复为 PCIe `5.0 GT/s x4`、XDMA event 2 可用，正式 `HW_TEST Release` 镜像 SHA-256 为 `3eb9d2decdeb06c8f83aeb38aaf7bd4540e7d0170b0225b7857c0a69635eed7d`。
+- 重上电后的首个独立 `SYSTEM_STATUS` 单次任务一次请求即为 `Pass/Ok`；第二个独立任务先在约 10 ms 收到陈旧 bank 的 `FF/00`，再于同一次串口打开内原帧重发并在约 110 ms 收到正常响应，结果仍为 `Pass/Ok`、`attempts=1`。宿主日志对应一次 `openControl`、两次 `writeControl/readControl` 和一次 `closeControl`，板端 event 2 从 1 增至 3，并记录一条 `0x0102/detail=0` 的陈旧 payload。
+- 随后经真实 `hwtest_web` WebSocket 路径执行 `load -> prepare -> pc_periodic -> quit`，以 `intervalMs=150`、`maxCycles=6` 完成六轮，最终为 `finished/Pass/Ok`、`cycleIndex=6`、`sampleCount=6`、`attempts=1`，样本序号为 `4660..4665`。六轮共用一次串口打开和关闭，宿主记录 12 次写、12 次读和 6 个成功结果；板端 event 2 从 3 增至 15，并记录 6 次陈旧 bank 请求。再执行 4 个独立单次任务均为 `Pass/Ok`，event 2 从 15 增至 23。测试后 `quit` 正常关闭后端，板端进程经 `SIGTERM` 停止，18765 无监听且无遗留 `hwtest_web`/`MB_DDF_v2` 进程。
+- 该证据确认宿主的任务范围连接复用和精确一次重发能够覆盖当前实机故障，但没有修复 FPGA COM3 双 RX bank 本身；若错误响应特征变化、连续两个 bank 都不可用或目标不产生中断，仍会按原有协议错误或超时失败，不能据此宣称底层硬件缺陷已消除。
 
 ## 3. 五级证据模型
 

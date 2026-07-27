@@ -394,13 +394,31 @@ public:
         }
         emit stateChanged(taskId, TestState::Stopping);
 
+        QElapsedTimer stopTimer;
+        stopTimer.start();
         const Status stopStatus = executor->requestStop(timeoutMs);
+        Status completionStatus = stopStatus;
         TestState completionState = TestState::Stopping;
         bool notify = false;
         {
             QMutexLocker locker(&m_mutex);
             m_stopResponseKnown = true;
             m_stopAccepted = stopStatus.ok();
+            while (stopStatus.ok() && !m_workerDone) {
+                const qint64 remaining = static_cast<qint64>(timeoutMs) -
+                    stopTimer.elapsed();
+                if (remaining <= 0) {
+                    break;
+                }
+                m_controlChanged.wait(&m_mutex,
+                                      static_cast<unsigned long>(remaining));
+            }
+            if (stopStatus.ok() && !m_workerDone) {
+                completionStatus = makeStatus(
+                    ErrorCode::ResourceTimeout,
+                    QStringLiteral("Timed out waiting for the test worker to stop"));
+                m_stopAccepted = false;
+            }
             if (m_workerDone) {
                 completionState = m_stopAccepted ? TestState::Idle : m_workerTerminalState;
                 m_state = completionState;
@@ -410,7 +428,7 @@ public:
         if (notify) {
             emit stateChanged(taskId, completionState);
         }
-        return stopStatus;
+        return completionStatus;
     }
 
     Status resetHardware() override
@@ -825,6 +843,14 @@ private:
             ++cycleIndex;
         }
 
+        const Status finished = m_executor->finishRun();
+        if (!finished.ok()) {
+            emit hardwareError(context.runId,
+                               QString(),
+                               finished.code,
+                               finished.error.message);
+            executionError = true;
+        }
         completeWorker(executionError ? TestState::Error : TestState::Finished);
     }
 
@@ -845,6 +871,7 @@ private:
             }
             m_state = resultingState;
             taskId = m_taskId;
+            m_controlChanged.wakeAll();
         }
         emit stateChanged(taskId, resultingState);
     }
