@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import type { TestMeasurementDescriptor } from './protocol'
-import { fieldLabel, fieldUnit } from './format'
+import {
+  connectionStateLabel,
+  fieldLabel,
+  fieldUnit,
+  formatDuration,
+  phaseLabel,
+  verdictLabel,
+} from './format'
 
 describe('descriptor-backed field formatting', () => {
   const measurements: TestMeasurementDescriptor[] = [
@@ -16,5 +23,20 @@ describe('descriptor-backed field formatting', () => {
   it('retains a readable fallback for newly discovered fields', () => {
     expect(fieldLabel('future_sensor_value', measurements)).toBe('future sensor value')
     expect(fieldUnit('future_sensor_value', measurements)).toBe('')
+  })
+})
+
+describe('Chinese console formatting', () => {
+  it('localizes connection, phase, and verdict values', () => {
+    expect(connectionStateLabel('connected')).toBe('已连接')
+    expect(phaseLabel('pc_vendor_extension')).toBe('pc_vendor_extension')
+    expect(phaseLabel('shutdown_failed')).toBe('关闭失败')
+    expect(verdictLabel('Pass')).toBe('通过')
+    expect(verdictLabel('')).toBe('待判定')
+  })
+
+  it('formats durations without English abbreviations', () => {
+    expect(formatDuration(90)).toBe('0时 1分')
+    expect(formatDuration(90_000)).toBe('1天 1时')
   })
 })

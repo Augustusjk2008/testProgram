@@ -15,6 +15,7 @@ import {
   HWTEST_WS_URL,
   SAMPLE_CAPACITY,
 } from '../../shared/config'
+import { connectionStateLabel, phaseLabel } from '../../shared/format'
 import {
   EMPTY_SNAPSHOT,
   type ActionName,
@@ -191,7 +192,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
         setConnectionDetail(event.detail ?? '')
         pushDiagnostic(
           event.state === 'error' ? 'error' : 'link',
-          `WebSocket ${event.state}`,
+          `WebSocket · ${connectionStateLabel(event.state)}`,
           event.detail ?? HWTEST_WS_URL,
         )
         return
@@ -209,7 +210,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
         setSnapshot(nextSnapshot)
         pushDiagnostic(
           'snapshot',
-          `状态 · ${message.snapshot.phase}`,
+          `状态 · ${phaseLabel(message.snapshot.phase)}`,
           message.snapshot.progressStep || `seq ${message.seq}`,
           message,
         )

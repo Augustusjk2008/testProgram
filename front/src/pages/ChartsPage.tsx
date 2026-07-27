@@ -1,4 +1,4 @@
-import { ChartLine, SlidersHorizontal } from '@phosphor-icons/react'
+import { ChartLine } from '@phosphor-icons/react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { ChartConfigurator } from '../features/telemetry/ChartConfigurator'
@@ -78,27 +78,10 @@ export function ChartsPage() {
       />
 
       <main className="charts-stage">
-        <div className="page-heading">
-          <div>
-            <span className="eyebrow">TIME SERIES / CANVAS</span>
-            <h2>曲线工作台</h2>
-            <p>横轴固定为采样时间；当前测试的测量字段、图组和时间窗均保存在本机浏览器。</p>
-          </div>
-          <div className="performance-note">
-            <SlidersHorizontal size={18} />
-            <span><strong>10 Hz</strong> 批量刷新 · <strong>50k</strong> 点/通道 · min/max 降采样</span>
-          </div>
-        </div>
-
         {groups.length === 0 ? (
           <section className="empty-state panel charts-empty">
-            <ChartLine size={38} />
-            <h3>{fields.length === 0 ? '等待可绘制量' : '尚未选择曲线'}</h3>
-            <p>
-              {fields.length === 0
-                ? `启动${descriptor.title || '测试'}后，数值字段会从样本中自动出现。`
-                : '在左侧勾选一个或多个量；可全部同图、每项一图或输入自定义图组。'}
-            </p>
+            <ChartLine size={30} />
+            <h3>{fields.length === 0 ? '等待曲线数据' : '请选择曲线'}</h3>
           </section>
         ) : (
           <div className={layout === 'separate' ? 'chart-grid chart-grid--split' : 'chart-grid'}>

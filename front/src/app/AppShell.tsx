@@ -1,6 +1,5 @@
 import {
   ChartLine,
-  CirclesThreePlus,
   Gauge,
   Moon,
   Pulse,
@@ -11,14 +10,15 @@ import type { ReactNode } from 'react'
 
 import { RunControlBar } from '../features/session/RunControlBar'
 import { useSession } from '../features/session/SessionProvider'
+import { connectionStateLabel } from '../shared/format'
 import { useTheme } from './ThemeProvider'
 
 export type PageId = 'overview' | 'charts' | 'diagnostics'
 
 const NAV_ITEMS = [
-  { id: 'overview' as const, label: '任务总览', caption: 'STATUS', icon: Gauge },
-  { id: 'charts' as const, label: '曲线工作台', caption: 'PLOTS', icon: ChartLine },
-  { id: 'diagnostics' as const, label: '报文与诊断', caption: 'TRACE', icon: TerminalWindow },
+  { id: 'overview' as const, label: '任务', icon: Gauge },
+  { id: 'charts' as const, label: '曲线', icon: ChartLine },
+  { id: 'diagnostics' as const, label: '诊断', icon: TerminalWindow },
 ]
 
 interface AppShellProps {
@@ -32,25 +32,17 @@ export function AppShell({ page, onPageChange, children }: AppShellProps) {
   const { theme, toggleTheme } = useTheme()
   const activePage = NAV_ITEMS.find(({ id }) => id === page) ?? NAV_ITEMS[0]
   const descriptor = snapshot.descriptor
-  const productLabel = descriptor.productModel || 'MB_DDF'
-  const testLabel = descriptor.title || descriptor.algorithmId || '未选择测试'
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
           <div className="brand__mark"><Pulse size={24} weight="bold" /></div>
-          <div><strong>HW<span>//</span>TEST</strong><small>TELEMETRY CONSOLE</small></div>
-        </div>
-
-        <div className="sidebar__station">
-          <span className="eyebrow">STATION</span>
-          <strong>PC HOST · 01</strong>
-          <small>{productLabel} / {testLabel}</small>
+          <strong>HW<span>//</span>TEST</strong>
         </div>
 
         <nav aria-label="主导航">
-          {NAV_ITEMS.map(({ id, label, caption, icon: Icon }, index) => (
+          {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
             <button
               aria-current={page === id ? 'page' : undefined}
               className={page === id ? 'nav-item is-active' : 'nav-item'}
@@ -58,31 +50,22 @@ export function AppShell({ page, onPageChange, children }: AppShellProps) {
               onClick={() => onPageChange(id)}
               type="button"
             >
-              <span className="nav-item__index">0{index + 1}</span>
               <Icon size={20} />
-              <span><strong>{label}</strong><small>{caption}</small></span>
+              <strong>{label}</strong>
             </button>
           ))}
         </nav>
 
         <div className="sidebar__link">
-          <span className="eyebrow">LOOPBACK LINK</span>
-          <div><i className={`status-dot status-dot--${connectionState}`} /><strong>{connectionState}</strong></div>
+          <div><i className={`status-dot status-dot--${connectionState}`} /><strong>{connectionStateLabel(connectionState)}</strong></div>
           <code title={wsUrl}>{wsUrl}</code>
           {connectionDetail && <small>{connectionDetail}</small>}
-        </div>
-        <div className="sidebar__footer">
-          <CirclesThreePlus size={15} />
-          <span>Qt WebSocket · Protocol v1</span>
         </div>
       </aside>
 
       <div className="workspace">
         <header className="topbar">
-          <div>
-            <span className="topbar__path">HWTEST / {activePage.caption}</span>
-            <h1>{activePage.label}</h1>
-          </div>
+          <h1>{activePage.label}</h1>
           <div className="topbar__controls">
             <div className="topbar__session">
               <span><small>控制资源</small><strong>{snapshot.controlResourceId || '未配置'}</strong></span>

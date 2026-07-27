@@ -7,6 +7,14 @@ function pretty(value: unknown): string {
   return value === undefined ? '—' : JSON.stringify(value, null, 2)
 }
 
+const EVENT_KIND_LABELS = {
+  link: '连接',
+  command: '指令',
+  snapshot: '状态',
+  sample: '样本',
+  error: '错误',
+} as const
+
 export function DiagnosticsPage() {
   const {
     clearTelemetry,
@@ -19,21 +27,10 @@ export function DiagnosticsPage() {
 
   return (
     <div className="page-stack diagnostics-page">
-      <div className="page-heading">
-        <div>
-          <span className="eyebrow">PROTOCOL INSPECTOR</span>
-          <h2>报文与诊断</h2>
-          <p>查看最近样本、请求/反馈帧和浏览器会话事件；最多保留 500 条。</p>
-        </div>
-        <button className="button button--quiet" onClick={clearTelemetry} type="button">
-          <Trash size={16} />清空采样缓存
-        </button>
-      </div>
-
       <div className="diagnostics-grid">
         <section className="panel raw-panel">
           <header className="panel__header">
-            <div><span className="eyebrow">LATEST SAMPLE</span><h3>解码样本</h3></div>
+            <h3>解码样本</h3>
             <BracketsCurly size={20} />
           </header>
           <div className="raw-meta">
@@ -46,21 +43,21 @@ export function DiagnosticsPage() {
 
         <section className="panel frames-panel">
           <header className="panel__header">
-            <div><span className="eyebrow">WIRE FRAMES</span><h3>原始帧</h3></div>
+            <h3>原始帧</h3>
             <Radio size={20} />
           </header>
           <div className="frame-block">
-            <span>TX / REQUEST</span>
+            <span>发送</span>
             <code>{typeof requestFrame === 'string' ? requestFrame : '等待请求帧'}</code>
           </div>
           <div className="frame-block">
-            <span>RX / RESPONSE</span>
+            <span>接收</span>
             <code>{typeof responseFrame === 'string' ? responseFrame : '等待反馈帧'}</code>
           </div>
           {(snapshot.errorCode || snapshot.message) && (
             <div className="diagnostic-alert">
               <Bug size={18} />
-              <span><strong>{snapshot.errorCode || 'MESSAGE'}</strong>{snapshot.message}</span>
+              <span><strong>{snapshot.errorCode || '消息'}</strong>{snapshot.message}</span>
             </div>
           )}
         </section>
@@ -68,8 +65,13 @@ export function DiagnosticsPage() {
 
       <section className="panel event-log">
         <header className="panel__header">
-          <div><span className="eyebrow">SESSION TRACE</span><h3>事件记录</h3></div>
-          <span className="mono-count">{diagnostics.length} / 500</span>
+          <h3>事件记录</h3>
+          <div className="panel__actions">
+            <span className="mono-count">{diagnostics.length} / 500</span>
+            <button aria-label="清空采样缓存" className="button button--quiet button--compact" onClick={clearTelemetry} type="button">
+              <Trash size={15} />清空
+            </button>
+          </div>
         </header>
         {diagnostics.length === 0 ? (
           <div className="compact-empty">尚无会话事件。</div>
@@ -79,7 +81,7 @@ export function DiagnosticsPage() {
               <details className={`event-row event-row--${event.kind}`} key={event.id}>
                 <summary>
                   <time>{new Date(event.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}</time>
-                  <i>{event.kind}</i>
+                  <i>{EVENT_KIND_LABELS[event.kind]}</i>
                   <strong>{event.title}</strong>
                   <span>{event.detail}</span>
                 </summary>

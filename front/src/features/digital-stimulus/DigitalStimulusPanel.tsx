@@ -10,7 +10,6 @@ import {
   appliedBit,
   DigitalStimulusCommandQueue,
   type DigitalStimulusTransport,
-  physicalLevel,
   readbackBit,
   readbackGroup,
   readbackStatus,
@@ -40,7 +39,7 @@ function formatDiagnostic(value: number | null): string {
 
 function readbackValue(sample: ApplicationSample | null, descriptor: DigitalSwitchDescriptor): string {
   const value = readbackBit(sample, descriptor.dutBit)
-  return value === null ? '未知' : value ? '1' : '0'
+  return value === null ? '—' : value ? '1' : '0'
 }
 
 export function DigitalStimulusPanel({
@@ -107,7 +106,7 @@ export function DigitalStimulusPanel({
   const backendError = optimistic.errorCode
     ? `${optimistic.errorCode}${optimistic.message ? `: ${optimistic.message}` : ''}`
     : ''
-  const liveMessage = queueError || backendError || optimistic.message || `数字刺激 revision ${optimistic.revision}`
+  const liveMessage = queueError || backendError || optimistic.message || `版本 ${optimistic.revision}`
   const nowUs = Date.now() * 1000
   const diagnostic = readbackGroup(latestSample, 1)
 
@@ -122,47 +121,43 @@ export function DigitalStimulusPanel({
   }
 
   return (
-    <section className="panel digital-stimulus" aria-label="DUT 数字刺激控制">
+    <section className="panel digital-stimulus" aria-label="DUT 数字激励控制">
       <header className="panel__header digital-stimulus__header">
-        <div>
-          <span className="eyebrow">DIGITAL STIMULUS</span>
-          <h3>16 路 DUT DI 刺激</h3>
+        <div className="digital-stimulus__title">
+          <h3>16 路 DI 激励</h3>
+          <span aria-atomic="true" aria-live="polite">{liveMessage}</span>
         </div>
-        <button
-          aria-label="恢复数字刺激安全态"
-          className="button button--quiet digital-stimulus__reset"
-          disabled={disabled}
-          onClick={reset}
-          title="恢复安全态"
-          type="button"
-        >
-          <ArrowCounterClockwise aria-hidden="true" size={17} />
-          <span>恢复安全态</span>
-        </button>
+        <div className="digital-stimulus__tools">
+          <span className="digital-stimulus__diagnostic">诊断 <code>{formatDiagnostic(diagnostic)}</code></span>
+          <button
+            aria-label="恢复数字激励安全态"
+            className="button button--quiet digital-stimulus__reset"
+            disabled={disabled}
+            onClick={reset}
+            title="恢复安全态"
+            type="button"
+          >
+            <ArrowCounterClockwise aria-hidden="true" size={17} />
+          </button>
+        </div>
       </header>
 
-      <p aria-atomic="true" aria-live="polite" className="digital-stimulus__live">
-        {liveMessage}
-      </p>
-
-      <div className="digital-stimulus__grid" role="group" aria-label="16 路数字刺激开关">
+      <div className="digital-stimulus__grid" role="group" aria-label="16 路数字激励开关">
         {descriptors.map((descriptor) => {
           const active = appliedBit(optimistic.appliedMask, descriptor.dutBit)
           const status = readbackStatus(optimistic, descriptor, latestSample, nowUs)
-          const physical = physicalLevel(descriptor, active)
+          const echo = readbackValue(latestSample, descriptor)
           return (
             <article
               className={`digital-stimulus__switch digital-stimulus__switch--${status}`}
               data-readback-status={status}
               key={descriptor.switchId}
+              title={`${descriptor.label}：${active ? '激励' : '安全'}，回显 ${echo}，${READBACK_LABEL[status]}`}
             >
-              <div className="digital-stimulus__switch-heading">
-                <strong>{descriptor.label}</strong>
-                <code>DI[{descriptor.dutBit}]</code>
-              </div>
+              <strong>DI{descriptor.dutBit}</strong>
               <label className="digital-stimulus__toggle">
                 <input
-                  aria-label={`${descriptor.label} 逻辑刺激`}
+                  aria-label={`${descriptor.label} 激励`}
                   aria-checked={active}
                   checked={active}
                   disabled={disabled}
@@ -171,22 +166,17 @@ export function DigitalStimulusPanel({
                   type="checkbox"
                 />
                 <span aria-hidden="true" className="digital-stimulus__toggle-track" />
-                <span className="digital-stimulus__logical">逻辑 {active ? '激活' : '安全'}</span>
               </label>
-              <dl className="digital-stimulus__facts">
-                <div><dt>物理电平</dt><dd>{physical}</dd></div>
-                <div><dt>DUT 回读位</dt><dd>{readbackValue(latestSample, descriptor)}</dd></div>
-                <div><dt>回读</dt><dd className={`digital-stimulus__status digital-stimulus__status--${status}`}>{READBACK_LABEL[status]}</dd></div>
-              </dl>
+              <output
+                aria-label={`${descriptor.label} 回显 ${echo}，${READBACK_LABEL[status]}`}
+                className={`digital-stimulus__echo digital-stimulus__status--${status}`}
+              >
+                {echo}
+              </output>
             </article>
           )
         })}
       </div>
-
-      <footer className="digital-stimulus__diagnostic">
-        <span>di_state[1] 诊断位图</span>
-        <code>{formatDiagnostic(diagnostic)}</code>
-      </footer>
     </section>
   )
 }

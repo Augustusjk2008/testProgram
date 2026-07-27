@@ -9,6 +9,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 
 import type { RunMode, TestRunOptions } from '../../shared/protocol'
+import { phaseLabel } from '../../shared/format'
 import { setLocalStorageValue } from '../../shared/storage'
 import { useSession } from './SessionProvider'
 
@@ -24,10 +25,10 @@ function loadRunOptions(): TestRunOptions {
   return { mode: 'pc_periodic', intervalMs: 500, maxCycles: 0 }
 }
 
-const MODE_LABELS: Array<{ mode: RunMode; title: string; caption: string }> = [
-  { mode: 'single', title: '单次', caption: '一轮指令 / 反馈' },
-  { mode: 'pc_periodic', title: 'PC 周期', caption: '主机重复双向交互' },
-  { mode: 'device_stream', title: '设备持续', caption: '一次启动 / 主动回告' },
+const MODE_LABELS: Array<{ mode: RunMode; title: string }> = [
+  { mode: 'single', title: '单次' },
+  { mode: 'pc_periodic', title: 'PC 周期' },
+  { mode: 'device_stream', title: '设备持续' },
 ]
 
 export function RunControlBar() {
@@ -66,6 +67,7 @@ export function RunControlBar() {
     return ''
   }, [options])
   const unsupported = !supportedModes.includes(options.mode)
+  const controlError = periodicError || (unsupported ? `${testTitle}不支持当前运行模式` : '') || actionError
 
   useEffect(() => {
     if (supportedModes.includes(options.mode)) return
@@ -94,40 +96,35 @@ export function RunControlBar() {
 
   return (
     <section className="run-console" aria-label="全局测试运行控制">
-      <div className="run-console__identity">
-        <span className="eyebrow">RUN CONTROL</span>
-        <div className="run-console__test-picker">
-          <label htmlFor="test-config-select">测试项目</label>
-          <select
-            aria-label="测试项目"
-            disabled={testChangeBlocked || busyAction !== null || !testConfigsReady || testConfigs.length === 0}
-            id="test-config-select"
-            onChange={(event) => {
-              if (event.target.value) execute('selectTest', { configId: event.target.value })
-            }}
-            value={selectedTestId}
-          >
-            {testConfigs.length === 0 ? (
-              <option value={selectedTestId}>{selectedTestId ? '当前启动配置' : '等待配置目录'}</option>
-            ) : testConfigs.map((test) => (
-              <option key={test.configId} value={test.configId}>{test.title}</option>
-            ))}
-          </select>
-        </div>
+      <div className="run-console__test-picker">
+        <select
+          aria-label="测试项目"
+          disabled={testChangeBlocked || busyAction !== null || !testConfigsReady || testConfigs.length === 0}
+          id="test-config-select"
+          onChange={(event) => {
+            if (event.target.value) execute('selectTest', { configId: event.target.value })
+          }}
+          value={selectedTestId}
+        >
+          {testConfigs.length === 0 ? (
+            <option value={selectedTestId}>{selectedTestId ? '当前配置' : '等待配置'}</option>
+          ) : testConfigs.map((test) => (
+            <option key={test.configId} value={test.configId}>{test.title}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="run-console__status" title={snapshot.progressStep || '等待运行指令'}>
         <div className="run-console__phase-row">
           <span className={`phase-beacon phase-beacon--${snapshot.phase}`} />
-          <strong>{snapshot.phase.toUpperCase()}</strong>
-          <span>循环 {snapshot.cycleIndex || 0}</span>
+          <strong>{phaseLabel(snapshot.phase)}</strong>
+          <span>轮 {snapshot.cycleIndex || 0}</span>
           <span>样本 {snapshot.sampleCount || 0}</span>
         </div>
-        <div className="run-console__progress" aria-label={`测试进度 ${snapshot.progress}%`}>
-          <i style={{ width: `${Math.max(0, Math.min(100, snapshot.progress))}%` }} />
-        </div>
-        <small>{snapshot.progressStep || '等待运行指令'}</small>
       </div>
 
       <div className="run-mode" role="group" aria-label="运行模式">
-        {modeOptions.map(({ mode, title, caption }) => (
+        {modeOptions.map(({ mode, title }) => (
           <button
             className={options.mode === mode ? 'run-mode__item is-active' : 'run-mode__item'}
             disabled={active}
@@ -136,7 +133,6 @@ export function RunControlBar() {
             type="button"
           >
             <strong>{title}</strong>
-            <span>{caption}</span>
           </button>
         ))}
       </div>
@@ -145,7 +141,7 @@ export function RunControlBar() {
         {options.mode === 'pc_periodic' ? (
           <>
             <label>
-              <span>轮间隔</span>
+              <span>间隔</span>
               <span className="number-input">
                 <input
                   aria-label="PC 周期轮间隔毫秒"
@@ -160,7 +156,7 @@ export function RunControlBar() {
               </span>
             </label>
             <label>
-              <span>最大轮数</span>
+              <span>轮数</span>
               <span className="number-input">
                 <input
                   aria-label="PC 周期最大轮数，零表示无限"
@@ -175,15 +171,7 @@ export function RunControlBar() {
               </span>
             </label>
           </>
-        ) : (
-          <div className={unsupported ? 'mode-note mode-note--warning' : 'mode-note'}>
-            {unsupported
-              ? `${testTitle} 不支持当前运行模式。`
-              : options.mode === 'single'
-                ? (snapshot.descriptor.description || `执行一次${testTitle}并采集一次反馈。`)
-                : '由 PC 按设定间隔重复采集反馈。'}
-          </div>
-        )}
+        ) : null}
       </div>
 
       <div className="run-actions">
@@ -194,11 +182,11 @@ export function RunControlBar() {
             onClick={() => void connect(true)}
             type="button"
           >
-            <ArrowClockwise size={17} />重连后端
+            <ArrowClockwise size={17} />重连
           </button>
         ) : snapshot.phase === 'empty' ? (
           <button className="button button--primary" disabled={busyAction !== null || !testConfigsReady} onClick={() => execute('load')} type="button">
-            <Plug size={17} />{loadingConfig ? '加载配置中…' : '重试加载'}
+            <Plug size={17} />{loadingConfig ? '加载中…' : '加载配置'}
           </button>
         ) : snapshot.phase === 'configured' ? (
           <button className="button button--primary" disabled={busyAction !== null} onClick={() => execute('prepare')} type="button">
@@ -211,7 +199,7 @@ export function RunControlBar() {
             onClick={beginRun}
             type="button"
           >
-            <Play size={17} weight="fill" />开始测试
+            <Play size={17} weight="fill" />开始
           </button>
         ) : null}
 
@@ -230,12 +218,16 @@ export function RunControlBar() {
             <StopIcon size={17} weight="fill" />停止
           </button>
         )}
-        {busyAction && <span className="command-busy">执行 {busyAction}…</span>}
+        {busyAction && <span className="command-busy">处理中…</span>}
       </div>
 
-      {(periodicError || actionError) && (
+      <div className="run-console__progress" aria-label={`测试进度 ${snapshot.progress}%`}>
+        <i style={{ width: `${Math.max(0, Math.min(100, snapshot.progress))}%` }} />
+      </div>
+
+      {controlError && (
         <div className="run-console__error" role="alert">
-          <WarningCircle size={16} />{periodicError || actionError}
+          <WarningCircle size={16} />{controlError}
         </div>
       )}
     </section>

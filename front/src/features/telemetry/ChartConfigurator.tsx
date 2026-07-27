@@ -42,10 +42,7 @@ export function ChartConfigurator({
   return (
     <aside className="chart-config panel">
       <header className="panel__header">
-        <div>
-          <span className="eyebrow">PLOT MATRIX</span>
-          <h3>曲线配置</h3>
-        </div>
+        <h3>曲线配置</h3>
         <SquaresFour size={20} />
       </header>
 
@@ -101,7 +98,7 @@ export function ChartConfigurator({
         </div>
 
         {assignments.length === 0 ? (
-          <div className="compact-empty">首条样本到达后，将自动发现数值字段。</div>
+          <div className="compact-empty">暂无数值字段</div>
         ) : (
           <div className="series-list">
             {assignments.map((assignment) => (
@@ -114,7 +111,9 @@ export function ChartConfigurator({
                   />
                   <span>
                     <strong>{fieldLabel(assignment.path, measurements)}</strong>
-                    <small>{assignment.path}{fieldUnit(assignment.path, measurements) ? ` · ${fieldUnit(assignment.path, measurements)}` : ''}</small>
+                    {fieldUnit(assignment.path, measurements) && (
+                      <small>{fieldUnit(assignment.path, measurements)}</small>
+                    )}
                   </span>
                 </label>
                 {layout === 'custom' && assignment.enabled && (

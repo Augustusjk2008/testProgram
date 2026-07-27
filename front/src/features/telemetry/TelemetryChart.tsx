@@ -7,7 +7,7 @@ import { fieldLabel, fieldUnit } from '../../shared/format'
 import { getChartPalette } from '../../shared/theme'
 import type { SampleBuffer } from './sample-buffer'
 
-const CHART_HEIGHT = 270
+const CHART_HEIGHT = 240
 
 interface TelemetryChartProps {
   title: string
@@ -120,11 +120,8 @@ export function TelemetryChart({
   return (
     <article className="telemetry-chart panel">
       <header className="panel__header">
-        <div>
-          <span className="eyebrow">LIVE TELEMETRY</span>
-          <h3>{title}</h3>
-        </div>
-        <span className="chart-point-count">{buffer.size.toLocaleString('zh-CN')} pts</span>
+        <h3>{title}</h3>
+        <span className="chart-point-count">{buffer.size.toLocaleString('zh-CN')} 点</span>
       </header>
       <div className="telemetry-chart__canvas" ref={hostRef} />
     </article>

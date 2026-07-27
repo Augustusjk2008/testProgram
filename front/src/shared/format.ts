@@ -1,5 +1,34 @@
 import type { TestMeasurementDescriptor } from './protocol'
 
+const CONNECTION_STATE_LABELS: Record<string, string> = {
+  disconnected: '未连接',
+  connecting: '连接中',
+  connected: '已连接',
+  reconnecting: '重连中',
+  error: '连接错误',
+}
+
+const PHASE_LABELS: Record<string, string> = {
+  empty: '未加载',
+  configured: '已配置',
+  preparing: '连接中',
+  ready: '就绪',
+  running: '运行中',
+  paused: '已暂停',
+  stopping: '停止中',
+  stopped: '已停止',
+  finished: '已完成',
+  error: '错误',
+  shutdown_failed: '关闭失败',
+}
+
+const VERDICT_LABELS: Record<string, string> = {
+  pass: '通过',
+  fail: '未通过',
+  error: '错误',
+  skipped: '已跳过',
+}
+
 const FIELD_LABELS: Record<string, string> = {
   cpu_usage: 'CPU 占用率',
   mem_usage: '内存占用率',
@@ -69,5 +98,17 @@ export function formatDuration(seconds: unknown): string {
   const days = Math.floor(seconds / 86_400)
   const hours = Math.floor((seconds % 86_400) / 3_600)
   const minutes = Math.floor((seconds % 3_600) / 60)
-  return days > 0 ? `${days}d ${hours}h` : `${hours}h ${minutes}m`
+  return days > 0 ? `${days}天 ${hours}时` : `${hours}时 ${minutes}分`
+}
+
+export function connectionStateLabel(state: string): string {
+  return CONNECTION_STATE_LABELS[state.toLowerCase()] || state
+}
+
+export function phaseLabel(phase: string): string {
+  return PHASE_LABELS[phase.toLowerCase()] || phase
+}
+
+export function verdictLabel(verdict: string): string {
+  return verdict ? VERDICT_LABELS[verdict.toLowerCase()] || verdict : '待判定'
 }
