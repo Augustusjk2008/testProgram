@@ -17,7 +17,7 @@ describe('continuous data run options', () => {
     })
   })
 
-  it('forces single and device-stream runs not to save', () => {
+  it('forces single runs not to save', () => {
     expect(normalizeRunOptionsForStart({
       mode: 'single',
       intervalMs: 250,
@@ -29,11 +29,19 @@ describe('continuous data run options', () => {
       maxCycles: 1,
       saveData: false,
     })
+  })
+
+  it('keeps device-stream saving enabled without carrying PC periodic settings', () => {
     expect(normalizeRunOptionsForStart({
       mode: 'device_stream',
       intervalMs: 250,
       maxCycles: 0,
       saveData: true,
-    }).saveData).toBe(false)
+    })).toEqual({
+      mode: 'device_stream',
+      intervalMs: 1000,
+      maxCycles: 1,
+      saveData: true,
+    })
   })
 })

@@ -2,6 +2,7 @@
 
 #include "continuous_data_recorder.h"
 #include "mbddf_algorithm_registry.h"
+#include "run_mode_capabilities.h"
 
 #include <algorithm/elec_health_status_executor.h>
 #include <algorithm/di_stimulus_controller.h>
@@ -181,7 +182,8 @@ QString serialPortNameFor(const QVariantMap& halConfig, const QString& resourceI
 }
 
 TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
-                                  const hwtest::biz::TestStep& step)
+                                  const hwtest::biz::TestStep& step,
+                                  const QVector<QString>& supportedRunModes)
 {
     TestDescriptor descriptor;
     descriptor.configId = config.configId;
@@ -203,24 +205,7 @@ TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
     descriptor.description =
         presentation.value(QStringLiteral("description")).toString().trimmed();
 
-    static const QSet<QString> knownModes{
-        QStringLiteral("single"),
-        QStringLiteral("pc_periodic"),
-        QStringLiteral("device_stream"),
-    };
-    QSet<QString> seenModes;
-    for (const QVariant& modeValue :
-         presentation.value(QStringLiteral("supportedRunModes")).toList()) {
-        const QString mode = modeValue.toString().trimmed();
-        if (knownModes.contains(mode) && !seenModes.contains(mode)) {
-            descriptor.supportedRunModes.push_back(mode);
-            seenModes.insert(mode);
-        }
-    }
-    if (descriptor.supportedRunModes.isEmpty()) {
-        descriptor.supportedRunModes = {
-            QStringLiteral("single"), QStringLiteral("pc_periodic")};
-    }
+    descriptor.supportedRunModes = supportedRunModes;
 
     QSet<QString> seenMeasurements;
     for (const QVariant& measurementValue :
@@ -414,6 +399,13 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
                        QStringLiteral("Exactly one enabled MB_DDF step is required"));
     }
 
+    QVector<QString> supportedRunModes;
+    const QString runModeError = parseSupportedRunModes(
+        testConfig.value.reportFields, &supportedRunModes);
+    if (!runModeError.isEmpty()) {
+        return failure(QStringLiteral("test_config"), runModeError);
+    }
+
     QVariantMap halConfig;
     const ActionResult loadedHal = loadJsonMap(absoluteHalPath, &halConfig);
     if (!loadedHal.ok) {
@@ -470,7 +462,8 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     m_impl->halConfigPath = absoluteHalPath;
     m_impl->dataStorageDirectory = dataStorageDirectory;
     m_impl->selectedAlgorithmId = selectedAlgorithmId;
-    m_impl->descriptor = makeTestDescriptor(testConfig.value, *selectedStep);
+    m_impl->descriptor = makeTestDescriptor(
+        testConfig.value, *selectedStep, supportedRunModes);
     m_impl->halConfig = halConfig;
     m_impl->executionConfig = testConfig.value.executionConfig;
     m_impl->controls = controls;
@@ -948,10 +941,23 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
         return failure(QStringLiteral("invalid_run_mode"),
                        QStringLiteral("Unknown run mode '%1'").arg(options.mode));
     }
+    const QString runMode = hwtest::biz::runModeToString(mode);
+    if (!m_impl->descriptor.supportedRunModes.contains(runMode)) {
+        return failure(
+            QStringLiteral("CapabilityUnsupported"),
+            QStringLiteral("Test configuration '%1' does not support run mode '%2'")
+                .arg(m_impl->descriptor.configId, runMode));
+    }
+    const int effectiveIntervalMs = mode == hwtest::biz::RunMode::PcPeriodic
+        ? options.intervalMs
+        : 1000;
+    const quint64 effectiveMaxCycles = mode == hwtest::biz::RunMode::PcPeriodic
+        ? options.maxCycles
+        : 1;
     hwtest::biz::RunOptions runOptions;
     runOptions.mode = mode;
-    runOptions.intervalMs = options.intervalMs;
-    runOptions.maxCycles = options.maxCycles;
+    runOptions.intervalMs = effectiveIntervalMs;
+    runOptions.maxCycles = effectiveMaxCycles;
     if (mode == hwtest::biz::RunMode::PcPeriodic &&
         (options.intervalMs < 10 || options.intervalMs > 60 * 60 * 1000)) {
         return failure(QStringLiteral("ParameterRangeError"),
@@ -974,9 +980,9 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     m_impl->snapshot.message.clear();
     m_impl->snapshot.attempts = 0;
     m_impl->snapshot.rawData.clear();
-    m_impl->snapshot.runMode = hwtest::biz::runModeToString(mode);
-    m_impl->snapshot.intervalMs = options.intervalMs;
-    m_impl->snapshot.maxCycles = options.maxCycles;
+    m_impl->snapshot.runMode = runMode;
+    m_impl->snapshot.intervalMs = effectiveIntervalMs;
+    m_impl->snapshot.maxCycles = effectiveMaxCycles;
     m_impl->snapshot.cycleIndex = 0;
     m_impl->snapshot.sampleCount = 0;
     m_impl->snapshot.dataSaveEnabled = false;
@@ -984,14 +990,16 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     m_impl->snapshot.dataSaveError.clear();
     m_impl->suppressedResultTaskId.clear();
     m_impl->dataRecorder.cancel();
-    const bool saveContinuousData =
-        mode == hwtest::biz::RunMode::PcPeriodic && options.saveData;
+    const bool saveContinuousData = options.saveData &&
+        (mode == hwtest::biz::RunMode::PcPeriodic ||
+         mode == hwtest::biz::RunMode::DeviceStream);
     if (saveContinuousData) {
         const ActionResult recording = m_impl->dataRecorder.begin(
             m_impl->dataStorageDirectory,
             m_impl->descriptor,
-            options.intervalMs,
-            options.maxCycles);
+            runMode,
+            effectiveIntervalMs,
+            effectiveMaxCycles);
         if (!recording.ok) {
             m_impl->snapshot.dataSaveError = recording.message;
             emit snapshotChanged(m_impl->snapshot);

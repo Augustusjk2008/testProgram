@@ -56,6 +56,8 @@ std::string_view HardwareTestService::response_name(std::string_view request_nam
         {"helm_board_test_request", "helm_board_test_response"},
         {"helm_start_request", "helm_start_response"},
         {"helm_stop_request", "helm_stop_response"},
+        {"imu_stream_start_request", "imu_stream_start_response"},
+        {"imu_stream_stop_request", "imu_stream_stop_response"},
         {"timer_jitter_start_request", "timer_jitter_start_response"},
         {"timer_jitter_stop_request", "timer_jitter_stop_response"},
     };
@@ -227,6 +229,20 @@ bool HardwareTestService::emit_helm_feedback_once() {
     return send_message(response);
 }
 
+bool HardwareTestService::emit_imu_stream_feedback_once() {
+    std::lock_guard<std::mutex> lock(provider_mutex_);
+    if (!provider_.imu_stream_active()) {
+        return true;
+    }
+    auto response = protocol_.create_message("imu_stream_feedback_response", false);
+    const auto result = provider_.poll_imu_stream_feedback(response);
+    if (!result) {
+        return true;
+    }
+    set_execution_status(response, *result);
+    return send_message(response);
+}
+
 int HardwareTestService::run(const StopPredicate& stop_requested) {
     if (!stop_requested) {
         return 1;
@@ -236,6 +252,20 @@ int HardwareTestService::run(const StopPredicate& stop_requested) {
     std::thread feedback_worker([&]() {
         while (!stop_requested() &&
                !shutdown_requested.load(std::memory_order_relaxed)) {
+            bool imu_active = false;
+            {
+                std::lock_guard<std::mutex> lock(provider_mutex_);
+                imu_active = provider_.imu_stream_active();
+            }
+            if (imu_active) {
+                if (!emit_imu_stream_feedback_once()) {
+                    feedback_failed.store(true, std::memory_order_relaxed);
+                    shutdown_requested.store(true, std::memory_order_relaxed);
+                    return;
+                }
+                // COM4 poll 自身提供短超时；有效帧后立即继续，不引入固定降采样等待。
+                continue;
+            }
             if (!emit_helm_feedback_once()) {
                 feedback_failed.store(true, std::memory_order_relaxed);
                 shutdown_requested.store(true, std::memory_order_relaxed);

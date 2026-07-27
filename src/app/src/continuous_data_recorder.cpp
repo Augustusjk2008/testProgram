@@ -131,6 +131,7 @@ ContinuousDataRecorder::~ContinuousDataRecorder()
 
 ActionResult ContinuousDataRecorder::begin(const QString& directory,
                                            const TestDescriptor& descriptor,
+                                           const QString& runMode,
                                            int intervalMs,
                                            quint64 maxCycles)
 {
@@ -147,6 +148,7 @@ ActionResult ContinuousDataRecorder::begin(const QString& directory,
     }
 
     m_descriptor = descriptor;
+    m_runMode = runMode;
     m_intervalMs = intervalMs;
     m_maxCycles = maxCycles;
     m_startedAtUs = utcNowUs();
@@ -334,12 +336,17 @@ ActionResult ContinuousDataRecorder::finish(const QString& finalStatus,
     metadata += QStringLiteral("# final_status=%1\n").arg(metadataText(finalStatus));
     metadata += QStringLiteral("# final_detail=%1\n").arg(metadataText(finalDetail));
     metadata += QStringLiteral("# sample_count=%1\n").arg(m_sampleCount);
-    metadata += QStringLiteral("# repeat_delay_ms=%1\n").arg(m_intervalMs);
+    metadata += QStringLiteral("# run_mode=%1\n").arg(metadataText(m_runMode));
+    metadata += m_runMode == QStringLiteral("pc_periodic")
+        ? QStringLiteral("# repeat_delay_ms=%1\n").arg(m_intervalMs)
+        : QStringLiteral("# repeat_delay_ms=NA\n");
     metadata += QStringLiteral("# config_id=%1\n")
                     .arg(metadataText(m_descriptor.configId));
     metadata += QStringLiteral("# algorithm_id=%1\n")
                     .arg(metadataText(m_descriptor.algorithmId));
-    metadata += QStringLiteral("# max_cycles=%1\n\n").arg(m_maxCycles);
+    metadata += m_runMode == QStringLiteral("pc_periodic")
+        ? QStringLiteral("# max_cycles=%1\n\n").arg(m_maxCycles)
+        : QStringLiteral("# max_cycles=NA\n\n");
 
     bool ok = writeAll(&output, QByteArray::fromHex("EFBBBF")) &&
         writeAll(&output, metadata.toUtf8());
@@ -402,6 +409,7 @@ void ContinuousDataRecorder::resetState()
     m_descriptor = {};
     m_columns.clear();
     m_taskId.clear();
+    m_runMode.clear();
     m_outputPath.clear();
     m_partialPath.clear();
     m_writeError.clear();

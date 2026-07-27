@@ -294,7 +294,7 @@ TEST(MbddfProtocolTest, EveryCurrentDefinitionSupportsDefaultFrameRoundTripWhenA
     ProtocolCatalog catalog;
     QString error;
     ASSERT_TRUE(catalog.loadFromDirectory(directory, &error)) << error.toStdString();
-    ASSERT_EQ(catalog.size(), 32);
+    ASSERT_EQ(catalog.size(), 37);
 
     for (const MessageDefinition& definition : catalog.messages()) {
         QByteArray payload;
@@ -315,6 +315,49 @@ TEST(MbddfProtocolTest, EveryCurrentDefinitionSupportsDefaultFrameRoundTripWhenA
             << definition.name.toStdString() << ": " << error.toStdString();
         EXPECT_EQ(decodedPayload, payload) << definition.name.toStdString();
     }
+}
+
+TEST(MbddfProtocolTest, LoadsConfirmedImuStreamProfilesAndScaledTemperature)
+{
+    const QString directory = currentCatalogDirectory();
+    if (!QFileInfo(directory).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present";
+    }
+
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(directory, &error)) << error.toStdString();
+    const MessageDefinition* start =
+        catalog.findByName(QStringLiteral("imu_stream_start_request"));
+    const MessageDefinition* feedback =
+        catalog.findByName(QStringLiteral("imu_stream_feedback_response"));
+    const MessageDefinition* stop =
+        catalog.findByName(QStringLiteral("imu_stream_stop_request"));
+    ASSERT_NE(start, nullptr);
+    ASSERT_NE(feedback, nullptr);
+    ASSERT_NE(stop, nullptr);
+    EXPECT_EQ(catalog.findByCommand(0x09, 0x10, Direction::Request), start);
+    EXPECT_EQ(catalog.findByCommand(0x09, 0x01, Direction::Response), feedback);
+    EXPECT_EQ(catalog.findByCommand(0x09, 0x11, Direction::Request), stop);
+    EXPECT_EQ(feedback->payloadLength, 123);
+
+    QVariantMap values;
+    values.insert(QStringLiteral("status"), 0);
+    values.insert(QStringLiteral("err_code"), 0);
+    values.insert(QStringLiteral("source_seq"), 0x1234);
+    values.insert(QStringLiteral("delta_angle_x"), 1.25);
+    values.insert(QStringLiteral("temperature"), -12.3);
+    values.insert(QStringLiteral("software_version"), 0xABCD);
+    QByteArray payload;
+    ASSERT_TRUE(encodePayload(*feedback, values, 7, &payload, &error))
+        << error.toStdString();
+    QVariantMap decoded;
+    ASSERT_TRUE(decodePayload(*feedback, payload, &decoded, &error))
+        << error.toStdString();
+    EXPECT_EQ(decoded.value(QStringLiteral("source_seq")).toUInt(), 0x1234u);
+    EXPECT_NEAR(decoded.value(QStringLiteral("delta_angle_x")).toDouble(), 1.25, 1e-6);
+    EXPECT_NEAR(decoded.value(QStringLiteral("temperature")).toDouble(), -12.3, 1e-9);
+    EXPECT_EQ(decoded.value(QStringLiteral("software_version")).toUInt(), 0xABCDu);
 }
 
 } // namespace

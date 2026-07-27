@@ -354,9 +354,6 @@ bool HalControlTransport::takeBufferedFrame(QByteArray* frame)
 
 TransportResult HalControlTransport::transact(const QByteArray& frame, int timeoutMs)
 {
-    if (!m_open || m_device == nullptr || m_device->controlChannel() == nullptr) {
-        return failed(QStringLiteral("HAL control transport is not open"));
-    }
     if (timeoutMs <= 0) {
         return failed(QStringLiteral("HAL control transaction deadline is invalid"),
                       TransportResult::Error::Timeout);
@@ -365,8 +362,24 @@ TransportResult HalControlTransport::transact(const QByteArray& frame, int timeo
     QElapsedTimer timer;
     timer.start();
 
+    const TransportResult written = writeFrame(frame, remainingMs(timer, timeoutMs));
+    if (!written.ok) {
+        return written;
+    }
+    return readFrame(remainingMs(timer, timeoutMs));
+}
+
+TransportResult HalControlTransport::writeFrame(const QByteArray& frame, int timeoutMs)
+{
+    if (!m_open || m_device == nullptr || m_device->controlChannel() == nullptr) {
+        return failed(QStringLiteral("HAL control transport is not open"));
+    }
+    if (timeoutMs <= 0) {
+        return failed(QStringLiteral("HAL control write timed out"),
+                      TransportResult::Error::Timeout);
+    }
     hwtest::hal::OperationOptions options;
-    options.timeoutMs = remainingMs(timer, timeoutMs);
+    options.timeoutMs = timeoutMs;
     const hwtest::hal::HalStatus writeStatus =
         m_device->controlChannel()->writeControl(m_resourceId, frame, options);
     if (!writeStatus.ok()) {
@@ -376,15 +389,38 @@ TransportResult HalControlTransport::transact(const QByteArray& frame, int timeo
         return failed(statusMessage(writeStatus, QStringLiteral("HAL control write failed")),
                       errorCode);
     }
+    TransportResult result;
+    result.ok = true;
+    return result;
+}
+
+TransportResult HalControlTransport::readFrame(int timeoutMs)
+{
+    if (!m_open || m_device == nullptr || m_device->controlChannel() == nullptr) {
+        return failed(QStringLiteral("HAL control transport is not open"));
+    }
+    if (timeoutMs <= 0) {
+        return failed(QStringLiteral("HAL control read timed out"),
+                      TransportResult::Error::Timeout);
+    }
 
     QByteArray completeFrame;
+    if (takeBufferedFrame(&completeFrame)) {
+        TransportResult result;
+        result.ok = true;
+        result.frame = completeFrame;
+        return result;
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+    hwtest::hal::OperationOptions options;
     while (!takeBufferedFrame(&completeFrame)) {
         const int remaining = remainingMs(timer, timeoutMs);
         if (remaining <= 0) {
             return failed(QStringLiteral("HAL control read timed out"),
                           TransportResult::Error::Timeout);
         }
-
         options.timeoutMs = remaining;
         const hwtest::hal::HalResult<QByteArray> readResult =
             m_device->controlChannel()->readControl(m_resourceId, m_readChunkBytes, options);
@@ -460,6 +496,7 @@ bool HalSerialTransport::open(QString* error)
         }
         return false;
     }
+    m_receiveBuffer.clear();
     m_open = true;
     return true;
 }
@@ -490,6 +527,107 @@ TransportResult HalSerialTransport::transact(const QByteArray& frame, int timeou
     return transportResult;
 }
 
+bool HalSerialTransport::takeBufferedFrame(QByteArray* frame)
+{
+    if (frame == nullptr) {
+        return false;
+    }
+    static const QByteArray sync = QByteArray::fromHex("55AA");
+    const int syncIndex = m_receiveBuffer.indexOf(sync);
+    if (syncIndex < 0) {
+        const bool keepPossibleSync = !m_receiveBuffer.isEmpty() &&
+            static_cast<quint8>(m_receiveBuffer.back()) == 0x55u;
+        const char trailing = keepPossibleSync ? m_receiveBuffer.back() : '\0';
+        m_receiveBuffer.clear();
+        if (keepPossibleSync) {
+            m_receiveBuffer.append(trailing);
+        }
+        return false;
+    }
+    if (syncIndex > 0) {
+        m_receiveBuffer.remove(0, syncIndex);
+    }
+    if (m_receiveBuffer.size() < 3) {
+        return false;
+    }
+    const int payloadBytes = static_cast<quint8>(m_receiveBuffer.at(2));
+    const int frameBytes = 2 + 1 + payloadBytes + 2;
+    if (m_receiveBuffer.size() < frameBytes) {
+        return false;
+    }
+    *frame = m_receiveBuffer.left(frameBytes);
+    m_receiveBuffer.remove(0, frameBytes);
+    return true;
+}
+
+TransportResult HalSerialTransport::writeFrame(const QByteArray& frame, int timeoutMs)
+{
+    if (!m_open || m_device == nullptr || m_device->serialBus() == nullptr) {
+        return failed(QStringLiteral("HAL serial transport is not open"));
+    }
+    if (timeoutMs <= 0) {
+        return failed(QStringLiteral("HAL serial write timed out"),
+                      TransportResult::Error::Timeout);
+    }
+    hwtest::hal::OperationOptions options;
+    options.timeoutMs = timeoutMs;
+    const hwtest::hal::HalStatus status =
+        m_device->serialBus()->writeSerial(m_resourceId, frame, options);
+    if (!status.ok()) {
+        const auto errorCode = status.code == hwtest::hal::HalStatusCode::Timeout
+            ? TransportResult::Error::Timeout
+            : TransportResult::Error::Io;
+        return failed(statusMessage(status, QStringLiteral("HAL serial write failed")),
+                      errorCode);
+    }
+    TransportResult result;
+    result.ok = true;
+    return result;
+}
+
+TransportResult HalSerialTransport::readFrame(int timeoutMs)
+{
+    if (!m_open || m_device == nullptr || m_device->serialBus() == nullptr) {
+        return failed(QStringLiteral("HAL serial transport is not open"));
+    }
+    if (timeoutMs <= 0) {
+        return failed(QStringLiteral("HAL serial read timed out"),
+                      TransportResult::Error::Timeout);
+    }
+    QByteArray completeFrame;
+    if (takeBufferedFrame(&completeFrame)) {
+        TransportResult result;
+        result.ok = true;
+        result.frame = completeFrame;
+        return result;
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+    while (!takeBufferedFrame(&completeFrame)) {
+        const int remaining = remainingMs(timer, timeoutMs);
+        if (remaining <= 0) {
+            return failed(QStringLiteral("HAL serial read timed out"),
+                          TransportResult::Error::Timeout);
+        }
+        hwtest::hal::OperationOptions options;
+        options.timeoutMs = remaining;
+        const auto read = m_device->serialBus()->readSerial(m_resourceId, 260, options);
+        if (!read.ok()) {
+            const auto errorCode = read.status.code == hwtest::hal::HalStatusCode::Timeout
+                ? TransportResult::Error::Timeout
+                : TransportResult::Error::Io;
+            return failed(statusMessage(read.status, QStringLiteral("HAL serial read failed")),
+                          errorCode);
+        }
+        m_receiveBuffer.append(read.value);
+    }
+    TransportResult result;
+    result.ok = true;
+    result.frame = completeFrame;
+    return result;
+}
+
 void HalSerialTransport::close()
 {
     if (m_open && m_device != nullptr && m_device->serialBus() != nullptr) {
@@ -497,6 +635,7 @@ void HalSerialTransport::close()
         options.timeoutMs = 2000;
         m_device->serialBus()->closeSerial(m_resourceId, options);
     }
+    m_receiveBuffer.clear();
     m_open = false;
 }
 

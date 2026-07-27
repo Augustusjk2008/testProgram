@@ -1,6 +1,7 @@
 set(ALGORITHM_PUBLIC_HEADERS
     include/algorithm/di_stimulus_controller.h
     include/algorithm/elec_health_status_executor.h
+    include/algorithm/imu_stream_executor.h
     include/algorithm/mbddf_exchange_executor.h
     include/algorithm/mbddf_protocol.h
     include/algorithm/mbddf_transport.h
@@ -10,6 +11,7 @@ set(ALGORITHM_PUBLIC_HEADERS
 set(ALGORITHM_SOURCES
     src/di_stimulus_controller.cpp
     src/elec_health_status_executor.cpp
+    src/imu_stream_executor.cpp
     src/mbddf_protocol.cpp
     src/mbddf_transport.cpp
     src/system_status_executor.cpp

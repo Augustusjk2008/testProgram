@@ -18,6 +18,7 @@ endif()
 
 add_executable(hwtest_algorithm_tests
     di_stimulus_controller_test.cpp
+    imu_stream_executor_test.cpp
     mbddf_protocol_test.cpp
     system_status_executor_test.cpp
 )

@@ -143,12 +143,13 @@ void destroyReportGenerator(IReportGenerator* generator);
 | 模式 | BIZ 行为 | 结束条件 |
 | --- | --- | --- |
 | `Single` / `single` | 执行测试计划一轮 | 一轮完成、错误或停止 |
-| `PcPeriodic` / `pc_periodic` | 每轮完整执行计划；上一轮完成后等待 `intervalMs`，再由 PC 主机发起下一轮，不允许轮次重叠 | 达到 `maxCycles`、错误或停止；`maxCycles == 0` 表示不限轮数 |
-| `DeviceStream` / `device_stream` | BIZ 只调用一轮、每个步骤只调用一次 `executeStep()`；算法可在该调用内多次 `onSample()`，并自行定义设备流启动/停止协议 | 算法返回、错误或停止 |
+| `PcPeriodic` / `pc_periodic` | 每轮完整执行计划；上一轮完成后等待 `intervalMs`，再由 PC 主机重新发起一次独立请求，设备对每次请求返回一次；不允许轮次重叠 | 达到 `maxCycles`、错误或停止；`maxCycles == 0` 表示不限轮数 |
+| `DeviceStream` / `device_stream` | PC 只发起一次设备流启动；BIZ 只调用一轮、每个步骤只调用一次 `executeStep()`，算法可在该调用内多次 `onSample()`，直到 PC 停止或设备流结束；不得在外层重复发起请求 | 算法返回、错误或停止 |
 
+- 配置能力由应用层读取 `reportFields.supportedRunModes`。同一测试配置最多只能声明 `pc_periodic`、`device_stream` 中的一种：前者是 PC 多次单发单回，后者是设备主动连续回告，二者不是同一测试的可互换选项。字段缺失时只回退到 `single`；应用控制器在进入 BIZ 前以 `CapabilityUnsupported` 拒绝未声明模式。通用 BIZ 服务仍只实现运行语义，不读取展示字段。
 - `PcPeriodic` 只接受 `10..3600000` ms 的整数间隔，有限轮数不超过 `1000000000`。轮间等待可被暂停、恢复和停止唤醒。
 - 每轮开始先发出 `cycleStarted`；结果和样本均标记当前 `cycleIndex`。算法未给样本时间戳时，BIZ 使用当前 UTC epoch 微秒补齐，再发出 `sampleProduced`。当前服务不额外长期缓存样本，避免无限周期会话在 BIZ 内形成无界样本副本。
-- BIZ 把 `runMode`、`intervalMs` 和 `maxCycles` 写入 `TestContext::tags`，但不据此解释产品命令。设备是否支持 `DeviceStream` 由算法决定；当前 `mbddf.system_status` 没有设备流启动/停止命令，准备阶段返回 `CapabilityUnsupported`。
+- BIZ 把 `runMode`、`intervalMs` 和 `maxCycles` 写入 `TestContext::tags`，但不据此解释产品命令。`intervalMs`/`maxCycles` 只对 `PcPeriodic` 有调度含义；应用层对 `Single`/`DeviceStream` 使用固定兼容值 `1000/1`，不会据此重复请求。设备是否支持 `DeviceStream` 由算法决定；当前 `mbddf.system_status` 没有设备流启动/停止命令，准备阶段返回 `CapabilityUnsupported`。
 - PC 周期会话中的硬件或协议执行错误结束整个会话；普通判定失败是否中止同轮后续步骤仍由 `RuntimeConfig::stopOnFirstFailure` 控制。
 - `[当前实现]` 每个任务在一个专用 `QThread` 中同步执行 `prepare()`、各轮 `executeStep()`、轮间等待和 `finishRun()`；该线程提供 Qt event dispatcher，测试锁定同一任务的准备、执行和运行收尾均位于同一非应用线程且能够注册 Qt 计时器。这里不承诺在同步算法调用期间持续泵送事件，也不改变 `requestStop()` 由调用线程发起的既有语义；不得据此宣称 HAL 连接已实现 actor 化或跨线程取消。
 

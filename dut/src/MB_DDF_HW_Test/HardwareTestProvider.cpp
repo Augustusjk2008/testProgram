@@ -20,6 +20,7 @@
 #include <array>
 #include <arpa/inet.h>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cerrno>
@@ -402,6 +403,76 @@ void request_hardware_test_stop(int) noexcept {
 
 } // namespace
 
+HW::ComConfig Detail::imu_stream_com_config() {
+    auto config = HW::ComDevice::default_config();
+    config.loopback = false;
+    config.receive_enabled = true;
+    config.interrupt_mode = HW::ComInterruptMode::Level;
+    config.frame.send_header = {0xAA, 0x1A, 0x00, 0x00};
+    config.frame.receive_header = {0xAA, 0x1A, 0x00, 0x00};
+    config.frame.send_header_length = 2;
+    config.frame.receive_header_length = 2;
+    config.frame.send_length_bytes = 1;
+    config.frame.receive_length_bytes = 1;
+    // format.byte_format=0xB0 已配置 8E1、CRC 和 2 字节校验；CRC 由 FPGA 消费，
+    // 不属于固定帧尾，也不会出现在 ComDevice::receive() 返回的 payload 中。
+    config.frame.send_tail_length = 0;
+    config.frame.receive_tail_length = 0;
+    config.baudrate_counter = 0x0086;
+    return config;
+}
+
+ProductErrorCode Detail::populate_imu_stream_feedback(
+    std::span<const uint8_t> payload, ProductMessage& response) {
+    if (payload.size() != kImuPayloadBytes) {
+        return ProductErrorCode::LenMismatch;
+    }
+    const auto read_u16 = [&](size_t offset) {
+        return static_cast<uint16_t>(
+            static_cast<uint16_t>(payload[offset]) |
+            (static_cast<uint16_t>(payload[offset + 1]) << 8));
+    };
+    const auto read_f32 = [&](size_t offset) {
+        uint32_t bits = 0;
+        for (size_t byte = 0; byte < sizeof(bits); ++byte) {
+            bits |= static_cast<uint32_t>(payload[offset + byte]) << (8 * byte);
+        }
+        return std::bit_cast<float>(bits);
+    };
+    static constexpr std::array<std::string_view, 12> kFloatFields{
+        "delta_angle_x", "delta_angle_y", "delta_angle_z",
+        "delta_velocity_x", "delta_velocity_y", "delta_velocity_z",
+        "angular_rate_x", "angular_rate_y", "angular_rate_z",
+        "acceleration_x", "acceleration_y", "acceleration_z",
+    };
+
+    auto staged = response;
+    if (!staged.set_unsigned("source_seq", read_u16(0))) {
+        return ProductErrorCode::TaskExecFailed;
+    }
+    for (size_t index = 0; index < kFloatFields.size(); ++index) {
+        const float value = read_f32(2 + index * sizeof(float));
+        if (!std::isfinite(value)) {
+            return ProductErrorCode::ParamOutOfRange;
+        }
+        if (!staged.set_float(kFloatFields[index], value)) {
+            return ProductErrorCode::TaskExecFailed;
+        }
+    }
+    const auto temperature = static_cast<int16_t>(read_u16(50));
+    const bool populated =
+        staged.set_signed("temperature", temperature) &&
+        staged.set_unsigned("self_test_status", read_u16(52)) &&
+        staged.set_unsigned("work_status", payload[54]) &&
+        staged.set_unsigned("software_version", read_u16(55)) &&
+        staged.set_unsigned("source_reserved", read_u16(57));
+    if (!populated) {
+        return ProductErrorCode::TaskExecFailed;
+    }
+    response = std::move(staged);
+    return ProductErrorCode::Ok;
+}
+
 ProductErrorCode Detail::populate_dh_telemetry(
     const HW::Ads1258Snapshot& snapshot, ProductMessage& response) {
     auto staged = response;
@@ -682,6 +753,11 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
         HW::Registers::Xadc::UserBase, HW::Registers::Xadc::WindowSize};
     XdmaDeviceContext<HW::DhController> dh{kDhOffset};
     XdmaDeviceContext<HW::DidoDevice> dido{kDidoOffset};
+    HW::XdmaTransport imu_transport{
+        {std::string(kXdmaDevice), Detail::kImuCom4UserOffset,
+         Detail::kImuComMapLength, -1, -1, Detail::kImuCom4EventNumber}};
+    HW::ComDevice imu_com{imu_transport};
+    bool imu_active{false};
 
     bool helm_active{false};
     uint32_t waveform{0};
@@ -718,6 +794,92 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
             }
         }
         return ProductErrorCode::Ok;
+    }
+
+    ProductErrorCode start_imu_stream() {
+        if (imu_active) {
+            return ProductErrorCode::TaskBusy;
+        }
+        imu_transport.close();
+        const auto opened = imu_transport.open();
+        if (!opened) {
+            LOG_ERROR << "[HW-TEST] 打开惯测 COM4 XDMA Transport 失败："
+                      << opened.status().message;
+            imu_transport.close();
+            return status_error(opened.status());
+        }
+        auto operation = imu_com.configure(Detail::imu_stream_com_config());
+        if (!operation) {
+            LOG_ERROR << "[HW-TEST] 配置惯测 COM4 921600/8E1 失败："
+                      << operation.status().message;
+            imu_transport.close();
+            return status_error(operation.status());
+        }
+        operation = imu_com.clear_error_status();
+        if (!operation) {
+            LOG_ERROR << "[HW-TEST] 清除惯测 COM4 错误状态失败："
+                      << operation.status().message;
+            imu_transport.close();
+            return status_error(operation.status());
+        }
+        operation = imu_com.enable_receive();
+        if (!operation) {
+            LOG_ERROR << "[HW-TEST] 使能惯测 COM4 接收失败："
+                      << operation.status().message;
+            imu_transport.close();
+            return status_error(operation.status());
+        }
+        imu_active = true;
+        LOG_INFO << "[HW-TEST] 惯测连续流已启动：COM4 921600/8E1，payload=59 字节";
+        return ProductErrorCode::Ok;
+    }
+
+    ProductErrorCode stop_imu_stream() {
+        imu_active = false;
+        imu_transport.close();
+        LOG_INFO << "[HW-TEST] 惯测连续流已停止";
+        return ProductErrorCode::Ok;
+    }
+
+    std::optional<ProductErrorCode> poll_imu_stream_feedback(
+        ProductMessage& response) {
+        if (!imu_active) {
+            return std::nullopt;
+        }
+        std::array<uint8_t, Detail::kImuReceiveBufferBytes> payload{};
+        const auto received = imu_com.receive(
+            {payload.data(), payload.size()},
+            HW::Timeout::after_us(Detail::kImuReceivePollTimeoutUs));
+        if (!received) {
+            if (received.status().code == HW::StatusCode::ProtocolError) {
+                LOG_WARN << "[HW-TEST] 丢弃 FPGA 判定无效的惯测 COM4 帧："
+                         << received.status().message;
+                return std::nullopt;
+            }
+            LOG_ERROR << "[HW-TEST] 惯测 COM4 接收失败："
+                      << received.status().message;
+            const auto error = status_error(received.status());
+            imu_active = false;
+            imu_transport.close();
+            return error;
+        }
+        if (received.value() == 0) {
+            return std::nullopt;
+        }
+        if (received.value() != Detail::kImuPayloadBytes) {
+            LOG_WARN << "[HW-TEST] 丢弃长度异常的惯测 payload：期望="
+                     << Detail::kImuPayloadBytes << "，实际=" << received.value();
+            return std::nullopt;
+        }
+        const auto populated = Detail::populate_imu_stream_feedback(
+            std::span<const uint8_t>(payload.data(), received.value()), response);
+        if (populated == ProductErrorCode::LenMismatch ||
+            populated == ProductErrorCode::ParamOutOfRange) {
+            LOG_WARN << "[HW-TEST] 丢弃字段无效的惯测 payload：err_code=0x"
+                     << std::hex << static_cast<uint16_t>(populated) << std::dec;
+            return std::nullopt;
+        }
+        return populated;
     }
 
     bool read_k7_temperature(float& celsius) override {
@@ -924,6 +1086,9 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
         if (!link || *link > 6) {
             return ProductErrorCode::ChannelInvalid;
         }
+        if (*link == 5 && imu_active) {
+            return ProductErrorCode::TaskBusy;
+        }
         if (!total || *total == 0 || *total > 100'000) {
             return ProductErrorCode::ParamOutOfRange;
         }
@@ -942,6 +1107,9 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
         const auto link = request.get_unsigned("link_id");
         if (!link || *link > 6) {
             return ProductErrorCode::ChannelInvalid;
+        }
+        if (*link == 5 && imu_active) {
+            return ProductErrorCode::TaskBusy;
         }
         if (*link == 6 && !Detail::spi_echo_payload_allowed()) {
             LOG_ERROR << "[HW-TEST] SPI Flash 不具备任意 payload 回显语义；"
@@ -1243,6 +1411,12 @@ ProductErrorCode HardwareTestProvider::handle(const ProductMessage& request,
     if (request.name() == "helm_stop_request") {
         return impl_->stop_helm();
     }
+    if (request.name() == "imu_stream_start_request") {
+        return impl_->start_imu_stream();
+    }
+    if (request.name() == "imu_stream_stop_request") {
+        return impl_->stop_imu_stream();
+    }
     if (request.name() == "dh_control_request") {
         const auto started = begin_dh(request);
         return started == ProductErrorCode::Ok
@@ -1356,6 +1530,15 @@ bool HardwareTestProvider::helm_feedback_active() const {
 
 ProductErrorCode HardwareTestProvider::build_helm_feedback(ProductMessage& response) {
     return impl_->build_helm_feedback(response);
+}
+
+bool HardwareTestProvider::imu_stream_active() const {
+    return impl_->imu_active;
+}
+
+std::optional<ProductErrorCode> HardwareTestProvider::poll_imu_stream_feedback(
+    ProductMessage& response) {
+    return impl_->poll_imu_stream_feedback(response);
 }
 
 int run_hardware_test_service() {

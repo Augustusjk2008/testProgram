@@ -19,12 +19,12 @@
 - `src/adapters/ni_daqmx/` 在 `HWTEST_ENABLE_NI_DAQMX=ON` 时构建 PXI-6259 NI-DAQmx Adapter。核心 ABI v1 保持稳定，可选 task ABI v1 与 `ISampleTaskIo` 提供 AI/AO/DI/DO、有限/连续采样、时钟、start/reference/pause 触发、边沿计数和频率脉冲输出；Fake NI-DAQmx 覆盖软件路径。
 - 日志模块位于 `src/logging/`：`hwtest_log_types` 提供仅依赖 Qt Core 的值类型，`hwtest_log` 提供日志服务、文件 sink 和 HAL 日志桥接。
 - BIZ 位于 `src/biz/`，目标为 `hwtest_biz`，负责配置、拓扑排序、运行模式、重试、状态、结果和报告。工作任务运行于带 Qt event dispatcher 的 `QThread`。
-- 算法位于 `src/algorithm/`，目标为 `hwtest_algorithm_mbddf`，提供 MB_DDF CSV 编解码和七项已注册算法：`mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config`、`mbddf.timer_jitter`、`mbddf.di_read`。
-- 七份 `configs/mbddf_*.testcfg.json` 均声明 `single`；系统状态、电气健康、内存、定时器和 DI 还声明 `pc_periodic`。BIZ 提供 `single`、`pc_periodic` 和 `device_stream` 三种通用运行语义，配置能力以各 JSON 的 `reportFields.supportedRunModes` 为准。
+- 算法位于 `src/algorithm/`，目标为 `hwtest_algorithm_mbddf`，提供 MB_DDF CSV 编解码和八项已注册算法：`mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config`、`mbddf.timer_jitter`、`mbddf.di_read`、`mbddf.imu_stream`。
+- 八份 `configs/mbddf_*.testcfg.json` 中，前七项声明 `single`，系统状态、电气健康、内存、定时器和 DI 还声明 `pc_periodic`；惯测连续数据只声明 `device_stream`。BIZ 提供 `single`、`pc_periodic` 和 `device_stream` 三种通用运行语义，配置能力以各 JSON 的 `reportFields.supportedRunModes` 为准；同一配置不得同时声明 `pc_periodic` 与 `device_stream`，字段缺失时只安全回退到 `single`，应用控制器拒绝启动未声明的模式。
 - 电气健康以设备 `status`/`err_code` 判定；SPI Flash 写入固定隔离测试区并保留写入结果；`TIMER_JITTER` 在结束阶段发送 STOP 清理。
 - `DiStimulusController` 通过 HAL 批量数字输出维护 16 路逻辑掩码、revision 和安全复位；PXI-6259 配置中的物理 safe state 与 DI descriptor 的 inactive level 保持一致。
-- 应用层位于 `src/app/`，共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support` 和 `hwtest_web_support`，产出 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web`。四个入口统一使用 `TestApplicationController` 和 MB_DDF 注册表；启动选项动态扫描 `configs/*.testcfg.json`，并校验配置结构与已注册算法。`ContinuousDataRecorder` 可在显式启用的 `pc_periodic` 任务中把完整应用样本增量保存为 UTF-8-SIG/TSV TXT，单次任务不保存。
-- `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置目录切换、运行控制、PC 周期完整数据保存开关、动态测量字段和 16 路 DI 刺激/回读状态。保存目录只由后端 `dataStorage.directory` 配置，曲线字段选择不改变保存列。
+- 应用层位于 `src/app/`，共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support` 和 `hwtest_web_support`，产出 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web`。四个入口统一使用 `TestApplicationController` 和 MB_DDF 注册表；启动选项动态扫描 `configs/*.testcfg.json`，并校验配置结构、运行模式能力与已注册算法。`ContinuousDataRecorder` 可在显式启用的 `pc_periodic` 或 `device_stream` 任务中把完整应用样本增量保存为 UTF-8-SIG/TSV TXT，`single` 任务不保存。
+- `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置目录切换、运行控制、两种连续模式的完整数据保存开关、动态测量字段和 16 路 DI 刺激/回读状态。保存目录只由后端 `dataStorage.directory` 配置，曲线字段选择不改变保存列。
 - `tests/` 按 HAL、日志、BIZ、算法和应用组织 GoogleTest 目标；NI Fake Adapter 使用独立 CTest 入口；`front/` 的 Vitest 独立运行。测试清单与统计以测试规范为准。
 - `dut/docs/design/product_protocol_csv/` 保存 MB_DDF 协议 CSV 快照；宿主协议测试通过 `MB_DDF_PROTOCOL_CSV_DIR` 使用外部源事实目录。
 

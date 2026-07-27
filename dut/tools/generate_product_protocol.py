@@ -45,6 +45,11 @@ EXPECTED_ASSETS = {
     "helm_start_response.csv",
     "helm_stop_request.csv",
     "helm_stop_response.csv",
+    "imu_stream_feedback_response.csv",
+    "imu_stream_start_request.csv",
+    "imu_stream_start_response.csv",
+    "imu_stream_stop_request.csv",
+    "imu_stream_stop_response.csv",
     "memperf_test_request.csv",
     "memperf_test_response.csv",
     "spi_flash_test_request.csv",
@@ -126,7 +131,7 @@ def load_protocol_files(protocol_dir: Path, require_complete_catalog: bool) -> L
             if extra:
                 details.append("多余: {}".format(", ".join(extra)))
             raise ProtocolValidationError(
-                "协议资产集合必须严格包含 32 份计划文件；{}".format("；".join(details))
+                "协议资产集合必须严格包含 37 份计划文件；{}".format("；".join(details))
             )
     return files
 

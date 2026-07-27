@@ -5,5 +5,5 @@ export function normalizeRunOptionsForStart(options: TestRunOptions): TestRunOpt
     return { mode: 'single', intervalMs: 1000, maxCycles: 1, saveData: false }
   }
   if (options.mode === 'pc_periodic') return options
-  return { ...options, saveData: false }
+  return { mode: 'device_stream', intervalMs: 1000, maxCycles: 1, saveData: options.saveData }
 }

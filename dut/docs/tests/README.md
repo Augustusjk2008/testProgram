@@ -35,6 +35,10 @@ smoke test；另有一类 Windows PC 串口工具测试。Windows 主机交叉�
 # 产品协议和硬件测试服务单元测试
 .\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Tests `
   -TestFilter 'ProductProtocol*:*HardwareTestService*'
+
+# 惯测协议、COM4 配置、payload 映射和主动反馈
+.\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Tests `
+  -TestFilter 'ProductProtocolTest.*Imu*:HardwareTestServiceTest.*Imu*:HardwareTestProviderTest.*Imu*'
 ```
 
 `test-all.ps1` 依次覆盖 `MB_DDF_v2_Tests`、`MB_DDF_v2_HardwareTests`、
@@ -110,7 +114,7 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 & $Py -m pytest -q .\test_pyqt\tests
 ```
 
-协议 CSV 在 PC 和板端之间共享。提交前还应单独验证 32 份布局：
+协议 CSV 在 PC 和板端之间共享。提交前还应单独验证 37 份布局：
 
 ```powershell
 & $Py .\tools\generate_product_protocol.py --check `
@@ -119,6 +123,9 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 
 产品协议测试覆盖 48/123 字节数据段、小端字段、默认值、非零 RESERVED 拒绝、非有限
 F32 拒绝、请求序号回显和回绕、无双重物理组帧、普通响应、错误响应、DH 多帧和舵反馈路由。
+当前 7 个 DUT 源级 IMU 用例还覆盖 `09/10`/`09/01`/`09/11` 命令号、COM4 event 3 与
+921600/8E1 配置、59 字节 payload 的 12 个 F32 全映射、所有 F32 位置的 NaN/Inf 拒绝、
+START/STOP ACK 序号、主动反馈发送序号、空闲不消耗序号和终止错误反馈。
 界面测试覆盖顶部紧凑连接状态栏，以及“连接与日志”“串口回显”和 11 个硬件测试页
 组成的西侧纵向标签；还覆盖每页参数序列化、“结果 / 原始字段”视图、响应只更新对应页、
 执行全部采用各页当前参数、停止、彩色日志和微软雅黑。复合流程重点验证 DH 默认
@@ -135,6 +142,11 @@ SYSTEM_STATUS 的 CPU 计数解析和 XDMA PCI BDF 事实链。板端 `SYSTEM_ST
 `center_thermal` hwmon、`/proc/uptime` 和 XDMA PCI BDF；`net_init_time` 按当前实现固定为
 `0 s`，K7 温度直接读取 XADC 局部 `0x200`。串口、网口、SPI、DH 和舵控硬件仍需在已隔离
 目标板上联调，单元测试不会把缺失映射视作成功。
+
+上述 IMU 用例是 AArch64 源级/交叉构建证据，不等于 COM4 真机验收；当前 smoke 不注入
+惯测 payload。宿主 `device_stream` 的 START/反馈/STOP、至少一帧通过、单次 STOP 和
+UTF-8-SIG/TSV 固定列保存证据位于根仓算法/应用测试。`test_pyqt` 当前没有 IMU 会话，
+不得把旧工具测试写成该功能已覆盖。
 
 运行工具使用 `test_pyqt\run.bat`（或 `run.ps1`）；该入口会拒绝 base/system
 Python，且不会改变 AArch64 C++ 的构建和部署路径。

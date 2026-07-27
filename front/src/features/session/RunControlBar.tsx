@@ -60,9 +60,10 @@ export function RunControlBar() {
   const canStart = ['ready', 'finished', 'stopped'].includes(snapshot.phase)
   const testTitle = snapshot.descriptor.title || snapshot.descriptor.productName || '当前测试'
   const selectedTestId = snapshot.descriptor.configId || selectedConfigId
-  const supportedModes: RunMode[] = snapshot.descriptor.supportedRunModes.length > 0
+  const hasRunModeCapabilities = snapshot.descriptor.supportedRunModes.length > 0
+  const supportedModes: RunMode[] = hasRunModeCapabilities
     ? snapshot.descriptor.supportedRunModes
-    : ['single', 'pc_periodic']
+    : ['single']
   const modeOptions = MODE_LABELS.filter(({ mode }) => supportedModes.includes(mode))
   const loadingConfig = !testConfigsReady || busyAction === 'load' || busyAction === 'selectTest'
   const periodicError = useMemo(() => {
@@ -75,16 +76,17 @@ export function RunControlBar() {
     }
     return ''
   }, [options])
-  const unsupported = !supportedModes.includes(options.mode)
+  const unsupported = hasRunModeCapabilities && !supportedModes.includes(options.mode)
   const controlError = periodicError || (unsupported ? `${testTitle}不支持当前运行模式` : '') || snapshot.dataSaveError || actionError
 
   useEffect(() => {
+    if (!hasRunModeCapabilities) return
     if (supportedModes.includes(options.mode)) return
     const mode = supportedModes[0] ?? 'single'
     const next = { ...options, mode }
     setOptions(next)
     setLocalStorageValue(RUN_OPTIONS_KEY, JSON.stringify(next))
-  }, [options, supportedModes])
+  }, [hasRunModeCapabilities, options, supportedModes])
 
   function saveOptions(next: TestRunOptions) {
     setOptions(next)
@@ -176,17 +178,19 @@ export function RunControlBar() {
                 <b>{options.maxCycles === 0 ? '∞' : '轮'}</b>
               </span>
             </label>
-            <label className="run-save-option">
-              <input
-                aria-label="保存连续测试完整数据"
-                checked={options.saveData}
-                disabled={active}
-                onChange={(event) => saveOptions({ ...options, saveData: event.target.checked })}
-                type="checkbox"
-              />
-              <span>保存完整数据</span>
-            </label>
           </>
+        ) : null}
+        {options.mode !== 'single' ? (
+          <label className="run-save-option">
+            <input
+              aria-label="保存连续测试完整数据"
+              checked={options.saveData}
+              disabled={active}
+              onChange={(event) => saveOptions({ ...options, saveData: event.target.checked })}
+              type="checkbox"
+            />
+            <span>保存完整数据</span>
+          </label>
         ) : null}
       </div>
 

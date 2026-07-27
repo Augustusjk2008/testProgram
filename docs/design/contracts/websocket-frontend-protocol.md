@@ -101,7 +101,7 @@
 | `configId`、`productModel`、`productName`、`configVersion` | string | 当前测试配置身份 |
 | `stepId`、`testItemId`、`algorithmId` | string | 当前唯一启用步骤身份 |
 | `title`、`description` | string | 当前测试的展示名称和说明 |
-| `supportedRunModes` | string[] | 当前配置声明的运行模式；元素只能是 `single`、`pc_periodic` 或 `device_stream` |
+| `supportedRunModes` | string[] | 当前配置声明的运行模式；元素只能是 `single`、`pc_periodic` 或 `device_stream`，且不得同时包含 `pc_periodic` 与 `device_stream`；字段缺失时后端只投影 `single` |
 | `measurements` | object[] | 待测量元数据；每项包含 `id`、`label`、`unit`、`primary` |
 
 `measurements` 只描述展示标签、单位和首页主指标候选，不改变算法判定或硬件安全语义。首条样本可能包含 descriptor 未列出的数值字段，前端仍应自动发现并显示该字段；descriptor 缺失时，兼容客户端可以使用空 descriptor 和样本字段回退。
@@ -138,6 +138,7 @@
 | `command_in_progress` | 正在异步停止或安全收尾时又收到写动作 | 是 |
 | `test_config_not_found` | `selectTest.configId` 不在后端启动时发现的配置白名单中 | 是 |
 | `invalid_run_mode` | `start.mode` 不是固定三种模式之一 | 是 |
+| `CapabilityUnsupported` | `start.mode` 未在当前配置的 `supportedRunModes` 中声明 | 是 |
 | `ParameterRangeError` | `start.intervalMs` 或 `start.maxCycles` 超出范围 | 是 |
 
 能够安全读取请求 `id` 时，协议错误 reply 使用该 id；否则使用空字符串。错误输入不得触发控制器动作。
@@ -157,7 +158,7 @@
 | `selectControl` | `{"resourceId":"CONTROL_SERIAL"}` | 调用 `selectControl`；`resourceId` 必须是非空字符串 |
 | `selectSerialPort` | `{"portName":"COM7"}` | 调用 `selectSerialPort`；`portName` 必须是非空字符串 |
 | `prepare` | `{}` | 调用 `prepare` |
-| `start` | `{}` 或 `{"mode":"pc_periodic","intervalMs":500,"maxCycles":0,"saveData":true}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`；`intervalMs` 为 `10..3600000` 的整数；`maxCycles` 为 `0..1000000000` 的整数，`0` 表示 PC 周期不限轮数；`saveData` 只能是 boolean，且当前仅 `pc_periodic` 会启用保存，单次和设备持续模式由控制器强制不保存 |
+| `start` | `{}` 或 `{"mode":"pc_periodic","intervalMs":500,"maxCycles":0,"saveData":true}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`，且必须由当前 descriptor 声明；`intervalMs` 为 `10..3600000` 的整数，`maxCycles` 为 `0..1000000000` 的整数且 `0` 表示 PC 周期不限轮数，两者只有 `pc_periodic` 具备调度含义，其他模式由控制器归一为 `1000/1`；`saveData` 只能是 boolean，`pc_periodic` 与 `device_stream` 均可启用保存，`single` 强制不保存 |
 | `pause` | `{}` | 调用 `pause` |
 | `resume` | `{}` | 调用 `resume` |
 | `setDigitalStimulus` | `{"switchId":"di0","active":true,"expectedRevision":0}` | 必须且只能包含这三个字段；`switchId` 为非空 string，`active` 为 boolean，`expectedRevision` 为 0..9007199254740991 的非负安全整数。未知字段（包括 `resourceId`、`adapterId`、端口或路径）一律 `invalid_envelope`；控制器再按已加载配置白名单验证 `switchId`。reply 的 `data.digitalStimulus` 返回当前状态 |
@@ -168,9 +169,9 @@
 
 除 `start`、`selectTest`、`selectControl`、`selectSerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`start` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知字段按 `invalid_envelope` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
 
-### 6.1 PC 周期数据文件
+### 6.1 连续模式数据文件
 
-`[当前实现]` `saveData=true` 且运行模式为 `pc_periodic` 时，`TestApplicationController` 在后端记录完整 `ApplicationSample.values` 投影，而不是记录浏览器当前勾选的曲线字段。默认 HAL/应用组合配置为：
+`[当前实现]` `saveData=true` 且运行模式为 `pc_periodic` 或 `device_stream` 时，`TestApplicationController` 在后端记录完整 `ApplicationSample.values` 投影，而不是记录浏览器当前勾选的曲线字段。`pc_periodic` 记录 PC 每轮单发单回产生的样本；`device_stream` 记录一次启动后设备持续回告产生的全部样本，应用层不会为它重复发起 PC 请求。默认 HAL/应用组合配置为：
 
 ```json
 {"dataStorage":{"directory":"../data"}}
@@ -178,7 +179,7 @@
 
 绝对目录直接使用；相对目录按 HAL 配置文件所在目录解析。字段缺失时同样回退 `../data`。客户端无权覆盖目录。目录或初始文件不能创建时，`start` 返回控制器错误 `data_storage`；运行中写入或终态提交失败时，完整快照的 `dataSaveError` 返回诊断。
 
-最终文件固定为带 UTF-8 BOM 的 `.txt`：顶部是一行标题和 `# key=value` 元数据，至少包含 `started_at`、`finished_at`、`final_status`、`final_detail`、`sample_count`、`repeat_delay_ms`、`config_id`、`algorithm_id` 与 `max_cycles`；空行之后是制表符分隔、换行符为 LF 的固定表头和数据行。文件名使用后端开始时间；电气健康保持 PyQt 参考名 `ElectricalHealth_data_YYYYMMDD_HHMMSS_ffffff.txt`。
+最终文件固定为带 UTF-8 BOM 的 `.txt`：顶部是一行标题和 `# key=value` 元数据，至少包含 `started_at`、`finished_at`、`final_status`、`final_detail`、`sample_count`、`run_mode`、`repeat_delay_ms`、`config_id`、`algorithm_id` 与 `max_cycles`；`device_stream` 的两个 PC 周期字段固定写 `NA`。空行之后是制表符分隔、换行符为 LF 的固定表头和数据行。文件名使用后端开始时间；电气健康保持 PyQt 参考名 `ElectricalHealth_data_YYYYMMDD_HHMMSS_ffffff.txt`。
 
 电气健康表头保持参考实现的固定顺序：
 
@@ -186,9 +187,9 @@
 report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V  external_vol_V  core_vol_V  assist_vol_V  v28_5_V  js_5V_V  dyt_5V_V  power_24V_V  value_YX_V  activate_bits  bc_activate_good
 ```
 
-实际分隔符是 TAB。其他当前 `pc_periodic` 配置使用同样的前五列，后续列由已验证 descriptor 的全部 `measurements` 固定投影，并排除已在前缀中的 `status`/`err_code`；单位非空时写入列名后缀。前端图表的显示/隐藏、组合、时间窗和降采样均不改变该列集合。响应 `status != 0` 或 `err_code != 0` 时仍保存状态和错误码，测量列写 `NA`。
+实际分隔符是 TAB。其他连续模式配置使用同样的前五列，后续列由已验证 descriptor 的全部 `measurements` 固定投影，并排除已在前缀中的 `status`/`err_code`；单位非空时写入列名后缀。前端图表的显示/隐藏、组合、时间窗和降采样均不改变该列集合。响应 `status != 0` 或 `err_code != 0` 时仍保存状态和错误码，测量列写 `NA`。
 
-运行期数据逐样本刷新到同目录的 `.partial` 文件，避免无限周期在内存累积；正常完成、用户停止或错误终态时，后端使用 `QSaveFile` 把元数据和 TSV 原子提交为最终 TXT，再删除 `.partial`。提交失败时保留 `.partial` 供恢复。未勾选、`single` 或当前未接入保存的 `device_stream` 均不创建数据文件。
+运行期数据逐样本刷新到同目录的 `.partial` 文件，避免不限 PC 周期或设备持续回告在内存累积；正常完成、用户停止或错误终态时，后端使用 `QSaveFile` 把元数据和 TSV 原子提交为最终 TXT，再删除 `.partial`。提交失败时保留 `.partial` 供恢复。未勾选或 `single` 均不创建数据文件。
 
 ## 7. 异步、线程与安全收尾
 

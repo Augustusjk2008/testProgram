@@ -36,6 +36,14 @@ src/MB_DDF_Demo/HardwareExamples.cpp
 该画像只编入 COM3 产品协议服务、系统测试和硬件测试 provider，启用硬件层并关闭
 DDS Adapter。
 
+`IMU_STREAM` 复用该 HW_TEST 的 COM3 产品协议服务，但不是 `test_pyqt` 的第 12 个页面，
+也不进入旧工具的“执行全部”或“连续”功能。宿主工程通过
+`configs/mbddf_imu_stream.testcfg.json` 只以 `device_stream` 运行：PC 发送一次 `09/10`，
+DUT 从 COM4（偏移 `0x100000`、event 3、`921600/8E1`）读取 FPGA 已处理的 59 字节
+payload，经 COM3 主动上送完整 `09/01`，停止时最多发送一次 `09/11`。至少一帧有效反馈
+通过，0 帧失败；可选 UTF-8-SIG/TSV 固定列保存以宿主契约为准。流活动期间 COM4 被临时
+占用，BUS link 5 返回 `TASK_BUSY`。
+
 ### 2.3 DEMO
 
 ```powershell

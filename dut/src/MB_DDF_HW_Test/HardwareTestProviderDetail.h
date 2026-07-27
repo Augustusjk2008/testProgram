@@ -2,6 +2,7 @@
 
 #include "MB_DDF_HW/Device/Ad7606Device.h"
 #include "MB_DDF_HW/Device/Ads1258Device.h"
+#include "MB_DDF_HW/Device/ComDevice.h"
 #include "MB_DDF_HW/Device/PwmDevice.h"
 #include "MB_DDF_HW_Test/ProductProtocol.h"
 #include "MB_DDF_HW/Transport/ISpiTransport.h"
@@ -50,6 +51,12 @@ inline constexpr int kTimerLoadC2hChannel = 0;
 inline constexpr uint64_t kTimerLoadDeviceOffset = 0;
 inline constexpr size_t kTimerLoadTransferBytes = 64u * 1024u;
 inline constexpr uint32_t kTimerLoadIntervalMs = 12;
+inline constexpr uint64_t kImuCom4UserOffset = 0x100000;
+inline constexpr size_t kImuComMapLength = 0x40000;
+inline constexpr int kImuCom4EventNumber = 3;
+inline constexpr size_t kImuPayloadBytes = 59;
+inline constexpr size_t kImuReceiveBufferBytes = 255;
+inline constexpr uint32_t kImuReceivePollTimeoutUs = 5000;
 inline constexpr std::array<size_t, 23> kDhTelemetryAds1258Channels{
     1,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14,
     15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
@@ -71,6 +78,11 @@ constexpr std::string_view udp_self_loop_address(uint8_t link_id) noexcept {
 
 ProductErrorCode populate_dh_telemetry(const HW::Ads1258Snapshot& snapshot,
                                        ProductMessage& response);
+
+HW::ComConfig imu_stream_com_config();
+
+ProductErrorCode populate_imu_stream_feedback(
+    std::span<const uint8_t> payload, ProductMessage& response);
 
 ProductErrorCode run_helm_board_test(const ProductMessage& request,
                                      HW::PwmDevice& pwm,

@@ -20,7 +20,7 @@
 
 ## 2. 边界模型
 
-`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法、共享应用控制器、一次性 runner、行式 TUI、Qt Widgets GUI、回环 WebSocket 后端和独立 React/Vite 浏览器遥测控制台。应用层以一个私有注册表统一发现、加载和创建七个独立单步 MB_DDF 算法：`mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config`、`mbddf.timer_jitter`、`mbddf.di_read`。七项均可单次；系统状态、电气健康、内存、定时器和 DI 配置声明支持 PC 周期，设备持续回告仍按执行器能力校验。Qt 串口已有受控 COM3 真实板端 smoke，但仅覆盖 SYSTEM_STATUS/ELEC_HEALTH_STATUS；其余五项、DI 刺激和 PXI-6259 都没有真实硬件验收证据。原生 PXI-6259 NI-DAQmx Adapter、可选 CMake 构建、可选采样任务 ABI 和 Fake 回归已落地；TCP 控制 Provider、其他厂家 SDK Adapter 与全面真实硬件验收仍未实现。
+`[当前实现]` 已有 BIZ、HAL、日志、MB_DDF 算法、共享应用控制器、一次性 runner、行式 TUI、Qt Widgets GUI、回环 WebSocket 后端和独立 React/Vite 浏览器遥测控制台。应用层以一个私有注册表统一发现、加载和创建八个 MB_DDF 算法：原有七项单发单回测试，以及只支持 `device_stream` 的 `mbddf.imu_stream`。该执行器只发送一次 START，在同一次 `executeStep()` 中持续读取主动反馈并逐帧 `onSample()`，收到停止请求后发送一次 STOP；它不会进入 BIZ 的 PC 周期循环。Qt UDP 已有完整 START/反馈/STOP 与 TXT 保存闭环；COM4 和目标板真机尚未验收。Qt 串口既有真机证据仍只覆盖 SYSTEM_STATUS/ELEC_HEALTH_STATUS；NI/PXI-6259 等限制不变。
 
 ```text
 front/ 浏览器控制台 -> ws://127.0.0.1:<port>/ws -> hwtest_web
@@ -65,9 +65,9 @@ TUI / Qt GUI / hwtest_web / 浏览器 Web UI
 
 | 层或边界 | 负责 | 不负责 |
 | --- | --- | --- |
-| UI / 应用组合 | `[当前实现]` `hwtest_app_core` 统一组装 HAL、算法、BIZ 和日志；TUI、Qt GUI 与 `hwtest_web` 支持配置加载、控制口/串口选择、准备、启停和结果查看；DI 配置由控制器投影刺激 DTO 并提供设置/复位动作，WebSocket 只适配这些动作和快照。浏览器 SessionProvider、WebSocket transport 与总览页已接入 16 路 DI 面板；它只在 descriptor 恰为 16 路且 `dutBit` 为 0..15 时显示，并使用队列发送动作/显示回读。应用控制器还可按 `pc_periodic + saveData` 把完整样本增量记录为后端 UTF-8-SIG/TSV TXT；浏览器只提交布尔开关，不提交路径或列选择 | 解释产品协议、持有 DUT/生产 I/O Socket 或串口、绕过应用控制器或 BIZ 直接执行测试判定；`hwtest_web` 的 `QWebSocketServer/QWebSocket` 仅作前端传输 |
+| UI / 应用组合 | `[当前实现]` `hwtest_app_core` 统一组装 HAL、算法、BIZ 和日志；TUI、Qt GUI 与 `hwtest_web` 支持配置加载、控制口/串口选择、准备、启停和结果查看；DI 配置由控制器投影刺激 DTO 并提供设置/复位动作，WebSocket 只适配这些动作和快照。浏览器 SessionProvider、WebSocket transport 与总览页已接入 16 路 DI 面板；它只在 descriptor 恰为 16 路且 `dutBit` 为 0..15 时显示，并使用队列发送动作/显示回读。应用控制器强制测试配置中的 PC 周期/设备持续能力互斥，并可按两种连续模式的 `saveData` 把完整样本增量记录为后端 UTF-8-SIG/TSV TXT；浏览器只提交布尔开关，不提交路径或列选择 | 解释产品协议、持有 DUT/生产 I/O Socket 或串口、绕过应用控制器或 BIZ 直接执行测试判定；`hwtest_web` 的 `QWebSocketServer/QWebSocket` 仅作前端传输 |
 | BIZ | 配置、计划、稳定拓扑排序、重试、通用运行模式、运行状态、样本/结果编排和报告 | 解释协议字段、执行单步判定、持有硬件或通讯对象、执行安全动作 |
-| 算法 | `[当前实现]` MB_DDF CSV、编解码、流式分帧、命令/序号匹配、固定命令判定、可配置单步交换、定时器 STOP 清理，以及按配置白名单验证 revision 并整批写 DI 的 `DiStimulusController` | BIZ 流程、UI、具体 Qt/厂家连接、物理 safe state |
+| 算法 | `[当前实现]` MB_DDF CSV、编解码、分离读写/流式分帧、命令/序号匹配、固定命令判定、可配置单步交换、惯测 START/主动反馈/STOP、定时器 STOP 清理，以及按配置白名单验证 revision 并整批写 DI 的 `DiStimulusController` | BIZ 流程、UI、具体 Qt/厂家连接、物理 safe state |
 | HAL | `[当前实现]` 提供资源、会话、安全 API、控制通道原始 I/O 和 `ISampleTaskIo`；控制资源持有 Qt 串口/UDP 对象，设备资源通过惰性多 Adapter 路由访问 Mock 或通用 C ABI 后端 | 业务调度、产品协议字段解释和测试判定 |
 | Provider / Adapter | `[当前实现]` 控制资源按 `providerId` 选择 `qt.serial` 或 `qt.udp`；设备 `adapterId` 选择 `MockAdapter` 或真实调用 ABI v1 的 `CAbiAdapter`。核心 ABI v1 保持兼容，采样任务通过可选 task ABI v1 扩展；`hwtest_adapter_ni_daqmx` 是可选的 PXI-6259 原生 NI-DAQmx Adapter。`[目标契约-未实现]` 其他厂家 SDK Adapter、控制通道通用 Router 和真机验收 | UI、业务流程和产品判定 |
 
@@ -101,10 +101,10 @@ BIZ 编排 TestPlan / TestContext / executionConfig
 
 ## 6. 当前落地范围
 
-- `src/algorithm/` 已有 `hwtest_algorithm_mbddf`、协议目录加载、payload/物理帧编解码、流式 `HalControlTransport`、固定命令执行器、配置驱动的 MB_DDF 单步交换执行器和 `DiStimulusController`；当前注册七项算法，`mbddf.di_read` 使用 `DI_READ` 请求/响应及配置的数字刺激白名单。
-- `src/app/` 的 `hwtest_app_core` 提供 `TestApplicationController`、共享启动配置、DI 刺激 DTO/动作和 `ContinuousDataRecorder`；DI `prepare` 先打开配置指定的刺激设备、写入逻辑 inactive，再打开 DUT，停止/收尾在 BIZ 停止后尽力复位刺激并按刺激设备、DUT、HAL 顺序释放会话。recorder 只在 PC 周期且显式启用时增量写后端临时 TSV，并在终态原子完成 TXT；单次运行不创建文件。`hwtest_tui_support`、`hwtest_gui_support`、`hwtest_web_support` 只承载各自前端适配，`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui`、`hwtest_web` 是四个独立进程入口。
+- `src/algorithm/` 已有 `hwtest_algorithm_mbddf`、协议目录加载、payload/物理帧编解码、可分离读写的 `HalControlTransport`、固定命令执行器、配置驱动的 MB_DDF 单步交换执行器、`ImuStreamAlgorithmExecutor` 和 `DiStimulusController`；当前注册八项算法。
+- `src/app/` 的 `hwtest_app_core` 提供 `TestApplicationController`、共享启动配置、DI 刺激 DTO/动作和 `ContinuousDataRecorder`；recorder 在显式启用的 PC 周期或设备持续任务中增量写后端临时 TSV，并在终态原子完成 TXT，单次运行不创建文件。保存列来自配置 descriptor，不受浏览器曲线选择影响。
 - `src/hal/` 已把 `AdapterRouter` 编入 `hwtest_hal`；`HalDevice` 将逻辑资源映射到采样任务的物理索引，并在关闭时先停止、释放已跟踪的采样任务，再写 AO/DO safe state 和关闭后端会话。同一设备的已配置数字安全态汇总为一次 `writeDigitalBatch()`。这不是厂商端口 bank 原子性或硬件安全验收结论。
-- `front/` 是独立的 React 19、TypeScript、Vite、Tailwind CSS 和 uPlot 工程，不进入宿主 CMake，也不包含后端、数据库或 DUT I/O。DI 协议类型、WebSocket transport、SessionProvider、纯命令队列和 `DigitalStimulusPanel` 已接入总览页：面板做 32 ms 同开关合并、单飞行串行、revision/回滚、active-low、`di_state[0]`/`di_state[1]` 回读和 settling 提示。PC 周期参数区的保存复选框只发送 `saveData`，曲线字段选择不参与保存格式。它是浏览器控制面实现，不是 PXI-6259 真机验收。
+- `front/` 是独立的 React 19、TypeScript、Vite、Tailwind CSS 和 uPlot 工程，不进入宿主 CMake，也不包含后端、数据库或 DUT I/O。DI 协议类型、WebSocket transport、SessionProvider、纯命令队列和 `DigitalStimulusPanel` 已接入总览页：面板做 32 ms 同开关合并、单飞行串行、revision/回滚、active-low、`di_state[0]`/`di_state[1]` 回读和 settling 提示。PC 周期与设备持续模式都显示保存复选框且只发送 `saveData`；设备持续模式不会携带有调度意义的 PC 周期参数，曲线字段选择不参与保存格式。它是浏览器控制面实现，不是 PXI-6259 真机验收。
 - 根 CMake 构建 HAL、日志、BIZ、算法、共享应用核心、TUI/GUI/Web 支持库和四个应用入口，并查找同一 Qt 主版本的 Core、Network、SerialPort、Widgets、WebSockets；`HWTEST_ENABLE_NI_DAQMX=ON` 且找到配置的 NI-DAQmx 头文件和导入库时构建 `hwtest_adapter_ni_daqmx`，默认关闭仍不要求 NI SDK；当前没有真实 SDK 构建或运行证据。
 - 根 `hwtest.ps1` 是 Windows 单命令入口，负责配置、构建、测试、通过 `-Ui tui|gui|web` 启动前端、启动 runner 和列出串口；`-WebPort` 只传给 WebSocket 后端。它不复制测试流程或绕过 `hwtest_app_core`。
 - 当前测试目标、源码清单和统计口径以 `../testing/testing-specification.md` 为主定义，不以源级数量代替通过结果。

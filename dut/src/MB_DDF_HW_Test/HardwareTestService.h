@@ -29,6 +29,13 @@ public:
     }
     virtual bool helm_feedback_active() const = 0;
     virtual ProductErrorCode build_helm_feedback(ProductMessage& response) = 0;
+    virtual bool imu_stream_active() const { return false; }
+    /// nullopt 表示当前没有可上送帧；有值时 response 必须发送，错误码写入状态字段。
+    virtual std::optional<ProductErrorCode> poll_imu_stream_feedback(
+        ProductMessage& response) {
+        (void)response;
+        return std::nullopt;
+    }
 };
 
 /// 组合 COM3、产品协议服务和真实板级 Provider 的 HW_TEST 编译期入口。
@@ -45,6 +52,7 @@ public:
 
     bool process_once(HW::Timeout timeout);
     bool emit_helm_feedback_once();
+    bool emit_imu_stream_feedback_once();
     int run(const StopPredicate& stop_requested);
 
 private:

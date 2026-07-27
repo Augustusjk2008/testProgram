@@ -1,5 +1,7 @@
 # Continuous Test Data Storage Implementation Plan
 
+> 本文是已完成的历史执行记录，保留当时仅覆盖 `pc_periodic` 的原始范围；当前三种运行模式边界和连续数据保存事实以 [BIZ 调度契约](../../design/contracts/business-scheduling-layer.md) 与 [WebSocket 前端契约](../../design/contracts/websocket-frontend-protocol.md) 为准。
+
 > **Execution note:** This plan should be executable either inline in the current session or by a delegated worker. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 为 Web 端 `pc_periodic` 连续测试增加可选的后端 TXT 数据保存，保持单次测试永不保存，并兼容 PyQt 连续采集文件的 UTF-8-SIG/元数据/TSV 结构。

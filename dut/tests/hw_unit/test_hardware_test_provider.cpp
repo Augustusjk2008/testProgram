@@ -13,7 +13,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <string>
 
 using MB_DDF::HWTest::HardwareTestProvider;
@@ -447,6 +451,104 @@ TEST(HardwareTestProviderTest, Com3ImageUsesFixedWindowEventAnd614400EightEOneDe
     EXPECT_EQ(config.format.byte_format, 0xB0u);
     EXPECT_EQ(config.format.receive_control, 0x21u);
     EXPECT_EQ(config.baudrate_counter, 0x00CAu);
+}
+
+TEST(HardwareTestProviderTest, ImuStreamUsesCom4AndConfirmed921600FrameConfiguration) {
+    static_assert(MB_DDF::HWTest::Detail::kImuCom4UserOffset == 0x100000u);
+    static_assert(MB_DDF::HWTest::Detail::kImuComMapLength == 0x40000u);
+    static_assert(MB_DDF::HWTest::Detail::kImuCom4EventNumber == 3);
+    static_assert(MB_DDF::HWTest::Detail::kImuPayloadBytes == 59u);
+    static_assert(MB_DDF::HWTest::Detail::kImuReceiveBufferBytes == 255u);
+    static_assert(MB_DDF::HWTest::Detail::kImuReceiveBufferBytes >
+                  MB_DDF::HWTest::Detail::kImuPayloadBytes);
+    const auto config = MB_DDF::HWTest::Detail::imu_stream_com_config();
+    EXPECT_EQ(config.format.byte_format, 0xB0u);
+    EXPECT_EQ(config.frame.receive_header[0], 0xAAu);
+    EXPECT_EQ(config.frame.receive_header[1], 0x1Au);
+    EXPECT_EQ(config.frame.receive_header_length, 2u);
+    EXPECT_EQ(config.frame.receive_length_bytes, 1u);
+    EXPECT_EQ(config.frame.receive_tail_length, 0u);
+    EXPECT_EQ(config.baudrate_counter, 0x0086u);
+    EXPECT_EQ(config.interrupt_mode, MB_DDF::HW::ComInterruptMode::Level);
+}
+
+TEST(HardwareTestProviderTest, DecodesConfirmedImuPayloadIntoFeedbackFields) {
+    ProductProtocol protocol;
+    auto response = protocol.create_message("imu_stream_feedback_response", false);
+    ASSERT_TRUE(response);
+    std::array<uint8_t, MB_DDF::HWTest::Detail::kImuPayloadBytes> payload{};
+    const auto put_u16 = [&](size_t offset, uint16_t value) {
+        payload[offset] = static_cast<uint8_t>(value);
+        payload[offset + 1] = static_cast<uint8_t>(value >> 8);
+    };
+    const auto put_f32 = [&](size_t offset, float value) {
+        const uint32_t bits = std::bit_cast<uint32_t>(value);
+        for (size_t byte = 0; byte < sizeof(bits); ++byte) {
+            payload[offset + byte] = static_cast<uint8_t>(bits >> (8 * byte));
+        }
+    };
+    put_u16(0, 0x1234u);
+    for (size_t index = 0; index < 12; ++index) {
+        put_f32(2 + index * sizeof(float), static_cast<float>(index) + 0.25F);
+    }
+    put_u16(50, static_cast<uint16_t>(static_cast<int16_t>(-123)));
+    put_u16(52, 0x4567u);
+    payload[54] = 0x89u;
+    put_u16(55, 0xABCDu);
+    put_u16(57, 0xEF01u);
+
+    EXPECT_EQ(MB_DDF::HWTest::Detail::populate_imu_stream_feedback(payload, response),
+              ProductErrorCode::Ok);
+    EXPECT_EQ(response.get_unsigned("source_seq").value_or(0), 0x1234u);
+    static constexpr std::array<const char*, 12> kFloatFields{
+        "delta_angle_x", "delta_angle_y", "delta_angle_z",
+        "delta_velocity_x", "delta_velocity_y", "delta_velocity_z",
+        "angular_rate_x", "angular_rate_y", "angular_rate_z",
+        "acceleration_x", "acceleration_y", "acceleration_z",
+    };
+    for (size_t index = 0; index < kFloatFields.size(); ++index) {
+        EXPECT_FLOAT_EQ(response.get_float(kFloatFields[index]).value_or(0.0F),
+                        static_cast<float>(index) + 0.25F)
+            << index;
+    }
+    EXPECT_EQ(response.get_signed("temperature").value_or(0), -123);
+    EXPECT_EQ(response.get_unsigned("self_test_status").value_or(0), 0x4567u);
+    EXPECT_EQ(response.get_unsigned("work_status").value_or(0), 0x89u);
+    EXPECT_EQ(response.get_unsigned("software_version").value_or(0), 0xABCDu);
+    EXPECT_EQ(response.get_unsigned("source_reserved").value_or(0), 0xEF01u);
+}
+
+TEST(HardwareTestProviderTest, RejectsWrongLengthOrNonFiniteImuPayload) {
+    ProductProtocol protocol;
+    auto response = protocol.create_message("imu_stream_feedback_response", false);
+    std::array<uint8_t, MB_DDF::HWTest::Detail::kImuPayloadBytes> payload{};
+
+    EXPECT_EQ(MB_DDF::HWTest::Detail::populate_imu_stream_feedback(
+                  std::span<const uint8_t>(payload.data(), payload.size() - 1), response),
+              ProductErrorCode::LenMismatch);
+    std::array<uint8_t, MB_DDF::HWTest::Detail::kImuPayloadBytes + 1> oversized{};
+    EXPECT_EQ(MB_DDF::HWTest::Detail::populate_imu_stream_feedback(oversized, response),
+              ProductErrorCode::LenMismatch);
+
+    const std::array<float, 3> non_finite{
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+    };
+    for (size_t field = 0; field < 12; ++field) {
+        for (const float value : non_finite) {
+            payload.fill(0);
+            const uint32_t bits = std::bit_cast<uint32_t>(value);
+            for (size_t byte = 0; byte < sizeof(bits); ++byte) {
+                payload[2 + field * sizeof(float) + byte] =
+                    static_cast<uint8_t>(bits >> (8 * byte));
+            }
+            EXPECT_EQ(MB_DDF::HWTest::Detail::populate_imu_stream_feedback(
+                          payload, response),
+                      ProductErrorCode::ParamOutOfRange)
+                << field;
+        }
+    }
 }
 
 TEST(HardwareTestProviderTest, TimerLoadUsesReadOnlyC2hZeroConfiguration) {

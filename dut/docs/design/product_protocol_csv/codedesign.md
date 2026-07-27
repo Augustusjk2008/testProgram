@@ -1,8 +1,9 @@
 # 产品端-上位机通信协议 V1.1
 
-> 版本：V1.1（2026-07-18）
-> 适用范围：AArch64 Linux 产品端硬件测试服务与 Windows PyQt5 上位机。
-> 字段布局唯一事实源：本目录 32 份 CSV。本文只定义传输、时序、测试映射和硬件边界。
+> 版本：V1.1（2026-07-27）
+> 适用范围：AArch64 Linux 产品端硬件测试服务与 Windows 上位机协议端。本轮
+> `IMU_STREAM` 主机实现位于宿主工程根 `hwtest_*`；`test_pyqt` 未提供 IMU 页面或设备流会话。
+> 字段布局唯一事实源：本目录 37 份 CSV。本文只定义传输、时序、测试映射和硬件边界。
 
 ## 1. 传输基线
 
@@ -57,6 +58,8 @@
 - DH 控制的第 `i` 帧响应使用 `请求 seq+i`（`i=0..report_count-1`，U16 回绕）。
 - HELM_FEEDBACK 没有对应请求：HELM_START 先返回回显请求序号的 ACK，随后反馈帧使用
   板端独立递增的 U16 主动上送序号，直至 HELM_STOP。
+- IMU_STREAM_FEEDBACK 同样使用板端独立递增的 U16 主动上送序号；其中 `source_seq`
+  是 COM4 payload 的普通数据字段，不参与产品协议匹配，也不做连续性判定。
 - PC 同一时刻只保留一个普通待响应请求，按 `(type_group, sub_type, seq)` 匹配；DH 按
   本次请求序号和报告索引匹配，舵反馈按活动会话路由。
 - 所有响应和主动上送共用同一发送锁。序号在进入发送器前已经确定，发送锁覆盖完整数据段
@@ -83,7 +86,7 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 - `BIT.length` 表示位宽。共享同一 `Bn` 的 BIT 行按 CSV 行序从低位到高位排列，
   每个字节必须恰好累计 8 bit。`dh_status` 即采用四个 2-bit 字段共享一个字节。
 - `is_valid` 只能是 `0` 或 `1`；`name_en` 在单份 CSV 内必须唯一。
-- 协议资产集合必须严格等于本目录列出的 32 份 CSV，缺失或多余文件均失败。
+- 协议资产集合必须严格等于本目录列出的 37 份 CSV，缺失或多余文件均失败。
 
 校验：
 
@@ -125,6 +128,9 @@ BIT 位偏移、LSB 和默认值。输出不包含源目录或机器路径；构
 | `07/01` | HELM_FEEDBACK | 无请求 | 状态、错误码和 10 组舵反馈 | -/128 |
 | `08/01` | TIMER_JITTER_START | `mode:U32` | `buckets[8]:U32`, 平均/最大抖动 F32 | 53/53 |
 | `08/02` | TIMER_JITTER_STOP | 无 | 状态和错误码 | 53/53 |
+| `09/10` | IMU_STREAM_START | 无 | 状态和错误码 | 53/53 |
+| `09/01` | IMU_STREAM_FEEDBACK | 无请求 | 状态、错误码、源序列、12 个 F32、温度、自检/工作状态、软件版本原始值和源保留字段 | -/128 |
+| `09/11` | IMU_STREAM_STOP | 无 | 状态和错误码 | 53/53 |
 | `FF/00` | ERROR | 无请求 | 原 tg/st/seq、错误码和 detail | -/53 |
 
 已知指令执行失败时，使用该指令响应中的 `status/err_code`。未知指令、版本错误、固定
@@ -215,6 +221,25 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
   C2H0 读取能有界返回；若可能永久阻塞，应先设计可取消或超时读取，不能依赖无限等待
   的 `join()`。
 
+### 5.5 惯测连续流
+
+1. PC 经 COM3 发送一次 `IMU_STREAM_START 09/10`；板端完成 COM4 打开、配置、清错和接收
+   使能后先回 START ACK，随后才允许主动反馈。
+2. COM4 固定使用 `/dev/xdma0`、`user_offset=0x100000`、`map_length=0x40000`、event 3、
+   `921600 / 8E1`、波特率计数 `0x0086`。该计数由
+   `round((0x00CA+1)*614400/921600-1)=134` 推得。格式寄存器 `0xB0` 让 FPGA 处理
+   2 字节 CRC；接收帧头配置为 `AA 1A`、1 字节长度，C++ 只收到 59 字节 payload。
+3. payload 为小端：`source_seq:U16`、12 个 F32、`temperature:S16F`（0.1 ℃/LSB）、
+   `self_test_status:U16`、`work_status:U8`、`software_version:U16`、
+   `source_reserved:U16`。12 个 F32 必须有限；其他状态/范围值不拦截。
+4. 每个有效 payload 立即编码为 `09/01` 128 字节反馈并尝试经 COM3 发送，不插入固定
+   sleep、不主动抽样。400 Hz 不要求软件保证无损；COM3 614400/8E1 的理论占用约 91.7%。
+5. PC 对同一会话最多发送一次 `IMU_STREAM_STOP 09/11`。板端停止读取并关闭 COM4 后再回
+   STOP ACK；ACK 超时或错误只影响本次结果，PC 收尾不得再次发送 STOP。COM4 流活动时，
+   使用同一硬件的 BUS link 5 返回 `TASK_BUSY`。
+6. 宿主配置只声明 `device_stream`，不得以 `pc_periodic` 重复 START；停止时 0 个有效
+   `09/01` 判 `SampleFail`，1 帧及以上判通过。可选保存固定使用完整字段，曲线选择不改变列。
+
 ## 6. 测试项映射
 
 “执行全部”顺序固定如下，本文已合并全部映射，不依赖其他映射文档：
@@ -232,6 +257,9 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
 | 9 | DH 控制 | `dh_control_request/response` | 电源/回线使能；`0x007FFFFF/0`，count 50，interval 2500 us，delay 0 |
 | 10 | 舵控板级 | `helm_board_test_request/response` | 四路 PWM 百分比=0，四路方向=0 |
 | 11 | 定时器 | `timer_jitter_start/stop_*` | mode 0/1，默认 0；250 us x 250 周期 |
+
+`IMU_STREAM` 不进入当前“执行全部”顺序，也不得由旧工具的“连续”功能模拟；它只能作为
+独立 `device_stream` 会话运行。
 
 内存类型：0-2 为 seed 图样写入/校验，3-6 分别为读、写、拷贝和 NT store 带宽测试。
 PC 默认超时为普通 2 秒、总线 60 秒、内存 120 秒、SPI Flash 180 秒；DH 首帧超时按
@@ -360,7 +388,7 @@ link 6 后端是 SPI Flash，不具备 MOSI/MISO 回显语义。BUS_LOOP 只发�
 | `0x0201` | REG_RW_FAILED | 寄存器访问或硬件回读异常 |
 | `0x0202` | MEM_ACCESS_FAILED | 存储器不可访问 |
 | `0x0203` | TASK_EXEC_FAILED | 任务流程、超时或数据编码失败 |
-| `0x0204` | TASK_BUSY | 舵控、定时器或 DH 任务忙 |
+| `0x0204` | TASK_BUSY | 舵控、定时器、DH 或 IMU 流任务忙；IMU 活动时 BUS link 5 返回该错误 |
 | `0x0301` | HELM_DDS_FAILED | 预留舵控 DDS 链路错误；当前实现未返回 |
 
 ## 9. CSV 资产
@@ -383,4 +411,7 @@ link 6 后端是 SPI Flash，不具备 MOSI/MISO 回显语义。BUS_LOOP 只发�
 | - | `helm_feedback_response.csv` | `07/01` |
 | `timer_jitter_start_request.csv` | `timer_jitter_start_response.csv` | `08/01` |
 | `timer_jitter_stop_request.csv` | `timer_jitter_stop_response.csv` | `08/02` |
+| `imu_stream_start_request.csv` | `imu_stream_start_response.csv` | `09/10` |
+| - | `imu_stream_feedback_response.csv` | `09/01` |
+| `imu_stream_stop_request.csv` | `imu_stream_stop_response.csv` | `09/11` |
 | - | `error_response.csv` | `FF/00` |

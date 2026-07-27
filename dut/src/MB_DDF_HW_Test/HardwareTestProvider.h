@@ -27,6 +27,9 @@ public:
                                               size_t report_index) override;
     bool helm_feedback_active() const override;
     ProductErrorCode build_helm_feedback(ProductMessage& response) override;
+    bool imu_stream_active() const override;
+    std::optional<ProductErrorCode> poll_imu_stream_feedback(
+        ProductMessage& response) override;
 
 private:
     struct Impl;

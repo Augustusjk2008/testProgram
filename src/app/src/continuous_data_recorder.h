@@ -15,6 +15,7 @@ public:
 
     ActionResult begin(const QString& directory,
                        const TestDescriptor& descriptor,
+                       const QString& runMode,
                        int intervalMs,
                        quint64 maxCycles);
     void setTaskId(const QString& taskId);
@@ -39,6 +40,7 @@ private:
     TestDescriptor m_descriptor;
     QVector<Column> m_columns;
     QString m_taskId;
+    QString m_runMode;
     QString m_outputPath;
     QString m_partialPath;
     QString m_writeError;

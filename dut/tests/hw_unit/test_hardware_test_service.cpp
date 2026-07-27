@@ -86,9 +86,25 @@ public:
         return next_error;
     }
 
+    bool imu_stream_active() const override { return imu_active; }
+
+    std::optional<HWTest::ProductErrorCode> poll_imu_stream_feedback(
+        HWTest::ProductMessage& response) override {
+        ++imu_feedback_calls;
+        if (!imu_feedback_ready) {
+            return std::nullopt;
+        }
+        response.set_unsigned("source_seq", 0x3456u);
+        response.set_float("delta_angle_x", 2.5F);
+        return next_error;
+    }
+
     HWTest::ProductErrorCode next_error{HWTest::ProductErrorCode::Ok};
     bool feedback_active{false};
+    bool imu_active{false};
+    bool imu_feedback_ready{false};
     int feedback_calls{0};
+    int imu_feedback_calls{0};
     std::vector<std::string> requests;
 };
 
@@ -373,6 +389,63 @@ TEST(HardwareTestServiceTest, InactiveFeedbackDoesNotAffectOrdinaryEchoSequence)
     EXPECT_EQ(decode_sent("system_status_response", endpoint.sent[0])
                   .get_unsigned("seq").value_or(0),
               0u);
+}
+
+TEST(HardwareTestServiceTest, RoutesImuStartAndStopWithEchoedRequestSequences) {
+    RecordingEndpoint endpoint;
+    FakeProvider provider;
+    endpoint.received.push_back(make_request("imu_stream_start_request", 0x1234));
+    endpoint.received.push_back(make_request("imu_stream_stop_request", 0x5678));
+    HWTest::HardwareTestService service(endpoint, provider, 90);
+
+    ASSERT_TRUE(service.process_once(HW::Timeout::poll()));
+    ASSERT_TRUE(service.process_once(HW::Timeout::poll()));
+
+    ASSERT_EQ(provider.requests,
+              (std::vector<std::string>{"imu_stream_start_request",
+                                        "imu_stream_stop_request"}));
+    ASSERT_EQ(endpoint.sent.size(), 2u);
+    EXPECT_EQ(decode_sent("imu_stream_start_response", endpoint.sent[0])
+                  .get_unsigned("seq").value_or(0), 0x1234u);
+    EXPECT_EQ(decode_sent("imu_stream_stop_response", endpoint.sent[1])
+                  .get_unsigned("seq").value_or(0), 0x5678u);
+}
+
+TEST(HardwareTestServiceTest, EmitsImuFeedbackWithoutConsumingSequenceWhileIdle) {
+    RecordingEndpoint endpoint;
+    FakeProvider provider;
+    provider.imu_active = true;
+    HWTest::HardwareTestService service(endpoint, provider, 44);
+
+    ASSERT_TRUE(service.emit_imu_stream_feedback_once());
+    EXPECT_TRUE(endpoint.sent.empty());
+    provider.imu_feedback_ready = true;
+    ASSERT_TRUE(service.emit_imu_stream_feedback_once());
+
+    ASSERT_EQ(provider.imu_feedback_calls, 2);
+    ASSERT_EQ(endpoint.sent.size(), 1u);
+    const auto feedback = decode_sent("imu_stream_feedback_response", endpoint.sent[0]);
+    EXPECT_EQ(feedback.get_unsigned("seq").value_or(0), 44u);
+    EXPECT_EQ(feedback.get_unsigned("source_seq").value_or(0), 0x3456u);
+    EXPECT_FLOAT_EQ(feedback.get_float("delta_angle_x").value_or(0.0F), 2.5F);
+    EXPECT_EQ(feedback.get_unsigned("status").value_or(1), 0u);
+}
+
+TEST(HardwareTestServiceTest, SendsOneTerminalImuErrorFeedbackFromProvider) {
+    RecordingEndpoint endpoint;
+    FakeProvider provider;
+    provider.imu_active = true;
+    provider.imu_feedback_ready = true;
+    provider.next_error = HWTest::ProductErrorCode::RegReadWriteFailed;
+    HWTest::HardwareTestService service(endpoint, provider, 9);
+
+    ASSERT_TRUE(service.emit_imu_stream_feedback_once());
+
+    ASSERT_EQ(endpoint.sent.size(), 1u);
+    const auto feedback = decode_sent("imu_stream_feedback_response", endpoint.sent[0]);
+    EXPECT_EQ(feedback.get_unsigned("status").value_or(0), 1u);
+    EXPECT_EQ(feedback.get_unsigned("err_code").value_or(0),
+              static_cast<uint16_t>(HWTest::ProductErrorCode::RegReadWriteFailed));
 }
 
 TEST(HardwareTestServiceTest, SendsHelmStartAckBeforeFeedbackWithIncreasingSequence) {

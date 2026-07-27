@@ -992,6 +992,33 @@ TEST(HalControlTransportTest, ReassemblesFrameSplitAcrossControlReads)
     EXPECT_EQ(channel.closeCount(), 1);
 }
 
+TEST(HalControlTransportTest, SupportsSeparateWriteAndReadForDeviceStreaming)
+{
+    const QByteArray firstResponse = framedBytes(QByteArray::fromHex("0102"));
+    const QByteArray secondResponse = framedBytes(QByteArray::fromHex("030405"));
+    const QByteArray request = QByteArray::fromHex("55AA0100A1B2");
+    FakeControlChannel channel;
+    channel.enqueueBytes(firstResponse + secondResponse);
+    FakeControlDevice device(&channel);
+    HalControlTransport transport(&device, QStringLiteral("CONTROL_A"));
+
+    QString error;
+    ASSERT_TRUE(transport.open(&error)) << error.toStdString();
+    const TransportResult written = transport.writeFrame(request, 75);
+    const TransportResult first = transport.readFrame(75);
+    const TransportResult second = transport.readFrame(75);
+
+    ASSERT_TRUE(written.ok) << written.error.toStdString();
+    ASSERT_TRUE(first.ok) << first.error.toStdString();
+    ASSERT_TRUE(second.ok) << second.error.toStdString();
+    EXPECT_TRUE(written.frame.isEmpty());
+    EXPECT_EQ(first.frame, firstResponse);
+    EXPECT_EQ(second.frame, secondResponse);
+    EXPECT_EQ(channel.writeCount(), 1);
+    EXPECT_EQ(channel.readCount(), 1);
+    EXPECT_EQ(channel.writeAt(0), request);
+}
+
 TEST(HalControlTransportTest, ReturnsFirstConcatenatedFrameAndBuffersSecond)
 {
     const QByteArray firstResponse = framedBytes(QByteArray::fromHex("01"));

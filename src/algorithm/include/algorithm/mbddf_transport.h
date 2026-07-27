@@ -45,6 +45,21 @@ public:
 
     virtual bool open(QString* error) = 0;
     virtual TransportResult transact(const QByteArray& frame, int timeoutMs) = 0;
+    virtual TransportResult writeFrame(const QByteArray& frame, int timeoutMs)
+    {
+        Q_UNUSED(frame)
+        Q_UNUSED(timeoutMs)
+        TransportResult result;
+        result.error = QStringLiteral("Byte transport does not support separate writes");
+        return result;
+    }
+    virtual TransportResult readFrame(int timeoutMs)
+    {
+        Q_UNUSED(timeoutMs)
+        TransportResult result;
+        result.error = QStringLiteral("Byte transport does not support separate reads");
+        return result;
+    }
     virtual void close() = 0;
 };
 
@@ -110,6 +125,8 @@ public:
     bool configure(const QVariantMap& options, QString* error) override;
     bool open(QString* error) override;
     TransportResult transact(const QByteArray& frame, int timeoutMs) override;
+    TransportResult writeFrame(const QByteArray& frame, int timeoutMs) override;
+    TransportResult readFrame(int timeoutMs) override;
     void close() override;
 
 private:
@@ -137,12 +154,17 @@ public:
     bool configure(const QVariantMap& options, QString* error) override;
     bool open(QString* error) override;
     TransportResult transact(const QByteArray& frame, int timeoutMs) override;
+    TransportResult writeFrame(const QByteArray& frame, int timeoutMs) override;
+    TransportResult readFrame(int timeoutMs) override;
     void close() override;
 
 private:
+    bool takeBufferedFrame(QByteArray* frame);
+
     hwtest::hal::IHalDevice* m_device = nullptr;
     hwtest::hal::ResourceId m_resourceId;
     hwtest::hal::SerialConfig m_serialConfig;
+    QByteArray m_receiveBuffer;
     bool m_open = false;
 };
 

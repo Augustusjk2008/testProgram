@@ -147,6 +147,48 @@ bool setDataStorageDirectory(const QString& halPath,
     return written;
 }
 
+bool writeTestConfigWithSupportedRunModes(const QString& sourcePath,
+                                          const QString& outputPath,
+                                          const QStringList& modes,
+                                          bool removeField,
+                                          QString* error)
+{
+    QFile source(sourcePath);
+    if (!source.open(QIODevice::ReadOnly)) {
+        if (error != nullptr) *error = source.errorString();
+        return false;
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(source.readAll());
+    source.close();
+    if (!document.isObject()) {
+        if (error != nullptr) *error = QStringLiteral("Test fixture is not a JSON object");
+        return false;
+    }
+
+    QJsonObject root = document.object();
+    QJsonObject reportFields = root.value(QStringLiteral("reportFields")).toObject();
+    if (removeField) {
+        reportFields.remove(QStringLiteral("supportedRunModes"));
+    } else {
+        QJsonArray runModes;
+        for (const QString& mode : modes) {
+            runModes.push_back(mode);
+        }
+        reportFields.insert(QStringLiteral("supportedRunModes"), runModes);
+    }
+    root.insert(QStringLiteral("reportFields"), reportFields);
+
+    QFile output(outputPath);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (error != nullptr) *error = output.errorString();
+        return false;
+    }
+    const QByteArray json = QJsonDocument(root).toJson();
+    const bool written = output.write(json) == json.size();
+    if (!written && error != nullptr) *error = output.errorString();
+    return written;
+}
+
 TEST(TestApplicationControllerTest, RejectsPreparationBeforeConfigurationsAreLoaded)
 {
     TestApplicationController controller;
@@ -156,6 +198,91 @@ TEST(TestApplicationControllerTest, RejectsPreparationBeforeConfigurationsAreLoa
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.code, QStringLiteral("invalid_state"));
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+}
+
+TEST(TestApplicationControllerTest, DefaultsMissingRunModeCapabilitiesToSingleOnly)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString error;
+    const QString testConfigPath = directory.filePath(
+        QStringLiteral("missing-run-modes.testcfg.json"));
+    ASSERT_TRUE(writeTestConfigWithSupportedRunModes(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG),
+        testConfigPath,
+        {},
+        true,
+        &error)) << error.toStdString();
+
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        testConfigPath, QStringLiteral(HWTEST_APP_HAL_CONFIG));
+
+    ASSERT_TRUE(loaded.ok) << loaded.message.toStdString();
+    EXPECT_EQ(controller.snapshot().descriptor.supportedRunModes,
+              QVector<QString>{QStringLiteral("single")});
+}
+
+TEST(TestApplicationControllerTest, RejectsMutuallyExclusiveContinuousCapabilities)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString error;
+    const QString testConfigPath = directory.filePath(
+        QStringLiteral("conflicting-run-modes.testcfg.json"));
+    ASSERT_TRUE(writeTestConfigWithSupportedRunModes(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG),
+        testConfigPath,
+        {QStringLiteral("single"),
+         QStringLiteral("pc_periodic"),
+         QStringLiteral("device_stream")},
+        false,
+        &error)) << error.toStdString();
+
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        testConfigPath, QStringLiteral(HWTEST_APP_HAL_CONFIG));
+
+    EXPECT_FALSE(loaded.ok);
+    EXPECT_EQ(loaded.code, QStringLiteral("test_config"));
+    EXPECT_TRUE(loaded.message.contains(QStringLiteral("pc_periodic")));
+    EXPECT_TRUE(loaded.message.contains(QStringLiteral("device_stream")));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+}
+
+TEST(TestApplicationControllerTest, RejectsRunModeNotDeclaredByConfiguration)
+{
+    ensureQtApplication();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString error;
+    const QString testConfigPath = directory.filePath(
+        QStringLiteral("device-stream-only.testcfg.json"));
+    ASSERT_TRUE(writeTestConfigWithSupportedRunModes(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG),
+        testConfigPath,
+        {QStringLiteral("single"), QStringLiteral("device_stream")},
+        false,
+        &error)) << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        testConfigPath, QStringLiteral(HWTEST_APP_HAL_CONFIG)).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    TestRunOptions options;
+    options.mode = QStringLiteral("pc_periodic");
+    options.intervalMs = 10;
+    options.maxCycles = 1;
+
+    const ActionResult started = controller.start(options);
+
+    EXPECT_FALSE(started.ok);
+    EXPECT_EQ(started.code, QStringLiteral("CapabilityUnsupported"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
+    if (started.ok) {
+        controller.stop(1000);
+    }
+    controller.shutdown();
 }
 
 TEST(TestApplicationControllerTest, LoadsDiSwitchDescriptorsWithoutOpeningHardware)
@@ -696,6 +823,207 @@ TEST(TestApplicationControllerTest, StoppedPcPeriodicSavesCompleteElectricalHeal
     EXPECT_TRUE(dataLines.at(1).contains(QStringLiteral("\t11.1\t12.2\t")));
     EXPECT_TRUE(dataLines.at(2).contains(QStringLiteral("\t4661\t0\t0x0000\t")));
     EXPECT_TRUE(dataLines.at(2).contains(QStringLiteral("\t21.1\t22.2\t")));
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, DeviceStreamCanSaveWithoutPcPeriodicSettings)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString error;
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+    const QString dataDirectory = directory.filePath(QStringLiteral("continuous-data"));
+    ASSERT_TRUE(setDataStorageDirectory(halConfigPath, dataDirectory, &error))
+        << error.toStdString();
+    const QString testConfigPath = directory.filePath(
+        QStringLiteral("device-stream.testcfg.json"));
+    ASSERT_TRUE(writeTestConfigWithSupportedRunModes(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG),
+        testConfigPath,
+        {QStringLiteral("single"), QStringLiteral("device_stream")},
+        false,
+        &error)) << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(testConfigPath, halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    TestRunOptions options;
+    options.mode = QStringLiteral("device_stream");
+    options.intervalMs = 9;
+    options.maxCycles = 1000000001ULL;
+    options.saveData = true;
+    const ActionResult started = controller.start(options);
+    ASSERT_TRUE(started.ok) << started.code.toStdString() << ": "
+                            << started.message.toStdString();
+
+    const ActionResult terminal = controller.waitForTerminal(3000);
+    EXPECT_FALSE(terminal.ok);
+    const ApplicationSnapshot snapshot = controller.snapshot();
+    EXPECT_EQ(snapshot.phase, QStringLiteral("error"));
+    EXPECT_EQ(snapshot.runMode, QStringLiteral("device_stream"));
+    EXPECT_EQ(snapshot.intervalMs, 1000);
+    EXPECT_EQ(snapshot.maxCycles, 1u);
+    EXPECT_TRUE(snapshot.dataSaveEnabled);
+    EXPECT_TRUE(snapshot.dataSaveError.isEmpty())
+        << snapshot.dataSaveError.toStdString();
+    ASSERT_FALSE(snapshot.dataFilePath.isEmpty());
+    ASSERT_TRUE(QFileInfo::exists(snapshot.dataFilePath));
+
+    QFile saved(snapshot.dataFilePath);
+    ASSERT_TRUE(saved.open(QIODevice::ReadOnly));
+    const QByteArray bytes = saved.readAll();
+    ASSERT_TRUE(bytes.startsWith(QByteArray::fromHex("EFBBBF")));
+    const QString text = QString::fromUtf8(bytes.mid(3));
+    EXPECT_TRUE(text.contains(QStringLiteral("# run_mode=device_stream\n")));
+    EXPECT_TRUE(text.contains(QStringLiteral("# sample_count=0\n")));
+    EXPECT_TRUE(text.contains(QStringLiteral("# repeat_delay_ms=NA\n")));
+    EXPECT_TRUE(text.contains(QStringLiteral("# max_cycles=NA\n")));
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, ImuDeviceStreamSendsStartAndStopAndSavesFixedColumns)
+{
+    ensureQtApplication();
+    ScopedEnvironmentVariable protocolAssets(
+        "MB_DDF_PROTOCOL_CSV_DIR",
+        QByteArray("H:/WorkSpace/QtWorkspace/testProgram/dut/docs/design/product_protocol_csv"));
+    ASSERT_TRUE(QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir());
+
+    test::MbddfUdpTestPeer peer;
+    QString error;
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+    const QString dataDirectory = directory.filePath(QStringLiteral("continuous-data"));
+    ASSERT_TRUE(setDataStorageDirectory(halConfigPath, dataDirectory, &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_IMU_STREAM_CONFIG), halConfigPath).ok);
+    EXPECT_EQ(controller.snapshot().descriptor.supportedRunModes,
+              QVector<QString>{QStringLiteral("device_stream")});
+    ASSERT_TRUE(controller.prepare().ok);
+
+    TestRunOptions options;
+    options.mode = QStringLiteral("device_stream");
+    options.saveData = true;
+    ASSERT_TRUE(controller.start(options).ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(
+        QStringLiteral("imu_stream_start_response"),
+        {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}},
+        &error)) << error.toStdString();
+
+    const auto sendFeedback = [&](quint16 productSequence,
+                                  quint16 sourceSequence,
+                                  double base) {
+        return peer.sendToLastRequester(
+            QStringLiteral("imu_stream_feedback_response"),
+            productSequence,
+            {{QStringLiteral("status"), 0},
+             {QStringLiteral("err_code"), 0},
+             {QStringLiteral("source_seq"), sourceSequence},
+             {QStringLiteral("delta_angle_x"), base + 0.1},
+             {QStringLiteral("delta_angle_y"), base + 0.2},
+             {QStringLiteral("delta_angle_z"), base + 0.3},
+             {QStringLiteral("delta_velocity_x"), base + 1.1},
+             {QStringLiteral("delta_velocity_y"), base + 1.2},
+             {QStringLiteral("delta_velocity_z"), base + 1.3},
+             {QStringLiteral("angular_rate_x"), base + 2.1},
+             {QStringLiteral("angular_rate_y"), base + 2.2},
+             {QStringLiteral("angular_rate_z"), base + 2.3},
+             {QStringLiteral("acceleration_x"), base + 3.1},
+             {QStringLiteral("acceleration_y"), base + 3.2},
+             {QStringLiteral("acceleration_z"), base + 3.3},
+             {QStringLiteral("temperature"), 25.5 + base},
+             {QStringLiteral("self_test_status"), 0x1234},
+             {QStringLiteral("work_status"), 0x56},
+             {QStringLiteral("software_version"), 0x789A},
+             {QStringLiteral("source_reserved"), 0xBCDE}},
+            &error);
+    };
+    ASSERT_TRUE(sendFeedback(0x9000, 100, 10.0)) << error.toStdString();
+    ASSERT_TRUE(sendFeedback(0x9001, 5, 20.0)) << error.toStdString();
+
+    QElapsedTimer sampleTimer;
+    sampleTimer.start();
+    while (controller.snapshot().sampleCount < 2 && sampleTimer.elapsed() < 3000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(1);
+    }
+    ASSERT_EQ(controller.snapshot().sampleCount, 2u);
+    ASSERT_TRUE(controller.stopAsync(5000).ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(
+        QStringLiteral("imu_stream_stop_response"),
+        {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}},
+        &error)) << error.toStdString();
+
+    QElapsedTimer stopTimer;
+    stopTimer.start();
+    while (controller.snapshot().phase != QStringLiteral("stopped") &&
+           stopTimer.elapsed() < 5000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(1);
+    }
+    const ApplicationSnapshot snapshot = controller.snapshot();
+    ASSERT_EQ(snapshot.phase, QStringLiteral("stopped"));
+    EXPECT_TRUE(snapshot.dataSaveEnabled);
+    EXPECT_TRUE(snapshot.dataSaveError.isEmpty())
+        << snapshot.dataSaveError.toStdString();
+    ASSERT_EQ(snapshot.sampleCount, 2u);
+    ASSERT_TRUE(QFileInfo::exists(snapshot.dataFilePath));
+
+    QFile saved(snapshot.dataFilePath);
+    ASSERT_TRUE(saved.open(QIODevice::ReadOnly));
+    const QByteArray bytes = saved.readAll();
+    ASSERT_TRUE(bytes.startsWith(QByteArray::fromHex("EFBBBF")));
+    const QString text = QString::fromUtf8(bytes.mid(3));
+    EXPECT_TRUE(text.contains(QStringLiteral("# run_mode=device_stream\n")));
+    EXPECT_TRUE(text.contains(QStringLiteral("# sample_count=2\n")));
+    const QString expectedHeader = QStringLiteral(
+        "report_index\tsample_time_us\tseq\tresponse_status\terr_code\t"
+        "source_seq\tdelta_angle_x\tdelta_angle_y\tdelta_angle_z\t"
+        "delta_velocity_x\tdelta_velocity_y\tdelta_velocity_z\t"
+        "angular_rate_x\tangular_rate_y\tangular_rate_z\t"
+        "acceleration_x\tacceleration_y\tacceleration_z\t"
+        "temperature_°C\tself_test_status\twork_status\t"
+        "software_version\tsource_reserved");
+    EXPECT_TRUE(text.contains(expectedHeader + QLatin1Char('\n')));
+    QStringList dataLines;
+    bool headerSeen = false;
+    for (const QString& line : text.split(QLatin1Char('\n'))) {
+        if (line == expectedHeader) {
+            headerSeen = true;
+        } else if (headerSeen && !line.isEmpty()) {
+            dataLines.push_back(line);
+        }
+    }
+    ASSERT_EQ(dataLines.size(), 2);
+    for (const QString& line : dataLines) {
+        EXPECT_EQ(line.split(QLatin1Char('\t'), Qt::KeepEmptyParts).size(), 23);
+    }
+    EXPECT_TRUE(text.contains(QStringLiteral("\t100\t")));
+    EXPECT_TRUE(text.contains(QStringLiteral("\t5\t")));
     EXPECT_TRUE(controller.shutdown().ok);
 }
 

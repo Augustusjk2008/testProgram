@@ -60,7 +60,37 @@ TEST(ProductProtocolTest, ParsesEveryGeneratedRequestDescriptor) {
         ASSERT_TRUE(parsed) << descriptor.name;
         EXPECT_EQ(parsed.message().name(), descriptor.name);
     }
-    EXPECT_EQ(request_count, 15u);
+    EXPECT_EQ(request_count, 17u);
+}
+
+TEST(ProductProtocolTest, EncodesImuStreamFeedbackLayoutAndCommandIds) {
+    ProductProtocol protocol;
+    auto start = protocol.create_message("imu_stream_start_request", false);
+    auto feedback = protocol.create_message("imu_stream_feedback_response", false);
+    auto stop = protocol.create_message("imu_stream_stop_request", false);
+    ASSERT_TRUE(start);
+    ASSERT_TRUE(feedback);
+    ASSERT_TRUE(stop);
+
+    EXPECT_EQ(start.get_unsigned("type_group").value_or(0), 0x09u);
+    EXPECT_EQ(start.get_unsigned("sub_type").value_or(0), 0x10u);
+    EXPECT_EQ(feedback.get_unsigned("type_group").value_or(0), 0x09u);
+    EXPECT_EQ(feedback.get_unsigned("sub_type").value_or(0), 0x01u);
+    EXPECT_EQ(stop.get_unsigned("type_group").value_or(0), 0x09u);
+    EXPECT_EQ(stop.get_unsigned("sub_type").value_or(0), 0x11u);
+    EXPECT_EQ(feedback.bytes().size(), 123u);
+
+    EXPECT_EQ(feedback.data_offset("source_seq").value_or(99), 8u);
+    EXPECT_EQ(feedback.data_offset("delta_angle_x").value_or(99), 10u);
+    EXPECT_EQ(feedback.data_offset("acceleration_z").value_or(99), 54u);
+    EXPECT_EQ(feedback.data_offset("temperature").value_or(99), 58u);
+    EXPECT_EQ(feedback.data_offset("source_reserved").value_or(99), 65u);
+    ASSERT_TRUE(feedback.set_unsigned("source_seq", 0x1234));
+    ASSERT_TRUE(feedback.set_float("delta_angle_x", 1.25F));
+    ASSERT_TRUE(feedback.set_signed("temperature", -123));
+    EXPECT_EQ(feedback.get_unsigned("source_seq").value_or(0), 0x1234u);
+    EXPECT_FLOAT_EQ(feedback.get_float("delta_angle_x").value_or(0.0F), 1.25F);
+    EXPECT_EQ(feedback.get_signed("temperature").value_or(0), -123);
 }
 
 TEST(ProductProtocolTest, RemovedPowerAndAdCommandsAreUnknown) {

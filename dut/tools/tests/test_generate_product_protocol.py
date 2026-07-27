@@ -39,6 +39,11 @@ ASSET_NAMES = [
     "helm_start_response.csv",
     "helm_stop_request.csv",
     "helm_stop_response.csv",
+    "imu_stream_feedback_response.csv",
+    "imu_stream_start_request.csv",
+    "imu_stream_start_response.csv",
+    "imu_stream_stop_request.csv",
+    "imu_stream_stop_response.csv",
     "memperf_test_request.csv",
     "memperf_test_response.csv",
     "spi_flash_test_request.csv",
@@ -371,7 +376,7 @@ def test_strict_check_reports_complete_catalog_summary(tmp_path: Path) -> None:
     result = run_generator_strict("--check", protocol_dir)
 
     assert result.returncode == 0, result.stderr
-    assert "32 份 CSV" in result.stdout
+    assert "37 份 CSV" in result.stdout
     assert "len=48/123" in result.stdout
     assert "帧长=53/128" in result.stdout
 
@@ -386,6 +391,11 @@ def test_repository_catalog_matches_planned_protocol_revisions() -> None:
         "elec_health_status_response.csv": (0x05, 0x01),
         "helm_board_test_request.csv": (0x07, 0x02),
         "helm_board_test_response.csv": (0x07, 0x02),
+        "imu_stream_feedback_response.csv": (0x09, 0x01),
+        "imu_stream_start_request.csv": (0x09, 0x10),
+        "imu_stream_start_response.csv": (0x09, 0x10),
+        "imu_stream_stop_request.csv": (0x09, 0x11),
+        "imu_stream_stop_response.csv": (0x09, 0x11),
     }
     for asset_name, expected in command_ids.items():
         fields = read_asset_fields(asset_name)
@@ -404,6 +414,10 @@ def test_repository_catalog_matches_planned_protocol_revisions() -> None:
         "helm_board_test_response.csv": ("B45-51", "7"),
         "helm_start_request.csv": ("B37-51", "15"),
         "helm_start_response.csv": ("B13-51", "39"),
+        "imu_stream_start_request.csv": ("B9-51", "43"),
+        "imu_stream_start_response.csv": ("B12-51", "40"),
+        "imu_stream_stop_request.csv": ("B9-51", "43"),
+        "imu_stream_stop_response.csv": ("B12-51", "40"),
         "memperf_test_response.csv": ("B33-51", "19"),
         "spi_flash_test_response.csv": ("B16-51", "36"),
     }
@@ -415,6 +429,36 @@ def test_repository_catalog_matches_planned_protocol_revisions() -> None:
 
     feedback = read_asset_fields("helm_feedback_response.csv")
     assert feedback["len"]["default"] == "123"
+
+    imu_feedback = read_asset_fields("imu_stream_feedback_response.csv")
+    assert imu_feedback["len"]["default"] == "123"
+    expected_imu_fields = {
+        "status": ("B9", "U8"),
+        "err_code": ("B10-11", "U16"),
+        "source_seq": ("B12-13", "U16"),
+        "delta_angle_x": ("B14-17", "F32"),
+        "delta_angle_y": ("B18-21", "F32"),
+        "delta_angle_z": ("B22-25", "F32"),
+        "delta_velocity_x": ("B26-29", "F32"),
+        "delta_velocity_y": ("B30-33", "F32"),
+        "delta_velocity_z": ("B34-37", "F32"),
+        "angular_rate_x": ("B38-41", "F32"),
+        "angular_rate_y": ("B42-45", "F32"),
+        "angular_rate_z": ("B46-49", "F32"),
+        "acceleration_x": ("B50-53", "F32"),
+        "acceleration_y": ("B54-57", "F32"),
+        "acceleration_z": ("B58-61", "F32"),
+        "temperature": ("B62-63", "S16F"),
+        "self_test_status": ("B64-65", "U16"),
+        "work_status": ("B66", "U8"),
+        "software_version": ("B67-68", "U16"),
+        "source_reserved": ("B69-70", "U16"),
+        "pad": ("B71-126", "RESERVED"),
+    }
+    for field_name, (index, field_type) in expected_imu_fields.items():
+        assert imu_feedback[field_name]["index"] == index
+        assert imu_feedback[field_name]["type"] == field_type
+    assert float(imu_feedback["temperature"]["lsb"]) == 0.1
 
     dh_request = read_asset_fields("dh_control_request.csv")
     assert dh_request["report_count"]["default"] == "50"

@@ -1,6 +1,7 @@
 #include <app/frontend_launch_options.h>
 
 #include "mbddf_algorithm_registry.h"
+#include "run_mode_capabilities.h"
 
 #include <biz/test_config_manager.h>
 
@@ -40,6 +41,11 @@ bool makeTestConfigOption(const QString& configPath,
     hwtest::biz::TestConfigManager manager;
     const auto loaded = manager.load(configPath);
     if (!loaded.ok()) {
+        return false;
+    }
+    QVector<QString> supportedRunModes;
+    if (!parseSupportedRunModes(loaded.value.reportFields,
+                                &supportedRunModes).isEmpty()) {
         return false;
     }
 

@@ -1,0 +1,119 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-imu-stream",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF inertial measurement stream",
+  "configVersion": "1.0.0",
+  "steps": [
+    {
+      "stepId": "IMU_STREAM",
+      "testItemId": "imu_stream",
+      "name": "惯测连续数据",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.imu_stream",
+      "parameters": {"protocol": {"requestValues": {}}},
+      "timeoutMs": 2000,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": []
+    }
+  ],
+  "hardwareRequirements": [],
+  "protocolProfiles": [
+    {
+      "id": "imu_stream_start_request",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"},
+      "timing": {"timeoutMs": 2000}
+    },
+    {
+      "id": "imu_stream_start_response",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"},
+      "timing": {"timeoutMs": 2000}
+    },
+    {
+      "id": "imu_stream_feedback_response",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"},
+      "timing": {"timeoutMs": 20}
+    },
+    {
+      "id": "imu_stream_stop_request",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"},
+      "timing": {"timeoutMs": 2000}
+    },
+    {
+      "id": "imu_stream_stop_response",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"},
+      "timing": {"timeoutMs": 2000}
+    }
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {
+      "startRequestProfileId": "imu_stream_start_request",
+      "startResponseProfileId": "imu_stream_start_response",
+      "feedbackResponseProfileId": "imu_stream_feedback_response",
+      "stopRequestProfileId": "imu_stream_stop_request",
+      "stopResponseProfileId": "imu_stream_stop_response"
+    },
+    "stream": {
+      "readTimeoutMs": 20,
+      "startTimeoutMs": 2000,
+      "stopTimeoutMs": 2000
+    },
+    "transport": {"openTimeoutMs": 1000, "readChunkBytes": 260},
+    "serial": {"baudRate": 614400, "dataBits": 8, "parity": "Even", "stopBits": 1, "flowControl": "None"},
+    "initialSequence": 4660
+  },
+  "safetyPolicy": {
+    "enterSafeStateOnStop": true,
+    "enterSafeStateOnError": true
+  },
+  "runtimeConfig": {
+    "parallelEnabled": false,
+    "maxParallel": 1,
+    "defaultTimeoutMs": 2000,
+    "defaultRetryCount": 0,
+    "retryIntervalMs": 0,
+    "taskPriorityDefault": 2,
+    "stopOnFirstFailure": true,
+    "allowResume": false
+  },
+  "reportFields": {
+    "title": "惯测连续数据",
+    "description": "PC 发送一次 START，DUT 从 COM4 接收惯测 payload 并持续经 COM3 回告，直至 PC 发送 STOP。",
+    "supportedRunModes": ["device_stream"],
+    "measurements": [
+      {"id": "status", "label": "设备状态", "unit": "", "primary": false},
+      {"id": "err_code", "label": "设备错误码", "unit": "", "primary": false},
+      {"id": "source_seq", "label": "源序列号", "unit": "", "primary": false},
+      {"id": "delta_angle_x", "label": "X 轴角增量", "unit": "", "primary": true},
+      {"id": "delta_angle_y", "label": "Y 轴角增量", "unit": "", "primary": true},
+      {"id": "delta_angle_z", "label": "Z 轴角增量", "unit": "", "primary": true},
+      {"id": "delta_velocity_x", "label": "X 轴速度增量", "unit": "", "primary": true},
+      {"id": "delta_velocity_y", "label": "Y 轴速度增量", "unit": "", "primary": true},
+      {"id": "delta_velocity_z", "label": "Z 轴速度增量", "unit": "", "primary": true},
+      {"id": "angular_rate_x", "label": "X 轴角速度", "unit": "", "primary": true},
+      {"id": "angular_rate_y", "label": "Y 轴角速度", "unit": "", "primary": true},
+      {"id": "angular_rate_z", "label": "Z 轴角速度", "unit": "", "primary": true},
+      {"id": "acceleration_x", "label": "X 轴加速度", "unit": "", "primary": true},
+      {"id": "acceleration_y", "label": "Y 轴加速度", "unit": "", "primary": true},
+      {"id": "acceleration_z", "label": "Z 轴加速度", "unit": "", "primary": true},
+      {"id": "temperature", "label": "温度", "unit": "°C", "primary": true},
+      {"id": "self_test_status", "label": "自检状态", "unit": "", "primary": false},
+      {"id": "work_status", "label": "工作状态", "unit": "", "primary": false},
+      {"id": "software_version", "label": "软件版本原始值", "unit": "", "primary": false},
+      {"id": "source_reserved", "label": "源保留字段", "unit": "", "primary": false}
+    ]
+  }
+}

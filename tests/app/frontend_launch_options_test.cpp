@@ -4,7 +4,11 @@
 
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 
 namespace hwtest::app {
@@ -17,6 +21,40 @@ void parseFrontendArguments(QCommandLineParser* parser,
     ASSERT_NE(parser, nullptr);
     addFrontendOptions(*parser, defaults);
     EXPECT_TRUE(parser->parse(arguments)) << parser->errorText().toStdString();
+}
+
+bool writeConflictingRunModeConfig(const QString& outputPath, QString* error)
+{
+    QFile source(QStringLiteral(HWTEST_APP_TEST_CONFIG));
+    if (!source.open(QIODevice::ReadOnly)) {
+        if (error != nullptr) *error = source.errorString();
+        return false;
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(source.readAll());
+    source.close();
+    if (!document.isObject()) {
+        if (error != nullptr) *error = QStringLiteral("Test fixture is not a JSON object");
+        return false;
+    }
+
+    QJsonObject root = document.object();
+    QJsonObject reportFields = root.value(QStringLiteral("reportFields")).toObject();
+    reportFields.insert(
+        QStringLiteral("supportedRunModes"),
+        QJsonArray{QStringLiteral("single"),
+                   QStringLiteral("pc_periodic"),
+                   QStringLiteral("device_stream")});
+    root.insert(QStringLiteral("reportFields"), reportFields);
+
+    QFile output(outputPath);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (error != nullptr) *error = output.errorString();
+        return false;
+    }
+    const QByteArray json = QJsonDocument(root).toJson();
+    const bool written = output.write(json) == json.size();
+    if (!written && error != nullptr) *error = output.errorString();
+    return written;
 }
 
 TEST(FrontendLaunchOptionsTest, ResolvesRelativePathsAgainstProvidedBase)
@@ -58,7 +96,7 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
         parser, QStringLiteral(HWTEST_PROJECT_SOURCE_DIR), defaults, &options);
 
     ASSERT_TRUE(result.ok) << result.message.toStdString();
-    ASSERT_EQ(options.testConfigs.size(), 7);
+    ASSERT_EQ(options.testConfigs.size(), 8);
     bool foundSystem = false;
     bool foundElectrical = false;
     bool foundMemory = false;
@@ -66,6 +104,7 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
     bool foundDhPulse = false;
     bool foundTimer = false;
     bool foundDiRead = false;
+    bool foundImuStream = false;
     for (const FrontendTestConfigOption& option : options.testConfigs) {
         foundSystem = foundSystem || option.configId == QStringLiteral("mbddf-system-status");
         foundElectrical = foundElectrical || option.configId == QStringLiteral("mbddf-elec-health");
@@ -74,6 +113,8 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
         foundDhPulse = foundDhPulse || option.configId == QStringLiteral("mbddf-dh-pulse-config");
         foundTimer = foundTimer || option.configId == QStringLiteral("mbddf-timer-jitter");
         foundDiRead = foundDiRead || option.configId == QStringLiteral("mbddf-di-read");
+        foundImuStream = foundImuStream ||
+            option.configId == QStringLiteral("mbddf-imu-stream");
         EXPECT_FALSE(option.configPath.isEmpty());
         EXPECT_FALSE(option.title.isEmpty());
     }
@@ -84,6 +125,7 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
     EXPECT_TRUE(foundDhPulse);
     EXPECT_TRUE(foundTimer);
     EXPECT_TRUE(foundDiRead);
+    EXPECT_TRUE(foundImuStream);
 }
 
 TEST(FrontendLaunchOptionsTest, EveryDiscoveredConfigurationCanBeLoadedByController)
@@ -108,6 +150,32 @@ TEST(FrontendLaunchOptionsTest, EveryDiscoveredConfigurationCanBeLoadedByControl
             << option.algorithmId.toStdString() << ": "
             << loaded.code.toStdString() << " " << loaded.message.toStdString();
     }
+}
+
+TEST(FrontendLaunchOptionsTest, DoesNotAdvertiseConflictingContinuousCapabilities)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(QDir().mkpath(directory.filePath(QStringLiteral("configs"))));
+    const QString testConfigPath = directory.filePath(
+        QStringLiteral("configs/conflicting.testcfg.json"));
+    QString error;
+    ASSERT_TRUE(writeConflictingRunModeConfig(testConfigPath, &error))
+        << error.toStdString();
+
+    const FrontendOptionDefaults defaults{
+        testConfigPath,
+        QStringLiteral(HWTEST_APP_HAL_CONFIG),
+        false};
+    QCommandLineParser parser;
+    parseFrontendArguments(&parser, defaults, {QStringLiteral("frontend")});
+    FrontendLaunchOptions options;
+
+    const ActionResult result = readFrontendOptions(
+        parser, directory.path(), defaults, &options);
+
+    ASSERT_TRUE(result.ok) << result.message.toStdString();
+    EXPECT_TRUE(options.testConfigs.isEmpty());
 }
 
 TEST(FrontendLaunchOptionsTest, RequiresPathsForBatchRunner)
