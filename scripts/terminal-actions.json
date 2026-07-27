@@ -2,17 +2,6 @@
   "schemaVersion": 1,
   "actions": [
     {
-      "id": "test",
-      "label": "编译测试",
-      "icon": "Hammer",
-      "windowsCommand": ".\\hwtest.ps1 -Ui web -WebPort 18765 -Control CONTROL_SERIAL -Port COM3",
-      "linuxCommand": "",
-      "macosCommand": "",
-      "cwd": ".",
-      "confirm": false,
-      "enabled": true
-    },
-    {
       "id": "test_only",
       "label": "单独测试",
       "icon": "TestTube2",
@@ -64,6 +53,17 @@
       "linuxCommand": "",
       "macosCommand": "",
       "cwd": ".",
+      "confirm": false,
+      "enabled": true
+    },
+    {
+      "id": "remote",
+      "label": "启动远端",
+      "icon": "Terminal",
+      "windowsCommand": ".\\debug.bat hw_test_run",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": "./dut/",
       "confirm": false,
       "enabled": true
     }
