@@ -101,6 +101,9 @@ QJsonObject snapshotObject(const ApplicationSnapshot& snapshot)
                   static_cast<double>(snapshot.cycleIndex));
     object.insert(QStringLiteral("sampleCount"),
                   static_cast<double>(snapshot.sampleCount));
+    object.insert(QStringLiteral("dataSaveEnabled"), snapshot.dataSaveEnabled);
+    object.insert(QStringLiteral("dataFilePath"), snapshot.dataFilePath);
+    object.insert(QStringLiteral("dataSaveError"), snapshot.dataSaveError);
     object.insert(QStringLiteral("descriptor"),
                   descriptorObject(snapshot.descriptor));
     object.insert(QStringLiteral("digitalStimulus"),

@@ -1,5 +1,6 @@
 #include <app/test_application_controller.h>
 
+#include "continuous_data_recorder.h"
 #include "mbddf_algorithm_registry.h"
 
 #include <algorithm/elec_health_status_executor.h>
@@ -319,6 +320,7 @@ public:
 
     QString testConfigPath;
     QString halConfigPath;
+    QString dataStorageDirectory;
     QVariantMap halConfig;
     QVariantMap executionConfig;
     QVector<ControlResource> controls;
@@ -336,6 +338,7 @@ public:
     TestServicePtr runner{nullptr, &hwtest::biz::destroyTestRunService};
     hwtest::logging::LogService logService;
     std::unique_ptr<hwtest::logging::JsonLineFileSink> fileSink;
+    ContinuousDataRecorder dataRecorder;
     ActionResult latchedShutdownFailure;
     QString suppressedResultTaskId;
     quint64 generation = 0;
@@ -416,6 +419,15 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     if (!loadedHal.ok) {
         return loadedHal;
     }
+    QString dataStorageDirectory = halConfig.value(QStringLiteral("dataStorage"))
+                                       .toMap()
+                                       .value(QStringLiteral("directory"))
+                                       .toString()
+                                       .trimmed();
+    if (dataStorageDirectory.isEmpty()) {
+        dataStorageDirectory = QStringLiteral("../data");
+    }
+    dataStorageDirectory = resolvedPath(absoluteHalPath, dataStorageDirectory);
     if (selectedAlgorithmId == QStringLiteral("mbddf.di_read")) {
         const ActionResult safeState = validateDigitalStimulusSafeState(
             testConfig.value.executionConfig, halConfig);
@@ -456,6 +468,7 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
 
     m_impl->testConfigPath = absoluteTestPath;
     m_impl->halConfigPath = absoluteHalPath;
+    m_impl->dataStorageDirectory = dataStorageDirectory;
     m_impl->selectedAlgorithmId = selectedAlgorithmId;
     m_impl->descriptor = makeTestDescriptor(testConfig.value, *selectedStep);
     m_impl->halConfig = halConfig;
@@ -733,8 +746,7 @@ ActionResult TestApplicationController::prepare()
                      [this, generation](const hwtest::biz::TaskId& taskId,
                                         const hwtest::biz::StepId& stepId,
                                         const hwtest::biz::RawSample& rawSample) {
-                         if (generation != m_impl->generation ||
-                             taskId == m_impl->suppressedResultTaskId) {
+                         if (generation != m_impl->generation) {
                              return;
                          }
                          ApplicationSample sample;
@@ -745,6 +757,20 @@ ActionResult TestApplicationController::prepare()
                          sample.cycleIndex = rawSample.cycleIndex;
                          sample.values = rawSample.values;
                          sample.tags = rawSample.tags;
+                         if (m_impl->dataRecorder.active()) {
+                             const ActionResult recorded =
+                                 m_impl->dataRecorder.append(sample);
+                             if (!recorded.ok &&
+                                 m_impl->snapshot.dataSaveError != recorded.message) {
+                                 m_impl->snapshot.dataSaveError = recorded.message;
+                                 m_impl->snapshot.dataFilePath =
+                                     m_impl->dataRecorder.outputPath();
+                                 emit snapshotChanged(m_impl->snapshot);
+                             }
+                         }
+                         if (taskId == m_impl->suppressedResultTaskId) {
+                             return;
+                         }
                          m_impl->snapshot.cycleIndex = rawSample.cycleIndex;
                          ++m_impl->snapshot.sampleCount;
                          emit sampleReceived(sample);
@@ -810,6 +836,33 @@ ActionResult TestApplicationController::prepare()
                          case hwtest::biz::TestState::Error:
                              m_impl->snapshot.phase = QStringLiteral("error");
                              break;
+                         }
+                         const bool terminal =
+                             m_impl->snapshot.phase == QStringLiteral("finished") ||
+                             m_impl->snapshot.phase == QStringLiteral("stopped") ||
+                             m_impl->snapshot.phase == QStringLiteral("error");
+                         if (terminal && m_impl->dataRecorder.active()) {
+                             QString finalStatus = QStringLiteral("已完成");
+                             if (m_impl->snapshot.phase == QStringLiteral("stopped")) {
+                                 finalStatus = QStringLiteral("用户停止");
+                             } else if (m_impl->snapshot.phase == QStringLiteral("error")) {
+                                 finalStatus = QStringLiteral("错误");
+                             }
+                             QString finalDetail = m_impl->snapshot.message;
+                             if (finalDetail.isEmpty()) {
+                                 finalDetail = m_impl->snapshot.phase == QStringLiteral("finished")
+                                     ? QStringLiteral("连续测试已完成")
+                                     : (m_impl->snapshot.phase == QStringLiteral("stopped")
+                                            ? QStringLiteral("连续测试已停止")
+                                            : QStringLiteral("连续测试异常结束"));
+                             }
+                             const ActionResult saved = m_impl->dataRecorder.finish(
+                                 finalStatus, finalDetail);
+                             m_impl->snapshot.dataFilePath =
+                                 m_impl->dataRecorder.outputPath();
+                             if (!saved.ok) {
+                                 m_impl->snapshot.dataSaveError = saved.message;
+                             }
                          }
                          emit snapshotChanged(m_impl->snapshot);
                      });
@@ -926,11 +979,35 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     m_impl->snapshot.maxCycles = options.maxCycles;
     m_impl->snapshot.cycleIndex = 0;
     m_impl->snapshot.sampleCount = 0;
+    m_impl->snapshot.dataSaveEnabled = false;
+    m_impl->snapshot.dataFilePath.clear();
+    m_impl->snapshot.dataSaveError.clear();
     m_impl->suppressedResultTaskId.clear();
+    m_impl->dataRecorder.cancel();
+    const bool saveContinuousData =
+        mode == hwtest::biz::RunMode::PcPeriodic && options.saveData;
+    if (saveContinuousData) {
+        const ActionResult recording = m_impl->dataRecorder.begin(
+            m_impl->dataStorageDirectory,
+            m_impl->descriptor,
+            options.intervalMs,
+            options.maxCycles);
+        if (!recording.ok) {
+            m_impl->snapshot.dataSaveError = recording.message;
+            emit snapshotChanged(m_impl->snapshot);
+            return recording;
+        }
+        m_impl->snapshot.dataSaveEnabled = true;
+        m_impl->snapshot.dataFilePath = m_impl->dataRecorder.outputPath();
+    }
     const auto started = m_impl->runner->startTestWithOptions(runOptions);
     if (!started.ok()) {
+        m_impl->dataRecorder.cancel();
+        m_impl->snapshot.dataSaveEnabled = false;
+        m_impl->snapshot.dataFilePath.clear();
         return bizFailure(started.status, QStringLiteral("Unable to start test"));
     }
+    m_impl->dataRecorder.setTaskId(started.value);
     m_impl->snapshot.taskId = started.value;
     m_impl->snapshot.phase = QStringLiteral("running");
     m_impl->snapshot.testState = QStringLiteral("Running");
@@ -1250,6 +1327,15 @@ ActionResult TestApplicationController::shutdown()
         const hwtest::biz::Status status = m_impl->runner->shutdown();
         if (!status.ok()) {
             firstFailure = bizFailure(status, QStringLiteral("Unable to shut down BIZ service"));
+        }
+    }
+    if (m_impl->dataRecorder.active()) {
+        const ActionResult saved = m_impl->dataRecorder.finish(
+            QStringLiteral("关闭"),
+            firstFailure.ok ? QStringLiteral("应用关闭时结束连续测试")
+                            : firstFailure.message);
+        if (!saved.ok && firstFailure.ok) {
+            firstFailure = saved;
         }
     }
     m_impl->runner.reset();

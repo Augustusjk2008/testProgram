@@ -6,7 +6,7 @@
 
 `[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；前端既可使用开发服务器，也可使用构建后的单文件 HTML，二者都与 `hwtest_web` 分开运行，浏览器仍只连接回环 WebSocket。
 
-`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider 和 `DigitalStimulusPanel` 接入总览页。面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。此浏览器控制面实现不等价于 PXI-6259 真机已连接或已验收。
+`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider 和 `DigitalStimulusPanel` 接入总览页。面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。PC 周期参数区另提供“保存完整数据”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。此浏览器控制面实现不等价于 PXI-6259 真机已连接或已验收。
 
 ## 2. 连接规则
 
@@ -29,7 +29,7 @@
 - 字段名区分大小写。协议未定义的顶层字段应被忽略，以便尾部扩展；已定义字段的类型必须严格符合本文。
 - 服务器发送紧凑 JSON，不依赖空白或对象成员顺序。
 - 每个有效请求恰好产生一个相同 `id` 的 reply。快照和样本是独立异步事件，可以出现在请求与 reply 之间。
-- `setDigitalStimulus`、`resetDigitalStimulus` 和快照中的 `digitalStimulus` 是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。
+- `setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData` 和快照中的数据保存状态是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。
 
 ## 4. 消息结构
 
@@ -88,6 +88,8 @@
 | `runMode` | string；`single`、`pc_periodic` 或 `device_stream` |
 | `intervalMs` | integer |
 | `maxCycles`、`cycleIndex`、`sampleCount` | non-negative integer |
+| `dataSaveEnabled` | boolean；当前任务是否启用了后端连续数据保存 |
+| `dataFilePath`、`dataSaveError` | string；后端目标/完成文件路径与保存错误，未启用或无错误时为空 |
 | `digitalStimulus` | object；当前数字刺激状态，字段见下表 |
 
 `rawData` 使用 Qt 的 JSON-compatible QVariant 转换规则；其嵌套 map/list、布尔值、数值、字符串和空值保持对应 JSON 类型。
@@ -155,7 +157,7 @@
 | `selectControl` | `{"resourceId":"CONTROL_SERIAL"}` | 调用 `selectControl`；`resourceId` 必须是非空字符串 |
 | `selectSerialPort` | `{"portName":"COM7"}` | 调用 `selectSerialPort`；`portName` 必须是非空字符串 |
 | `prepare` | `{}` | 调用 `prepare` |
-| `start` | `{}` 或 `{"mode":"pc_periodic","intervalMs":500,"maxCycles":0}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`；`intervalMs` 为 `10..3600000` 的整数；`maxCycles` 为 `0..1000000000` 的整数，`0` 表示 PC 周期不限轮数 |
+| `start` | `{}` 或 `{"mode":"pc_periodic","intervalMs":500,"maxCycles":0,"saveData":true}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`；`intervalMs` 为 `10..3600000` 的整数；`maxCycles` 为 `0..1000000000` 的整数，`0` 表示 PC 周期不限轮数；`saveData` 只能是 boolean，且当前仅 `pc_periodic` 会启用保存，单次和设备持续模式由控制器强制不保存 |
 | `pause` | `{}` | 调用 `pause` |
 | `resume` | `{}` | 调用 `resume` |
 | `setDigitalStimulus` | `{"switchId":"di0","active":true,"expectedRevision":0}` | 必须且只能包含这三个字段；`switchId` 为非空 string，`active` 为 boolean，`expectedRevision` 为 0..9007199254740991 的非负安全整数。未知字段（包括 `resourceId`、`adapterId`、端口或路径）一律 `invalid_envelope`；控制器再按已加载配置白名单验证 `switchId`。reply 的 `data.digitalStimulus` 返回当前状态 |
@@ -164,13 +166,35 @@
 | `disconnect` | `{}` | 必要时先异步停止，再调用 `shutdown`；最后回复并关闭当前连接，服务器继续监听 |
 | `quit` | `{}` | 执行与 `disconnect` 相同的安全收尾，随后关闭服务器并退出进程 |
 
-除 `start`、`selectTest`、`selectControl`、`selectSerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`start` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知字段按 `invalid_envelope` 拒绝。
+除 `start`、`selectTest`、`selectControl`、`selectSerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`start` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知字段按 `invalid_envelope` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
+
+### 6.1 PC 周期数据文件
+
+`[当前实现]` `saveData=true` 且运行模式为 `pc_periodic` 时，`TestApplicationController` 在后端记录完整 `ApplicationSample.values` 投影，而不是记录浏览器当前勾选的曲线字段。默认 HAL/应用组合配置为：
+
+```json
+{"dataStorage":{"directory":"../data"}}
+```
+
+绝对目录直接使用；相对目录按 HAL 配置文件所在目录解析。字段缺失时同样回退 `../data`。客户端无权覆盖目录。目录或初始文件不能创建时，`start` 返回控制器错误 `data_storage`；运行中写入或终态提交失败时，完整快照的 `dataSaveError` 返回诊断。
+
+最终文件固定为带 UTF-8 BOM 的 `.txt`：顶部是一行标题和 `# key=value` 元数据，至少包含 `started_at`、`finished_at`、`final_status`、`final_detail`、`sample_count`、`repeat_delay_ms`、`config_id`、`algorithm_id` 与 `max_cycles`；空行之后是制表符分隔、换行符为 LF 的固定表头和数据行。文件名使用后端开始时间；电气健康保持 PyQt 参考名 `ElectricalHealth_data_YYYYMMDD_HHMMSS_ffffff.txt`。
+
+电气健康表头保持参考实现的固定顺序：
+
+```text
+report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V  external_vol_V  core_vol_V  assist_vol_V  v28_5_V  js_5V_V  dyt_5V_V  power_24V_V  value_YX_V  activate_bits  bc_activate_good
+```
+
+实际分隔符是 TAB。其他当前 `pc_periodic` 配置使用同样的前五列，后续列由已验证 descriptor 的全部 `measurements` 固定投影，并排除已在前缀中的 `status`/`err_code`；单位非空时写入列名后缀。前端图表的显示/隐藏、组合、时间窗和降采样均不改变该列集合。响应 `status != 0` 或 `err_code != 0` 时仍保存状态和错误码，测量列写 `NA`。
+
+运行期数据逐样本刷新到同目录的 `.partial` 文件，避免无限周期在内存累积；正常完成、用户停止或错误终态时，后端使用 `QSaveFile` 把元数据和 TSV 原子提交为最终 TXT，再删除 `.partial`。提交失败时保留 `.partial` 供恢复。未勾选、`single` 或当前未接入保存的 `device_stream` 均不创建数据文件。
 
 ## 7. 异步、线程与安全收尾
 
 - WebSocket 回调不得直接跨线程调用控制器。所有控制器动作和读取都通过 queued invocation 投递到控制器的 QObject 亲和线程；禁止 `BlockingQueuedConnection`。
 - Web 层不得调用 `waitForTerminal()`。运行进度和终态只通过 `snapshotChanged` 观察。
-- `sampleReceived` 直接形成 sample 事件；Web 层不解释、聚合或绘制字段，也不为连续测试建立定时器。
+- `sampleReceived` 直接形成 sample 事件；Web 层不解释、聚合或绘制字段，也不为连续测试建立定时器或写文件。连续数据文件由共享应用控制器在形成应用 DTO 后记录，TUI/GUI/WebSocket 适配器都不持有 recorder。
 - `setDigitalStimulus` 和 `resetDigitalStimulus` 只在控制器处于 `ready`、`running`、`paused`、`finished` 或 `stopped`，且 DI 已准备时才会执行；Web 层不持有或传递物理资源/Adapter 参数。
 - `stop` 保存请求 id，调用 `stopAsync()` 后保持事件循环运行；发起成功后收到 `stopCompleted` 才回复。若 `stopAsync()` 因状态、超时参数或已有停止而立即失败，则直接返回该控制器错误并清除 Web 层 pending 状态。
 - 异步停止或断开收尾期间，`snapshot`、`controls` 和 `ports` 三个只读动作仍允许；其他新动作回复 `command_in_progress`，不得再次触发控制器写动作。

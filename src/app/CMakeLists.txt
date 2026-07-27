@@ -4,6 +4,7 @@ set(APP_CORE_PUBLIC_HEADERS
 )
 
 set(APP_CORE_SOURCES
+    src/continuous_data_recorder.cpp
     src/test_application_controller.cpp
     src/frontend_launch_options.cpp
     src/mbddf_algorithm_registry.cpp
@@ -11,6 +12,7 @@ set(APP_CORE_SOURCES
 
 add_library(hwtest_app_core STATIC
     ${APP_CORE_PUBLIC_HEADERS}
+    src/continuous_data_recorder.h
     src/mbddf_algorithm_registry.h
     ${APP_CORE_SOURCES}
 )

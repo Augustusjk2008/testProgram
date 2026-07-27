@@ -26,12 +26,13 @@ describe('HwtestClient protocol boundary', () => {
       mode: 'pc_periodic',
       intervalMs: 250,
       maxCycles: 0,
+      saveData: true,
     }))).toEqual({
       v: 1,
       type: 'request',
       id: 'run-1',
       action: 'start',
-      params: { mode: 'pc_periodic', intervalMs: 250, maxCycles: 0 },
+      params: { mode: 'pc_periodic', intervalMs: 250, maxCycles: 0, saveData: true },
     })
   })
 
@@ -105,6 +106,9 @@ describe('HwtestClient protocol boundary', () => {
         maxCycles: 1,
         cycleIndex: 0,
         sampleCount: 0,
+        dataSaveEnabled: false,
+        dataFilePath: '',
+        dataSaveError: '',
         descriptor: {
           configId: 'mbddf-elec-health',
           productModel: 'MB_DDF_v2',
@@ -139,6 +143,13 @@ describe('HwtestClient protocol boundary', () => {
         message: '',
       })
     }
+
+    expect(() => parseServerMessage(JSON.stringify({
+      v: 1,
+      type: 'snapshot',
+      seq: 4,
+      snapshot: { dataSaveEnabled: 'true' },
+    }))).toThrow(/dataSaveEnabled/i)
   })
 
   it('strictly parses digital stimulus snapshots and replies', () => {

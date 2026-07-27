@@ -200,8 +200,20 @@ function parseSnapshot(value: JsonObject): ApplicationSnapshot {
   const digitalStimulus = Object.prototype.hasOwnProperty.call(value, 'digitalStimulus')
     ? parseDigitalStimulus(requiredObject(value, 'digitalStimulus'))
     : emptyDigitalStimulus()
+  const dataSaveEnabled = Object.prototype.hasOwnProperty.call(value, 'dataSaveEnabled')
+    ? requiredBoolean(value, 'dataSaveEnabled')
+    : false
+  const dataFilePath = Object.prototype.hasOwnProperty.call(value, 'dataFilePath')
+    ? requiredString(value, 'dataFilePath')
+    : ''
+  const dataSaveError = Object.prototype.hasOwnProperty.call(value, 'dataSaveError')
+    ? requiredString(value, 'dataSaveError')
+    : ''
   return {
     ...(value as unknown as ApplicationSnapshot),
+    dataSaveEnabled,
+    dataFilePath,
+    dataSaveError,
     descriptor: descriptorValue === undefined
       ? EMPTY_TEST_DESCRIPTOR
       : parseDescriptor(requiredObject(value, 'descriptor')),

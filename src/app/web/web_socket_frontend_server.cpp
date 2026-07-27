@@ -459,6 +459,7 @@ public:
             QStringLiteral("mode"),
             QStringLiteral("intervalMs"),
             QStringLiteral("maxCycles"),
+            QStringLiteral("saveData"),
         };
         for (auto iterator = request.params.constBegin();
              iterator != request.params.constEnd();
@@ -544,6 +545,20 @@ public:
                 return false;
             }
             parsed.maxCycles = static_cast<quint64>(value);
+        }
+
+        if (request.params.contains(QStringLiteral("saveData"))) {
+            const QJsonValue saveData =
+                request.params.value(QStringLiteral("saveData"));
+            if (!saveData.isBool()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'saveData' must be a boolean"));
+                }
+                return false;
+            }
+            parsed.saveData = saveData.toBool();
         }
 
         if (options != nullptr) {

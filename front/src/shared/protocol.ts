@@ -4,6 +4,7 @@ export interface TestRunOptions {
   mode: RunMode
   intervalMs: number
   maxCycles: number
+  saveData: boolean
 }
 
 export interface TestMeasurementDescriptor {
@@ -100,6 +101,9 @@ export interface ApplicationSnapshot {
   maxCycles: number
   cycleIndex: number
   sampleCount: number
+  dataSaveEnabled: boolean
+  dataFilePath: string
+  dataSaveError: string
   descriptor: TestDescriptor
   digitalStimulus: DigitalStimulusSnapshot
 }
@@ -213,6 +217,9 @@ export const EMPTY_SNAPSHOT: ApplicationSnapshot = {
   maxCycles: 1,
   cycleIndex: 0,
   sampleCount: 0,
+  dataSaveEnabled: false,
+  dataFilePath: '',
+  dataSaveError: '',
   descriptor: EMPTY_TEST_DESCRIPTOR,
   digitalStimulus: EMPTY_DIGITAL_STIMULUS,
 }

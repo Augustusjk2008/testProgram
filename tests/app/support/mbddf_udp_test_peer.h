@@ -67,6 +67,9 @@ public:
 
         QVariantMap root = document.object().toVariantMap();
         root.remove(QStringLiteral("logging"));
+        root.insert(QStringLiteral("dataStorage"),
+                    QVariantMap{{QStringLiteral("directory"),
+                                 directory->filePath(QStringLiteral("data"))}});
 
         QVariantMap control = root.value(QStringLiteral("control")).toMap();
         control.insert(QStringLiteral("resourceId"), QStringLiteral("CONTROL_NETWORK"));

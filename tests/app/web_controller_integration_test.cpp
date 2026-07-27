@@ -193,6 +193,19 @@ TEST(WebSocketControllerIntegrationTest, RejectsMistypedContinuousRunParametersA
     EXPECT_EQ(reply.value(QStringLiteral("code")).toString(),
               QStringLiteral("invalid_envelope"));
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+
+    const QJsonObject saveReply = sendAndWait(
+        &client,
+        QStringLiteral("bad-save-option"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 10},
+                    {QStringLiteral("maxCycles"), 2},
+                    {QStringLiteral("saveData"), QStringLiteral("true")}});
+    EXPECT_FALSE(saveReply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(saveReply.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
 }
 
 TEST(WebSocketControllerIntegrationTest, RejectsClientSuppliedConfigurationPaths)
@@ -556,7 +569,8 @@ TEST(WebSocketContinuousIntegrationTest, PcPeriodicStreamsSamplesFromTwoCommandR
         QStringLiteral("start"),
         QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
                     {QStringLiteral("intervalMs"), 10},
-                    {QStringLiteral("maxCycles"), 2}});
+                    {QStringLiteral("maxCycles"), 2},
+                    {QStringLiteral("saveData"), true}});
     ASSERT_TRUE(started.value(QStringLiteral("ok")).toBool())
         << started.value(QStringLiteral("message")).toString().toStdString();
 
@@ -594,6 +608,14 @@ TEST(WebSocketContinuousIntegrationTest, PcPeriodicStreamsSamplesFromTwoCommandR
     EXPECT_EQ(snapshot.value(QStringLiteral("maxCycles")).toInt(), 2);
     EXPECT_EQ(snapshot.value(QStringLiteral("cycleIndex")).toInt(), 2);
     EXPECT_EQ(snapshot.value(QStringLiteral("sampleCount")).toInt(), 2);
+    EXPECT_TRUE(snapshot.value(QStringLiteral("dataSaveEnabled")).toBool());
+    EXPECT_TRUE(snapshot.value(QStringLiteral("dataSaveError")).toString().isEmpty());
+    const QString dataFilePath =
+        snapshot.value(QStringLiteral("dataFilePath")).toString();
+    ASSERT_FALSE(dataFilePath.isEmpty());
+    EXPECT_TRUE(QFileInfo(dataFilePath).isFile());
+    EXPECT_EQ(QFileInfo(dataFilePath).absolutePath(),
+              QFileInfo(directory.filePath(QStringLiteral("data"))).absoluteFilePath());
 
     const QJsonObject disconnected = sendAndWait(&client,
                                                   QStringLiteral("cleanup"),

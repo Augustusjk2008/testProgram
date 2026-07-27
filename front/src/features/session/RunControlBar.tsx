@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { RunMode, TestRunOptions } from '../../shared/protocol'
 import { phaseLabel } from '../../shared/format'
 import { setLocalStorageValue } from '../../shared/storage'
+import { normalizeRunOptionsForStart } from './run-options'
 import { useSession } from './SessionProvider'
 
 const RUN_OPTIONS_KEY = 'hwtest.run-options.v1'
@@ -18,11 +19,19 @@ const RUN_OPTIONS_KEY = 'hwtest.run-options.v1'
 function loadRunOptions(): TestRunOptions {
   try {
     const stored = window.localStorage.getItem(RUN_OPTIONS_KEY)
-    if (stored) return { mode: 'pc_periodic', intervalMs: 500, maxCycles: 0, ...JSON.parse(stored) }
+    if (stored) {
+      const parsed = JSON.parse(stored) as Partial<TestRunOptions>
+      return {
+        mode: parsed.mode ?? 'pc_periodic',
+        intervalMs: parsed.intervalMs ?? 500,
+        maxCycles: parsed.maxCycles ?? 0,
+        saveData: parsed.saveData === true,
+      }
+    }
   } catch {
     // Ignore browser storage restrictions and use safe defaults.
   }
-  return { mode: 'pc_periodic', intervalMs: 500, maxCycles: 0 }
+  return { mode: 'pc_periodic', intervalMs: 500, maxCycles: 0, saveData: false }
 }
 
 const MODE_LABELS: Array<{ mode: RunMode; title: string }> = [
@@ -67,7 +76,7 @@ export function RunControlBar() {
     return ''
   }, [options])
   const unsupported = !supportedModes.includes(options.mode)
-  const controlError = periodicError || (unsupported ? `${testTitle}不支持当前运行模式` : '') || actionError
+  const controlError = periodicError || (unsupported ? `${testTitle}不支持当前运行模式` : '') || snapshot.dataSaveError || actionError
 
   useEffect(() => {
     if (supportedModes.includes(options.mode)) return
@@ -88,10 +97,7 @@ export function RunControlBar() {
 
   function beginRun() {
     if (periodicError || unsupported) return
-    const normalized: TestRunOptions = options.mode === 'single'
-      ? { mode: 'single', intervalMs: 1000, maxCycles: 1 }
-      : options
-    void start(normalized).catch(() => undefined)
+    void start(normalizeRunOptionsForStart(options)).catch(() => undefined)
   }
 
   return (
@@ -170,6 +176,16 @@ export function RunControlBar() {
                 <b>{options.maxCycles === 0 ? '∞' : '轮'}</b>
               </span>
             </label>
+            <label className="run-save-option">
+              <input
+                aria-label="保存连续测试完整数据"
+                checked={options.saveData}
+                disabled={active}
+                onChange={(event) => saveOptions({ ...options, saveData: event.target.checked })}
+                type="checkbox"
+              />
+              <span>保存完整数据</span>
+            </label>
           </>
         ) : null}
       </div>
@@ -219,6 +235,14 @@ export function RunControlBar() {
           </button>
         )}
         {busyAction && <span className="command-busy">处理中…</span>}
+        {snapshot.dataSaveEnabled && !snapshot.dataSaveError && (
+          <span
+            className="data-save-state"
+            title={snapshot.dataFilePath || '后端正在保存完整数据'}
+          >
+            {active ? '数据写入中' : '数据已保存'}
+          </span>
+        )}
       </div>
 
       <div className="run-console__progress" aria-label={`测试进度 ${snapshot.progress}%`}>

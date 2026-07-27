@@ -32,6 +32,7 @@ struct TestRunOptions {
     QString mode = QStringLiteral("single");
     int intervalMs = 1000;
     quint64 maxCycles = 1;
+    bool saveData = false;
 };
 
 struct ApplicationSample {
@@ -109,6 +110,9 @@ struct ApplicationSnapshot {
     quint64 sampleCount = 0;
     TestDescriptor descriptor;
     DigitalStimulusSnapshot digitalStimulus;
+    bool dataSaveEnabled = false;
+    QString dataFilePath;
+    QString dataSaveError;
 };
 
 class TestApplicationController final : public QObject {

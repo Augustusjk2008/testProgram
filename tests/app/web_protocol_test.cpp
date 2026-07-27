@@ -173,6 +173,9 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     snapshot.maxCycles = 0;
     snapshot.cycleIndex = 17;
     snapshot.sampleCount = 42;
+    snapshot.dataSaveEnabled = true;
+    snapshot.dataFilePath = QStringLiteral("C:/data/SystemStatus_data.txt");
+    snapshot.dataSaveError.clear();
     snapshot.digitalStimulus.available = true;
     snapshot.digitalStimulus.configured = true;
     snapshot.digitalStimulus.appliedMask = 0x81u;
@@ -200,7 +203,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(envelope.value(QStringLiteral("seq")).toInt(), 12);
 
     const QJsonObject json = envelope.value(QStringLiteral("snapshot")).toObject();
-    EXPECT_EQ(json.size(), 24);
+    EXPECT_EQ(json.size(), 27);
     EXPECT_EQ(json.value(QStringLiteral("phase")).toString(), snapshot.phase);
     EXPECT_EQ(json.value(QStringLiteral("testState")).toString(), snapshot.testState);
     EXPECT_EQ(json.value(QStringLiteral("controlResourceId")).toString(),
@@ -227,6 +230,10 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
               static_cast<double>(snapshot.cycleIndex));
     EXPECT_EQ(json.value(QStringLiteral("sampleCount")).toDouble(),
               static_cast<double>(snapshot.sampleCount));
+    EXPECT_TRUE(json.value(QStringLiteral("dataSaveEnabled")).toBool());
+    EXPECT_EQ(json.value(QStringLiteral("dataFilePath")).toString(),
+              snapshot.dataFilePath);
+    EXPECT_TRUE(json.value(QStringLiteral("dataSaveError")).toString().isEmpty());
     const QJsonObject stimulus = json.value(QStringLiteral("digitalStimulus")).toObject();
     EXPECT_TRUE(stimulus.value(QStringLiteral("available")).toBool());
     EXPECT_TRUE(stimulus.value(QStringLiteral("configured")).toBool());

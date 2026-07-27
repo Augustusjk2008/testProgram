@@ -12,6 +12,7 @@
 #include <QTemporaryDir>
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileInfo>
@@ -105,6 +106,36 @@ bool selectDigitalAdapterFixture(const QString& halPath, QString* error)
     safeState.remove(QStringLiteral("PXI_AO_0"));
     root.insert(QStringLiteral("safeState"), safeState);
 
+    QFile output(halPath);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (error != nullptr) *error = output.errorString();
+        return false;
+    }
+    const QByteArray json = QJsonDocument(root).toJson();
+    const bool written = output.write(json) == json.size();
+    if (!written && error != nullptr) *error = output.errorString();
+    return written;
+}
+
+bool setDataStorageDirectory(const QString& halPath,
+                             const QString& directory,
+                             QString* error)
+{
+    QFile source(halPath);
+    if (!source.open(QIODevice::ReadOnly)) {
+        if (error != nullptr) *error = source.errorString();
+        return false;
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(source.readAll());
+    source.close();
+    if (!document.isObject()) {
+        if (error != nullptr) *error = QStringLiteral("HAL fixture is not a JSON object");
+        return false;
+    }
+
+    QJsonObject root = document.object();
+    root.insert(QStringLiteral("dataStorage"),
+                QJsonObject{{QStringLiteral("directory"), directory}});
     QFile output(halPath);
     if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (error != nullptr) *error = output.errorString();
@@ -561,6 +592,160 @@ TEST(TestApplicationControllerTest, ElectricalHealthPcPeriodicForwardsOneSampleP
     EXPECT_EQ(controller.snapshot().runMode, QStringLiteral("pc_periodic"));
     EXPECT_EQ(controller.snapshot().cycleIndex, 2u);
     EXPECT_EQ(controller.snapshot().sampleCount, 2u);
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, StoppedPcPeriodicSavesCompleteElectricalHealthTextData)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString error;
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+    const QString dataDirectory = directory.filePath(QStringLiteral("continuous-data"));
+    ASSERT_TRUE(setDataStorageDirectory(halConfigPath, dataDirectory, &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_ELEC_HEALTH_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+
+    TestRunOptions options;
+    options.mode = QStringLiteral("pc_periodic");
+    options.intervalMs = 1000;
+    options.maxCycles = 0;
+    options.saveData = true;
+    ASSERT_TRUE(controller.start(options).ok);
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+        ASSERT_TRUE(peer.replyToLastRequest(
+                        QStringLiteral("elec_health_status_response"),
+                        {{QStringLiteral("status"), 0},
+                         {QStringLiteral("err_code"), 0},
+                         {QStringLiteral("c_volt"), 11.1 + cycle * 10.0},
+                         {QStringLiteral("b_volt"), 12.2 + cycle * 10.0},
+                         {QStringLiteral("external_vol"), 3.3},
+                         {QStringLiteral("core_vol"), 1.0},
+                         {QStringLiteral("assist_vol"), 1.8},
+                         {QStringLiteral("v28_5"), 28.5},
+                         {QStringLiteral("js_5V"), 5.0},
+                         {QStringLiteral("dyt_5V"), 5.1},
+                         {QStringLiteral("power_24V"), 24.0},
+                         {QStringLiteral("value_YX"), 4.9},
+                         {QStringLiteral("activate_bits"), cycle}},
+                        &error))
+            << error.toStdString();
+    }
+
+    QElapsedTimer samplesTimer;
+    samplesTimer.start();
+    while (controller.snapshot().sampleCount < 2 && samplesTimer.elapsed() < 3000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(1);
+    }
+    ASSERT_EQ(controller.snapshot().sampleCount, 2u);
+    const ActionResult stopped = controller.stop(5000);
+    ASSERT_TRUE(stopped.ok) << stopped.message.toStdString();
+    const ApplicationSnapshot snapshot = controller.snapshot();
+    EXPECT_EQ(snapshot.phase, QStringLiteral("stopped"));
+    EXPECT_TRUE(snapshot.dataSaveEnabled);
+    EXPECT_TRUE(snapshot.dataSaveError.isEmpty())
+        << snapshot.dataSaveError.toStdString();
+    ASSERT_FALSE(snapshot.dataFilePath.isEmpty());
+    const QFileInfo savedInfo(snapshot.dataFilePath);
+    EXPECT_EQ(savedInfo.absolutePath(), QFileInfo(dataDirectory).absoluteFilePath());
+    EXPECT_TRUE(savedInfo.fileName().startsWith(QStringLiteral("ElectricalHealth_data_")));
+    EXPECT_EQ(savedInfo.suffix(), QStringLiteral("txt"));
+    ASSERT_TRUE(savedInfo.isFile());
+
+    QFile saved(snapshot.dataFilePath);
+    ASSERT_TRUE(saved.open(QIODevice::ReadOnly));
+    const QByteArray bytes = saved.readAll();
+    ASSERT_TRUE(bytes.startsWith(QByteArray::fromHex("EFBBBF")));
+    const QString text = QString::fromUtf8(bytes.mid(3));
+    EXPECT_TRUE(text.contains(QStringLiteral("# 电气健康连续采集数据\n")));
+    EXPECT_TRUE(text.contains(QStringLiteral("# final_status=用户停止\n")));
+    EXPECT_TRUE(text.contains(QStringLiteral("# sample_count=2\n")));
+    EXPECT_TRUE(text.contains(QStringLiteral("# repeat_delay_ms=1000\n")));
+    EXPECT_TRUE(text.contains(QStringLiteral(
+        "report_index\tsample_time_us\tseq\tresponse_status\terr_code\t"
+        "c_volt_V\tb_volt_V\texternal_vol_V\tcore_vol_V\tassist_vol_V\t"
+        "v28_5_V\tjs_5V_V\tdyt_5V_V\tpower_24V_V\tvalue_YX_V\t"
+        "activate_bits\tbc_activate_good\n")));
+
+    QStringList dataLines;
+    for (const QString& line : text.split(QLatin1Char('\n'))) {
+        if (!line.isEmpty() && !line.startsWith(QLatin1Char('#'))) {
+            dataLines.push_back(line);
+        }
+    }
+    ASSERT_EQ(dataLines.size(), 3);
+    EXPECT_TRUE(dataLines.at(1).contains(QStringLiteral("\t4660\t0\t0x0000\t")));
+    EXPECT_TRUE(dataLines.at(1).contains(QStringLiteral("\t11.1\t12.2\t")));
+    EXPECT_TRUE(dataLines.at(2).contains(QStringLiteral("\t4661\t0\t0x0000\t")));
+    EXPECT_TRUE(dataLines.at(2).contains(QStringLiteral("\t21.1\t22.2\t")));
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, SingleRunNeverSavesDataWhenRequested)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString error;
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+    const QString dataDirectory = directory.filePath(QStringLiteral("continuous-data"));
+    ASSERT_TRUE(setDataStorageDirectory(halConfigPath, dataDirectory, &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_ELEC_HEALTH_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    TestRunOptions options;
+    options.mode = QStringLiteral("single");
+    options.saveData = true;
+    ASSERT_TRUE(controller.start(options).ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(
+                    QStringLiteral("elec_health_status_response"),
+                    {{QStringLiteral("status"), 0},
+                     {QStringLiteral("err_code"), 0},
+                     {QStringLiteral("c_volt"), 11.1}},
+                    &error))
+        << error.toStdString();
+    ASSERT_TRUE(controller.waitForTerminal(3000).ok);
+
+    const ApplicationSnapshot snapshot = controller.snapshot();
+    EXPECT_FALSE(snapshot.dataSaveEnabled);
+    EXPECT_TRUE(snapshot.dataFilePath.isEmpty());
+    EXPECT_TRUE(snapshot.dataSaveError.isEmpty());
+    EXPECT_TRUE(QDir(dataDirectory)
+                    .entryList(QStringList{QStringLiteral("*.txt")}, QDir::Files)
+                    .isEmpty());
     EXPECT_TRUE(controller.shutdown().ok);
 }
 
