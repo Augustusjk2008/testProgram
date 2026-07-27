@@ -1,5 +1,6 @@
 #include "hal_service.h"
 
+#include "adapter_device_open_spec.h"
 #include "hal_error_mapper.h"
 
 #include <QDateTime>
@@ -249,10 +250,10 @@ HalResult<SessionId> HalService::openDevice(const DeviceId& deviceId,
         return result;
     }
     HardwareAdapter* const backend = acquired.value;
-    QVariantMap openOptions = descriptor.properties;
-    openOptions.insert(QStringLiteral("deviceId"), descriptor.deviceId);
-    openOptions.insert(QStringLiteral("adapterId"), descriptor.adapterId);
-    const HalResult<SessionId> backendSession = backend->openDevice(deviceId, openOptions, options);
+    const AdapterDeviceOpenSpec openSpec =
+        AdapterDeviceOpenSpec::fromResourceMapper(m_mapper, deviceId);
+    const HalResult<SessionId> backendSession = backend->openDevice(
+        deviceId, openSpec.toVariantMap(), options);
     if (!backendSession.ok()) {
         m_router.release(descriptor.adapterId);
         result.status = backendSession.status;
@@ -268,7 +269,7 @@ HalResult<SessionId> HalService::openDevice(const DeviceId& deviceId,
                                                descriptor,
                                                m_mapper.capabilities(deviceId),
                                                m_mapper.bindingsForDevice(deviceId),
-                                               m_mapper.safeState(),
+                                               openSpec.safeState,
                                                [this, deviceId](const HalLogEvent& event) {
                                                    HalLogEvent payload = event;
                                                    if (payload.deviceId.isEmpty()) {

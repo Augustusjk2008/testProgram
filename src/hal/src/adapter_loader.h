@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hal/hal_adapter_abi.h"
+#include "hal/hal_adapter_task_abi.h"
 
 #include <QString>
 
@@ -16,6 +17,8 @@ public:
     bool load(const QString& libraryPath,
               const HalAdapterHostApiV1& hostApi,
               HalAdapterApiV1* outApi);
+    bool loadTaskApi(const HalAdapterHostApiV1& hostApi,
+                     HalAdapterTaskApiV1* outApi);
     void unload();
 
     bool isLoaded() const;

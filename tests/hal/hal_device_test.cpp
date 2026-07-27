@@ -1,6 +1,8 @@
 #include "hal_device.h"
 #include "mock_adapter.h"
 
+#include "hal/i_sample_task_io.h"
+
 #include "test_support.h"
 
 #include <gtest/gtest.h>
@@ -47,6 +49,70 @@ public:
     }
 
     int closeCalls = 0;
+};
+
+class TaskRecordingMockAdapter final : public MockAdapter {
+public:
+    HalResult<SampleTaskId> createSampleTask(const SessionId& sessionId,
+                                             const QVector<int>& physicalIndexes,
+                                             const SampleTaskConfig& config,
+                                             const OperationOptions& options) override
+    {
+        Q_UNUSED(sessionId)
+        Q_UNUSED(config)
+        Q_UNUSED(options)
+        events.append(QStringLiteral("createTask"));
+        createdPhysicalIndexes = physicalIndexes;
+        HalResult<SampleTaskId> result;
+        result.value = QStringLiteral("backend-task-%1").arg(++createdTaskCount);
+        return result;
+    }
+
+    HalStatus startSampleTask(const SampleTaskId& taskId,
+                              const OperationOptions& options) override
+    {
+        Q_UNUSED(taskId)
+        Q_UNUSED(options)
+        events.append(QStringLiteral("startTask"));
+        return {};
+    }
+
+    HalStatus stopSampleTask(const SampleTaskId& taskId,
+                             const OperationOptions& options) override
+    {
+        Q_UNUSED(taskId)
+        Q_UNUSED(options)
+        events.append(QStringLiteral("stopTask"));
+        return {};
+    }
+
+    HalStatus closeSampleTask(const SampleTaskId& taskId,
+                              const OperationOptions& options) override
+    {
+        Q_UNUSED(taskId)
+        Q_UNUSED(options)
+        events.append(QStringLiteral("closeTask"));
+        return {};
+    }
+
+    HalStatus writeDigitalBatch(const SessionId& sessionId,
+                                const QMap<int, DigitalLevel>& values,
+                                const DigitalWriteOptions& options) override
+    {
+        events.append(QStringLiteral("safeState"));
+        return MockAdapter::writeDigitalBatch(sessionId, values, options);
+    }
+
+    HalStatus closeDevice(const SessionId& sessionId,
+                          const OperationOptions& options) override
+    {
+        events.append(QStringLiteral("closeDevice"));
+        return MockAdapter::closeDevice(sessionId, options);
+    }
+
+    QStringList events;
+    QVector<int> createdPhysicalIndexes;
+    int createdTaskCount = 0;
 };
 
 QVector<ResourceBinding> bindings()
@@ -156,6 +222,56 @@ TEST(HalDeviceTest, AppliesSafeStateOnClose)
     EXPECT_FALSE(device.isOpen());
 }
 
+TEST(HalDeviceTest, StopsAndClosesSampleTasksBeforeSafeStateAndDeviceClose)
+{
+    const QVariantMap config = testsupport::safeStateHalConfig();
+    ResourceMapper mapper;
+    ASSERT_TRUE(mapper.load(config));
+    TaskRecordingMockAdapter backend;
+    ASSERT_TRUE(backend.initialize(config).ok());
+    const SessionId sessionId = openSession(&backend);
+    HalDevice device(&backend,
+                     sessionId,
+                     mapper.deviceDescriptor(QStringLiteral("main_daq")),
+                     mapper.capabilities(QStringLiteral("main_daq")),
+                     mapper.bindingsForDevice(QStringLiteral("main_daq")),
+                     config.value(QStringLiteral("safeState")).toMap());
+
+    ASSERT_NE(device.sampleTasks(), nullptr);
+    SampleTaskConfig taskConfig;
+    taskConfig.kind = SampleTaskKind::AnalogInput;
+    taskConfig.mode = SampleTaskMode::Continuous;
+    taskConfig.channels = {QStringLiteral("AD_MAIN_0")};
+    taskConfig.sampleRateHz = 10000.0;
+    taskConfig.samplesPerChannel = 1000;
+    const HalResult<SampleTaskId> task = device.sampleTasks()->createTask(
+        taskConfig, OperationOptions{});
+    ASSERT_TRUE(task.ok()) << task.status.error.message.toStdString();
+    ASSERT_TRUE(device.sampleTasks()->startTask(task.value, OperationOptions{}).ok());
+    const HalResult<SampleTaskId> secondTask = device.sampleTasks()->createTask(
+        taskConfig, OperationOptions{});
+    ASSERT_TRUE(secondTask.ok()) << secondTask.status.error.message.toStdString();
+    ASSERT_TRUE(device.sampleTasks()->startTask(secondTask.value, OperationOptions{}).ok());
+
+    ASSERT_TRUE(device.close(OperationOptions{}).ok());
+    ASSERT_EQ(backend.createdPhysicalIndexes.size(), 1);
+    EXPECT_EQ(backend.createdPhysicalIndexes.first(), 0);
+    const QString expectedEvents[] = {QStringLiteral("createTask"),
+                                      QStringLiteral("startTask"),
+                                      QStringLiteral("createTask"),
+                                      QStringLiteral("startTask"),
+                                      QStringLiteral("stopTask"),
+                                      QStringLiteral("stopTask"),
+                                      QStringLiteral("closeTask"),
+                                      QStringLiteral("closeTask"),
+                                      QStringLiteral("safeState"),
+                                      QStringLiteral("closeDevice")};
+    ASSERT_EQ(backend.events.size(), 10);
+    for (int index = 0; index < 10; ++index) {
+        EXPECT_EQ(backend.events.at(index), expectedEvents[index]);
+    }
+}
+
 TEST(HalDeviceTest, CloseFailureStillClosesTheConsumedBackendSession)
 {
     CloseFailingMockAdapter backend;
@@ -216,6 +332,7 @@ TEST(HalDeviceTest, ControlChannelRejectsMissingControlResource)
 {
     LegacyStyleHalDevice legacyDevice;
     EXPECT_EQ(legacyDevice.controlChannel(), nullptr);
+    EXPECT_EQ(legacyDevice.sampleTasks(), nullptr);
 
     MockAdapter backend;
     EXPECT_TRUE(backend.initialize(testsupport::defaultHalConfig()).ok());

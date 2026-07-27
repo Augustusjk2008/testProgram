@@ -1,4 +1,5 @@
 #include "hal/hal_adapter_abi.h"
+#include "hal/hal_adapter_task_abi.h"
 
 #include <array>
 #include <atomic>
@@ -19,6 +20,14 @@ struct DeviceState {
     bool failClose = false;
     bool slowWrite = false;
     std::atomic<int> activeWrites{0};
+};
+
+struct SampleTaskState {
+    DeviceState* device = nullptr;
+    int kind = HAL_ADAPTER_TASK_ANALOG_INPUT;
+    int channelCount = 0;
+    bool started = false;
+    long long totalSamples = 0;
 };
 
 std::mutex closedDevicesMutex;
@@ -48,9 +57,16 @@ HalAdapterStatus HAL_ADAPTER_CALL getInfo(HalAdapterInfo* output)
     return status();
 }
 
-HalAdapterStatus HAL_ADAPTER_CALL initialize(const char*, HalAdapterHandle* output)
+HalAdapterStatus HAL_ADAPTER_CALL initialize(const char* configJson,
+                                             HalAdapterHandle* output)
 {
     if (output == nullptr) return status(HAL_ADAPTER_INVALID_ARGUMENT);
+    if (configJson == nullptr || std::strstr(configJson, "\"hardware\"") != nullptr ||
+        std::strstr(configJson, "\"safeState\"") != nullptr) {
+        return status(HAL_ADAPTER_INVALID_ARGUMENT,
+                      0,
+                      "adapter initialization must contain driver settings only");
+    }
     *output = new (std::nothrow) AdapterState;
     return *output == nullptr ? status(HAL_ADAPTER_INTERNAL_ERROR) : status();
 }
@@ -73,7 +89,7 @@ HalAdapterStatus HAL_ADAPTER_CALL enumerate(HalAdapterHandle handle,
     }
     output[0] = HalAdapterDeviceInfo{};
     std::snprintf(output[0].deviceId, sizeof(output[0].deviceId), "fixture_device");
-    std::snprintf(output[0].model, sizeof(output[0].model), "USB-6259");
+    std::snprintf(output[0].model, sizeof(output[0].model), "Fixture-Digital");
     std::snprintf(output[0].serialNumber, sizeof(output[0].serialNumber), "62590001");
     output[0].supportedModulesMask = HAL_MODULE_DIGITAL;
     std::snprintf(output[0].propertiesJson, sizeof(output[0].propertiesJson), "{\"fixture\":true}");
@@ -195,6 +211,96 @@ HalAdapterStatus HAL_ADAPTER_CALL digitalWrite(HalAdapterDeviceHandle device,
     return status();
 }
 
+HalAdapterStatus HAL_ADAPTER_CALL createTask(HalAdapterDeviceHandle device,
+                                             const HalAdapterTaskConfig* config,
+                                             HalAdapterTaskHandle* output)
+{
+    if (device == nullptr || config == nullptr || output == nullptr ||
+        config->structSize < static_cast<int>(sizeof(HalAdapterTaskConfig)) ||
+        config->channelIndexes == nullptr || config->channelCount <= 0) {
+        return status(HAL_ADAPTER_INVALID_ARGUMENT);
+    }
+    auto* task = new (std::nothrow) SampleTaskState;
+    if (task == nullptr) return status(HAL_ADAPTER_INTERNAL_ERROR);
+    task->device = static_cast<DeviceState*>(device);
+    task->kind = config->kind;
+    task->channelCount = config->channelCount;
+    *output = task;
+    return status();
+}
+
+HalAdapterStatus HAL_ADAPTER_CALL startTask(HalAdapterTaskHandle handle, int)
+{
+    auto* task = static_cast<SampleTaskState*>(handle);
+    if (task == nullptr) return status(HAL_ADAPTER_INVALID_ARGUMENT);
+    task->started = true;
+    return status();
+}
+
+HalAdapterStatus HAL_ADAPTER_CALL readTask(HalAdapterTaskHandle handle,
+                                           HalAdapterTaskBuffer* buffer,
+                                           int)
+{
+    auto* task = static_cast<SampleTaskState*>(handle);
+    if (task == nullptr || buffer == nullptr || !task->started ||
+        buffer->sampleType != HAL_ADAPTER_SAMPLE_FLOAT64 ||
+        buffer->data == nullptr || buffer->samplesPerChannel <= 0) {
+        return status(HAL_ADAPTER_INVALID_ARGUMENT);
+    }
+    const int required = task->channelCount * buffer->samplesPerChannel;
+    if (buffer->capacityValues < required) return status(HAL_ADAPTER_BUFFER_TOO_SMALL);
+    auto* values = static_cast<double*>(buffer->data);
+    for (int channel = 0; channel < task->channelCount; ++channel) {
+        for (int sample = 0; sample < buffer->samplesPerChannel; ++sample) {
+            values[channel * buffer->samplesPerChannel + sample] =
+                static_cast<double>(channel * 10 + sample + 1);
+        }
+    }
+    task->totalSamples += buffer->samplesPerChannel;
+    buffer->channelCount = task->channelCount;
+    buffer->timestampUs = 987654;
+    return status();
+}
+
+HalAdapterStatus HAL_ADAPTER_CALL writeTask(HalAdapterTaskHandle handle,
+                                            const HalAdapterTaskBuffer* buffer,
+                                            int,
+                                            int)
+{
+    if (handle == nullptr || buffer == nullptr || buffer->data == nullptr) {
+        return status(HAL_ADAPTER_INVALID_ARGUMENT);
+    }
+    return status();
+}
+
+HalAdapterStatus HAL_ADAPTER_CALL getTaskStatus(HalAdapterTaskHandle handle,
+                                                HalAdapterTaskStatusInfo* output,
+                                                int)
+{
+    auto* task = static_cast<SampleTaskState*>(handle);
+    if (task == nullptr || output == nullptr) return status(HAL_ADAPTER_INVALID_ARGUMENT);
+    *output = HalAdapterTaskStatusInfo{};
+    output->started = task->started ? 1 : 0;
+    output->availableSamplesPerChannel = 4;
+    output->totalSamplesPerChannel = task->totalSamples;
+    return status();
+}
+
+HalAdapterStatus HAL_ADAPTER_CALL stopTask(HalAdapterTaskHandle handle, int)
+{
+    auto* task = static_cast<SampleTaskState*>(handle);
+    if (task == nullptr) return status(HAL_ADAPTER_INVALID_ARGUMENT);
+    task->started = false;
+    return status();
+}
+
+HalAdapterStatus HAL_ADAPTER_CALL closeTask(HalAdapterTaskHandle handle)
+{
+    if (handle == nullptr) return status(HAL_ADAPTER_INVALID_ARGUMENT);
+    delete static_cast<SampleTaskState*>(handle);
+    return status();
+}
+
 } // namespace
 
 extern "C" int HAL_ADAPTER_CALL hal_adapter_get_api_v1(const HalAdapterHostApiV1* host,
@@ -216,6 +322,27 @@ extern "C" int HAL_ADAPTER_CALL hal_adapter_get_api_v1(const HalAdapterHostApiV1
     output->getCapabilities = &capabilities;
     output->digitalRead = &digitalRead;
     output->digitalWrite = &digitalWrite;
+    return 0;
+}
+
+extern "C" int HAL_ADAPTER_CALL hal_adapter_get_task_api_v1(
+    const HalAdapterHostApiV1* host,
+    HalAdapterTaskApiV1* output)
+{
+    if (host == nullptr || output == nullptr ||
+        host->abiVersion != HAL_ADAPTER_ABI_VERSION) {
+        return -1;
+    }
+    *output = HalAdapterTaskApiV1{};
+    output->abiVersion = HAL_ADAPTER_TASK_ABI_VERSION;
+    output->structSize = static_cast<int>(sizeof(HalAdapterTaskApiV1));
+    output->createTask = &createTask;
+    output->startTask = &startTask;
+    output->readTask = &readTask;
+    output->writeTask = &writeTask;
+    output->getTaskStatus = &getTaskStatus;
+    output->stopTask = &stopTask;
+    output->closeTask = &closeTask;
     return 0;
 }
 

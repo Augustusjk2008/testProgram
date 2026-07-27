@@ -23,6 +23,7 @@ endif()
 
 add_library(hwtest_adapter_ni_daqmx SHARED
     ni_daqmx_adapter.cpp
+    ni_daqmx_config.cpp
 )
 
 target_compile_features(hwtest_adapter_ni_daqmx PRIVATE cxx_std_17)

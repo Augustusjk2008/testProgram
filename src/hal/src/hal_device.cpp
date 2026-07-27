@@ -115,6 +115,11 @@ IControlChannel* HalDevice::controlChannel()
     return static_cast<IControlChannel*>(this);
 }
 
+ISampleTaskIo* HalDevice::sampleTasks()
+{
+    return static_cast<ISampleTaskIo*>(this);
+}
+
 HalStatus HalDevice::close(const OperationOptions& options)
 {
     QElapsedTimer timer;
@@ -125,6 +130,31 @@ HalStatus HalDevice::close(const OperationOptions& options)
         emitOperationLog(operation, options, timer.elapsed(), status);
         return status;
     }
+    HalStatus taskStatus;
+    const QList<SampleTaskId> taskIds = m_sampleTasks.values();
+    for (const SampleTaskId& taskId : taskIds) {
+        const HalStatus stopStatus = m_backend == nullptr
+            ? makeError(HalStatusCode::InternalError,
+                        QStringLiteral("sampleTask.stop"),
+                        QStringLiteral("Backend adapter is missing"),
+                        m_descriptor.deviceId)
+            : m_backend->stopSampleTask(taskId, options);
+        if (taskStatus.ok() && !stopStatus.ok()) {
+            taskStatus = stopStatus;
+        }
+    }
+    for (const SampleTaskId& taskId : taskIds) {
+        const HalStatus closeStatus = m_backend == nullptr
+            ? makeError(HalStatusCode::InternalError,
+                        QStringLiteral("sampleTask.close"),
+                        QStringLiteral("Backend adapter is missing"),
+                        m_descriptor.deviceId)
+            : m_backend->closeSampleTask(taskId, options);
+        if (taskStatus.ok() && !closeStatus.ok()) {
+            taskStatus = closeStatus;
+        }
+    }
+    m_sampleTasks.clear();
     const HalStatus controlStatus = m_controlChannels.closeAll(options);
     const HalStatus safeStatus = applySafeState();
     HalStatus backendStatus;
@@ -137,9 +167,11 @@ HalStatus HalDevice::close(const OperationOptions& options)
         emitOperationLog(operation, options, timer.elapsed(), backendStatus);
         return backendStatus;
     }
-    const HalStatus status = !controlStatus.ok()
-        ? controlStatus
-        : (safeStatus.ok() ? HalStatus{} : safeStatus);
+    const HalStatus status = !taskStatus.ok()
+        ? taskStatus
+        : (!controlStatus.ok()
+               ? controlStatus
+               : (safeStatus.ok() ? HalStatus{} : safeStatus));
     emitOperationLog(operation, options, timer.elapsed(), status);
     return status;
 }
@@ -259,6 +291,28 @@ HalStatus HalDevice::ensureOpen(const QString& operation) const
         return notOpenStatus(operation);
     }
     return HalStatus{};
+}
+
+HalStatus HalDevice::ensureSampleTask(const SampleTaskId& taskId,
+                                      const QString& operation) const
+{
+    const HalStatus openStatus = ensureOpen(operation);
+    if (!openStatus.ok()) {
+        return openStatus;
+    }
+    if (taskId.trimmed().isEmpty() || !m_sampleTasks.contains(taskId)) {
+        return makeError(HalStatusCode::NotFound,
+                         operation,
+                         QStringLiteral("Sample task was not found for this device session"),
+                         m_descriptor.deviceId);
+    }
+    if (m_backend == nullptr) {
+        return makeError(HalStatusCode::InternalError,
+                         operation,
+                         QStringLiteral("Backend adapter is missing"),
+                         m_descriptor.deviceId);
+    }
+    return {};
 }
 
 HalStatus HalDevice::ensureModuleBinding(const ResourceId& resourceId,
@@ -1230,6 +1284,164 @@ HalResult<QVector<CanFdFrame>> HalDevice::receiveCanBatch(const ResourceId& bus,
     }
     result = m_backend->receiveCanBatch(m_sessionId, binding->physicalIndex, maxFrames, options);
     return result;
+}
+
+HalResult<SampleTaskId> HalDevice::createTask(const SampleTaskConfig& config,
+                                              const OperationOptions& options)
+{
+    HalResult<SampleTaskId> result;
+    result.status = ensureOpen(QStringLiteral("sampleTask.create"));
+    if (!result.status.ok()) {
+        return result;
+    }
+    if (m_backend == nullptr) {
+        result.status = makeError(HalStatusCode::InternalError,
+                                  QStringLiteral("sampleTask.create"),
+                                  QStringLiteral("Backend adapter is missing"),
+                                  m_descriptor.deviceId);
+        return result;
+    }
+    if (config.channels.isEmpty()) {
+        result.status = makeError(HalStatusCode::InvalidArgument,
+                                  QStringLiteral("sampleTask.create"),
+                                  QStringLiteral("A sample task requires at least one channel"),
+                                  m_descriptor.deviceId);
+        return result;
+    }
+
+    QString module;
+    QString direction;
+    switch (config.kind) {
+    case SampleTaskKind::AnalogInput:
+        module = QStringLiteral("analog");
+        direction = QStringLiteral("input");
+        break;
+    case SampleTaskKind::AnalogOutput:
+        module = QStringLiteral("analog");
+        direction = QStringLiteral("output");
+        break;
+    case SampleTaskKind::DigitalInput:
+        module = QStringLiteral("digital");
+        direction = QStringLiteral("input");
+        break;
+    case SampleTaskKind::DigitalOutput:
+        module = QStringLiteral("digital");
+        direction = QStringLiteral("output");
+        break;
+    case SampleTaskKind::CounterInput:
+        module = QStringLiteral("counter");
+        direction = QStringLiteral("input");
+        break;
+    case SampleTaskKind::CounterOutput:
+        module = QStringLiteral("counter");
+        direction = QStringLiteral("output");
+        break;
+    }
+
+    QVector<int> physicalIndexes;
+    physicalIndexes.reserve(config.channels.size());
+    QSet<ResourceId> uniqueChannels;
+    for (const ResourceId& resourceId : config.channels) {
+        if (uniqueChannels.contains(resourceId)) {
+            result.status = makeError(HalStatusCode::InvalidArgument,
+                                      QStringLiteral("sampleTask.create"),
+                                      QStringLiteral("A sample task cannot contain duplicate resources"),
+                                      m_descriptor.deviceId,
+                                      resourceId);
+            return result;
+        }
+        uniqueChannels.insert(resourceId);
+        HalStatus bindingStatus;
+        const ResourceBinding* binding = bindingFor(resourceId, module, direction, &bindingStatus);
+        if (binding == nullptr) {
+            result.status = bindingStatus;
+            result.status.error.operation = QStringLiteral("sampleTask.create");
+            return result;
+        }
+        if (binding->physicalIndex < 0) {
+            result.status = makeError(HalStatusCode::InvalidArgument,
+                                      QStringLiteral("sampleTask.create"),
+                                      QStringLiteral("Sample-task resources require a physical index"),
+                                      binding->deviceId,
+                                      binding->resourceId);
+            return result;
+        }
+        physicalIndexes.append(binding->physicalIndex);
+    }
+
+    result = m_backend->createSampleTask(m_sessionId, physicalIndexes, config, options);
+    if (result.ok()) {
+        if (result.value.trimmed().isEmpty()) {
+            result.status = makeError(HalStatusCode::AdapterError,
+                                      QStringLiteral("sampleTask.create"),
+                                      QStringLiteral("Adapter returned an empty sample-task identifier"),
+                                      m_descriptor.deviceId);
+        } else {
+            m_sampleTasks.insert(result.value);
+        }
+    }
+    return result;
+}
+
+HalStatus HalDevice::startTask(const SampleTaskId& taskId,
+                               const OperationOptions& options)
+{
+    const HalStatus status = ensureSampleTask(taskId, QStringLiteral("sampleTask.start"));
+    return status.ok() ? m_backend->startSampleTask(taskId, options) : status;
+}
+
+HalResult<SampleTaskBlock> HalDevice::readTask(const SampleTaskId& taskId,
+                                               int maxSamplesPerChannel,
+                                               const OperationOptions& options)
+{
+    HalResult<SampleTaskBlock> result;
+    result.status = ensureSampleTask(taskId, QStringLiteral("sampleTask.read"));
+    if (!result.status.ok()) {
+        return result;
+    }
+    if (maxSamplesPerChannel <= 0) {
+        result.status = makeError(HalStatusCode::InvalidArgument,
+                                  QStringLiteral("sampleTask.read"),
+                                  QStringLiteral("maxSamplesPerChannel must be positive"),
+                                  m_descriptor.deviceId);
+        return result;
+    }
+    return m_backend->readSampleTask(taskId, maxSamplesPerChannel, options);
+}
+
+HalStatus HalDevice::writeTask(const SampleTaskId& taskId,
+                               const SampleTaskBlock& block,
+                               const OperationOptions& options)
+{
+    const HalStatus status = ensureSampleTask(taskId, QStringLiteral("sampleTask.write"));
+    return status.ok() ? m_backend->writeSampleTask(taskId, block, options) : status;
+}
+
+HalResult<SampleTaskStatus> HalDevice::taskStatus(const SampleTaskId& taskId,
+                                                  const OperationOptions& options)
+{
+    HalResult<SampleTaskStatus> result;
+    result.status = ensureSampleTask(taskId, QStringLiteral("sampleTask.status"));
+    return result.status.ok() ? m_backend->sampleTaskStatus(taskId, options) : result;
+}
+
+HalStatus HalDevice::stopTask(const SampleTaskId& taskId,
+                              const OperationOptions& options)
+{
+    const HalStatus status = ensureSampleTask(taskId, QStringLiteral("sampleTask.stop"));
+    return status.ok() ? m_backend->stopSampleTask(taskId, options) : status;
+}
+
+HalStatus HalDevice::closeTask(const SampleTaskId& taskId,
+                               const OperationOptions& options)
+{
+    const HalStatus status = ensureSampleTask(taskId, QStringLiteral("sampleTask.close"));
+    if (!status.ok()) {
+        return status;
+    }
+    const HalStatus closeStatus = m_backend->closeSampleTask(taskId, options);
+    m_sampleTasks.remove(taskId);
+    return closeStatus;
 }
 
 } // namespace hwtest::hal

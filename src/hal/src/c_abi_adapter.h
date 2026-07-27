@@ -2,6 +2,7 @@
 
 #include "adapter_loader.h"
 #include "hardware_adapter.h"
+#include "hal/i_sample_task_io.h"
 
 #include <QHash>
 
@@ -115,6 +116,25 @@ public:
                                                    int maxFrames,
                                                    const OperationOptions& options) override;
 
+    HalResult<SampleTaskId> createSampleTask(const SessionId& sessionId,
+                                             const QVector<int>& physicalIndexes,
+                                             const SampleTaskConfig& config,
+                                             const OperationOptions& options) override;
+    HalStatus startSampleTask(const SampleTaskId& taskId,
+                              const OperationOptions& options) override;
+    HalResult<SampleTaskBlock> readSampleTask(const SampleTaskId& taskId,
+                                              int maxSamplesPerChannel,
+                                              const OperationOptions& options) override;
+    HalStatus writeSampleTask(const SampleTaskId& taskId,
+                              const SampleTaskBlock& block,
+                              const OperationOptions& options) override;
+    HalResult<SampleTaskStatus> sampleTaskStatus(const SampleTaskId& taskId,
+                                                 const OperationOptions& options) override;
+    HalStatus stopSampleTask(const SampleTaskId& taskId,
+                             const OperationOptions& options) override;
+    HalStatus closeSampleTask(const SampleTaskId& taskId,
+                              const OperationOptions& options) override;
+
 private:
     HalStatus ensureInitialized(const QString& operation) const;
     HalAdapterDeviceHandle deviceHandle(const SessionId& sessionId,
@@ -122,15 +142,28 @@ private:
                                         HalStatus* status = nullptr) const;
     HalStatus unsupported(const QString& operation,
                           const DeviceId& deviceId = {}) const;
+    HalAdapterTaskHandle taskHandle(const SampleTaskId& taskId,
+                                    const QString& operation,
+                                    HalStatus* status = nullptr) const;
+
+    struct NativeTask {
+        HalAdapterTaskHandle handle = nullptr;
+        SessionId sessionId;
+        SampleTaskConfig config;
+        int channelCount = 0;
+    };
 
     AdapterLoader m_loader;
     HalAdapterApiV1 m_api {};
+    HalAdapterTaskApiV1 m_taskApi {};
     HalAdapterHandle m_handle = nullptr;
     QHash<SessionId, HalAdapterDeviceHandle> m_devices;
     QHash<SessionId, DeviceId> m_deviceIds;
+    QHash<SampleTaskId, NativeTask> m_tasks;
     QVariantMap m_config;
     QString m_adapterId;
     quint64 m_sessionCounter = 0;
+    quint64 m_taskCounter = 0;
     bool m_initialized = false;
     mutable std::recursive_mutex m_apiMutex;
 };

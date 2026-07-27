@@ -8,6 +8,16 @@
 
 namespace hwtest::hal {
 
+namespace {
+
+bool usesMockBackend(const AdapterId& adapterId)
+{
+    return adapterId.startsWith(QStringLiteral("mock.")) ||
+        adapterId == QStringLiteral("mock.adapter.v1");
+}
+
+} // namespace
+
 AdapterRouter::~AdapterRouter()
 {
     shutdown();
@@ -23,6 +33,9 @@ QVariantMap AdapterRouter::configForAdapter(const AdapterId& adapterId,
         if (!legacy.isEmpty()) result = legacy;
     }
     result.insert(QStringLiteral("adapterId"), adapterId);
+    if (!usesMockBackend(adapterId)) {
+        return result;
+    }
     if (m_halConfig.contains(QStringLiteral("mock"))) {
         result.insert(QStringLiteral("mock"), m_halConfig.value(QStringLiteral("mock")));
     }
@@ -65,8 +78,7 @@ std::shared_ptr<HardwareAdapter> AdapterRouter::createBackend(
     const AdapterId& adapterId,
     const QVariantMap& config) const
 {
-    if (adapterId.startsWith(QStringLiteral("mock.")) ||
-        adapterId == QStringLiteral("mock.adapter.v1")) {
+    if (usesMockBackend(adapterId)) {
         return std::make_shared<MockAdapter>();
     }
     const QString providerId = config.value(QStringLiteral("providerId")).toString().trimmed();

@@ -56,6 +56,83 @@ QVariantMap multiAdapterConfig(const QString& libraryPath)
     return config;
 }
 
+QVariantMap projectionProbeConfig(const QString& libraryPath)
+{
+    QVariantMap config = multiAdapterConfig(libraryPath);
+    QVariantMap hardware = config.value(QStringLiteral("hardware")).toMap();
+    QVariantList devices = hardware.value(QStringLiteral("devices")).toList();
+    for (QVariant& value : devices) {
+        QVariantMap device = value.toMap();
+        if (device.value(QStringLiteral("alias")).toString() == QStringLiteral("fixture_device")) {
+            device.insert(QStringLiteral("vendor"), QStringLiteral("NI"));
+            device.insert(QStringLiteral("model"), QStringLiteral("PXI-6259"));
+            device.insert(QStringLiteral("properties"),
+                          QVariantMap{{QStringLiteral("vendor"),
+                                       QVariantMap{{QStringLiteral("ni"),
+                                                    QVariantMap{{QStringLiteral("deviceName"),
+                                                                 QStringLiteral("fixture_device")}}}}},
+                                      {QStringLiteral("taskProfiles"),
+                                       QVariantList{QVariantMap{{QStringLiteral("id"),
+                                                                 QStringLiteral("di-continuous")}}}}});
+            value = device;
+            break;
+        }
+    }
+    hardware.insert(QStringLiteral("devices"), devices);
+
+    QVariantMap resources = hardware.value(QStringLiteral("resources")).toMap();
+    QVariantMap probe = testsupport::makeResource(QStringLiteral("fixture_device"),
+                                                   QStringLiteral("digital"),
+                                                   QStringLiteral("input"),
+                                                   1);
+    probe.insert(QStringLiteral("adapterId"), QStringLiteral("fixture.digital.v1"));
+    resources.insert(QStringLiteral("failClose"), probe);
+    hardware.insert(QStringLiteral("resources"), resources);
+    config.insert(QStringLiteral("hardware"), hardware);
+    config.insert(QStringLiteral("safeState"), QVariantMap{{QStringLiteral("failClose"), true}});
+    return config;
+}
+
+QVariantMap niPxiAdapterConfig(const QString& libraryPath)
+{
+    QVariantMap config;
+    config.insert(
+        QStringLiteral("adapters"),
+        QVariantMap{{QStringLiteral("ni.daqmx"),
+                     QVariantMap{{QStringLiteral("providerId"),
+                                  QStringLiteral("vendor.cabi")},
+                                 {QStringLiteral("libraryPath"), libraryPath},
+                                 {QStringLiteral("settings"),
+                                  QVariantMap{{QStringLiteral("timeoutSeconds"), 0.25}}}}}});
+
+    QVariantMap device{{QStringLiteral("alias"), QStringLiteral("ni6259_stimulus")},
+                       {QStringLiteral("adapterId"), QStringLiteral("ni.daqmx")},
+                       {QStringLiteral("vendor"), QStringLiteral("NI")},
+                       {QStringLiteral("model"), QStringLiteral("PXI-6259")},
+                       {QStringLiteral("serialNumber"), QStringLiteral("62590002")},
+                       {QStringLiteral("properties"),
+                        QVariantMap{{QStringLiteral("vendor"),
+                                     QVariantMap{{QStringLiteral("ni"),
+                                                  QVariantMap{{QStringLiteral("deviceName"),
+                                                               QStringLiteral("PXI1Slot2")}}}}}}}};
+    QVariantMap output = testsupport::makeResource(QStringLiteral("ni6259_stimulus"),
+                                                    QStringLiteral("digital"),
+                                                    QStringLiteral("output"),
+                                                    0);
+    output.insert(QStringLiteral("adapterId"), QStringLiteral("ni.daqmx"));
+    output.insert(QStringLiteral("providerId"), QStringLiteral("vendor.cabi"));
+    output.insert(QStringLiteral("properties"),
+                  QVariantMap{{QStringLiteral("portNumber"), 0},
+                              {QStringLiteral("lineNumber"), 0}});
+    config.insert(QStringLiteral("hardware"),
+                  QVariantMap{{QStringLiteral("devices"), QVariantList{device}},
+                              {QStringLiteral("resources"),
+                               QVariantMap{{QStringLiteral("DO_PXI_0"), output}}}});
+    config.insert(QStringLiteral("safeState"),
+                  QVariantMap{{QStringLiteral("DO_PXI_0"), QStringLiteral("Low")}});
+    return config;
+}
+
 } // namespace
 
 TEST(HalServiceTest, ScanDevicesRequiresInitialize)
@@ -227,4 +304,50 @@ TEST(HalServiceTest, LoadsVendorAdapterLazilyAndRoutesSessionsByDeviceAdapter)
     EXPECT_EQ(readback.value.level, DigitalLevel::High);
     EXPECT_TRUE(service->closeDevice(vendorSession.value, OperationOptions{}).ok());
     EXPECT_TRUE(service->closeDevice(mockSession.value, OperationOptions{}).ok());
+}
+
+TEST(HalServiceTest, PassesOnlyDriverSettingsToVendorAdapterInitialization)
+{
+    std::unique_ptr<IHalService> service(createHalService());
+    ASSERT_TRUE(service->initialize(multiAdapterConfig(
+        QString::fromLatin1(HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH))).ok());
+
+    const HalResult<SessionId> session = service->openDevice(
+        QStringLiteral("fixture_device"), OperationOptions{});
+
+    ASSERT_TRUE(session.ok()) << session.status.error.message.toStdString();
+    EXPECT_TRUE(service->closeDevice(session.value, OperationOptions{}).ok());
+}
+
+TEST(HalServiceTest, RoutesDriverSettingsAndDeviceProjectionIntoNiAdapter)
+{
+    std::unique_ptr<IHalService> service(createHalService());
+    ASSERT_TRUE(service->initialize(niPxiAdapterConfig(
+        QString::fromLatin1(HAL_TEST_NI_DAQMX_ADAPTER_FIXTURE_PATH))).ok());
+
+    const HalResult<SessionId> session = service->openDevice(
+        QStringLiteral("ni6259_stimulus"), OperationOptions{});
+    ASSERT_TRUE(session.ok()) << session.status.error.message.toStdString();
+    const HalResult<IHalDevice*> device = service->device(session.value);
+    ASSERT_TRUE(device.ok());
+    ASSERT_NE(device.value->digitalIo(), nullptr);
+    EXPECT_TRUE(device.value->digitalIo()->writeDo(
+        QStringLiteral("DO_PXI_0"), DigitalLevel::High, DigitalWriteOptions{}).ok());
+    EXPECT_TRUE(service->closeDevice(session.value, OperationOptions{}).ok());
+}
+
+TEST(HalServiceTest, PassesScopedSafeStateInVendorOpenProjection)
+{
+    std::unique_ptr<IHalService> service(createHalService());
+    ASSERT_TRUE(service->initialize(projectionProbeConfig(
+        QString::fromLatin1(HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH))).ok());
+
+    const HalResult<SessionId> session = service->openDevice(
+        QStringLiteral("fixture_device"), OperationOptions{});
+    ASSERT_TRUE(session.ok());
+
+    // The fixture treats this scoped safe-state key as an open-options probe.
+    const HalStatus closeStatus = service->closeDevice(session.value, OperationOptions{});
+    EXPECT_EQ(closeStatus.code, HalStatusCode::IoError);
+    EXPECT_EQ(closeStatus.error.operation, QStringLiteral("adapter.closeDevice"));
 }

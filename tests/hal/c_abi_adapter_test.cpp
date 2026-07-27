@@ -1,4 +1,5 @@
 #include "c_abi_adapter.h"
+#include "hal/i_sample_task_io.h"
 
 #include <gtest/gtest.h>
 
@@ -23,42 +24,41 @@ QVariantMap adapterConfig(const QString& libraryPath)
 
 QVariantMap niAdapterConfig(const QString& libraryPath)
 {
-    const QVariantMap device{
-        {QStringLiteral("alias"), QStringLiteral("ni6259_stimulus")},
-        {QStringLiteral("model"), QStringLiteral("USB-6259")},
-        {QStringLiteral("serialNumber"), QStringLiteral("62590001")}};
-    const QVariantMap out{
-        {QStringLiteral("device"), QStringLiteral("ni6259_stimulus")},
+    return QVariantMap{{QStringLiteral("adapterId"), QStringLiteral("ni.daqmx")},
+                       {QStringLiteral("libraryPath"), libraryPath},
+                       {QStringLiteral("settings"),
+                        QVariantMap{{QStringLiteral("timeoutSeconds"), 0.25}}}};
+}
+
+QVariantMap niDeviceOpenSpec()
+{
+    const QVariantMap out{{QStringLiteral("resourceId"), QStringLiteral("OUT0")},
         {QStringLiteral("module"), QStringLiteral("digital")},
         {QStringLiteral("direction"), QStringLiteral("output")},
         {QStringLiteral("physicalIndex"), 0},
         {QStringLiteral("properties"),
          QVariantMap{{QStringLiteral("portNumber"), 0},
                      {QStringLiteral("lineNumber"), 0}}}};
-    const QVariantMap in{
-        {QStringLiteral("device"), QStringLiteral("ni6259_stimulus")},
+    const QVariantMap in{{QStringLiteral("resourceId"), QStringLiteral("IN0")},
         {QStringLiteral("module"), QStringLiteral("digital")},
         {QStringLiteral("direction"), QStringLiteral("input")},
         {QStringLiteral("physicalIndex"), 16},
         {QStringLiteral("properties"),
          QVariantMap{{QStringLiteral("portNumber"), 1},
                      {QStringLiteral("lineNumber"), 0}}}};
-
-    QVariantMap config;
-    config.insert(QStringLiteral("adapterId"), QStringLiteral("ni.daqmx"));
-    config.insert(QStringLiteral("libraryPath"), libraryPath);
-    config.insert(QStringLiteral("settings"),
-                  QVariantMap{{QStringLiteral("deviceName"), QStringLiteral("DevFixture")},
-                              {QStringLiteral("expectedProductType"), QStringLiteral("USB-6259")},
-                              {QStringLiteral("serialNumber"), QStringLiteral("62590001")}});
-    config.insert(QStringLiteral("hardware"),
-                  QVariantMap{{QStringLiteral("devices"), QVariantList{device}},
-                              {QStringLiteral("resources"),
-                               QVariantMap{{QStringLiteral("OUT0"), out},
-                                           {QStringLiteral("IN0"), in}}}});
-    config.insert(QStringLiteral("safeState"),
-                  QVariantMap{{QStringLiteral("OUT0"), QStringLiteral("Low")}});
-    return config;
+    return QVariantMap{
+        {QStringLiteral("schema"), QStringLiteral("hwtest.adapter-device-open")},
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("physicalDeviceId"), QStringLiteral("PXI1Slot2")},
+        {QStringLiteral("device"),
+         QVariantMap{{QStringLiteral("deviceId"), QStringLiteral("ni6259_stimulus")},
+                     {QStringLiteral("adapterId"), QStringLiteral("ni.daqmx")},
+                     {QStringLiteral("model"), QStringLiteral("PXI-6259")},
+                     {QStringLiteral("serialNumber"), QStringLiteral("62590002")}}},
+        {QStringLiteral("channels"), QVariantList{out, in}},
+        {QStringLiteral("taskProfiles"), QVariantList{}},
+        {QStringLiteral("safeState"),
+         QVariantMap{{QStringLiteral("OUT0"), QStringLiteral("Low")}}}};
 }
 
 } // namespace
@@ -100,12 +100,8 @@ TEST(CAbiAdapterTest, LoadsAbiAndRoundTripsDigitalBatch)
     CAbiAdapter niAdapter;
     ASSERT_TRUE(niAdapter.initialize(niAdapterConfig(
         QString::fromLatin1(HAL_TEST_NI_DAQMX_ADAPTER_FIXTURE_PATH))).ok());
-    const auto niCapabilities = niAdapter.queryCapabilities(
-        QStringLiteral("ni6259_stimulus"), OperationOptions{});
-    ASSERT_TRUE(niCapabilities.ok())
-        << niCapabilities.status.error.message.toStdString();
     const auto niSession = niAdapter.openDevice(
-        QStringLiteral("ni6259_stimulus"), QVariantMap{}, OperationOptions{});
+        QStringLiteral("ni6259_stimulus"), niDeviceOpenSpec(), OperationOptions{});
     ASSERT_TRUE(niSession.ok()) << niSession.status.error.message.toStdString();
     EXPECT_TRUE(niAdapter.writeDigital(
         niSession.value, 0, DigitalLevel::High, DigitalWriteOptions{}).ok());
@@ -214,4 +210,44 @@ TEST(CAbiAdapterTest, SerializesNativeIoAgainstClose)
     EXPECT_TRUE(closeStatus.ok()) << closeStatus.error.message.toStdString();
     EXPECT_TRUE(adapter.shutdown().ok());
     fixture.unload();
+}
+
+TEST(CAbiAdapterTest, PreservesEverySampleFromContinuousAnalogTask)
+{
+    CAbiAdapter adapter;
+    ASSERT_TRUE(adapter.initialize(adapterConfig(
+        QString::fromLatin1(HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH))).ok());
+    const auto session = adapter.openDevice(QStringLiteral("fixture_device"),
+                                            QVariantMap{},
+                                            OperationOptions{});
+    ASSERT_TRUE(session.ok());
+
+    SampleTaskConfig config;
+    config.kind = SampleTaskKind::AnalogInput;
+    config.mode = SampleTaskMode::Continuous;
+    config.sampleRateHz = 20000.0;
+    config.samplesPerChannel = 4;
+    config.bufferSamplesPerChannel = 16;
+    const auto task = adapter.createSampleTask(session.value,
+                                               QVector<int>{0, 1},
+                                               config,
+                                               OperationOptions{});
+    ASSERT_TRUE(task.ok()) << task.status.error.message.toStdString();
+    ASSERT_TRUE(adapter.startSampleTask(task.value, OperationOptions{}).ok());
+
+    const auto block = adapter.readSampleTask(task.value, 4, OperationOptions{});
+
+    ASSERT_TRUE(block.ok()) << block.status.error.message.toStdString();
+    EXPECT_EQ(block.value.channelCount, 2);
+    EXPECT_EQ(block.value.samplesPerChannel, 4);
+    EXPECT_EQ(block.value.sampleType, SampleValueType::Float64);
+    const double expected[] = {1.0, 2.0, 3.0, 4.0, 11.0, 12.0, 13.0, 14.0};
+    ASSERT_EQ(block.value.analogValues.size(), 8);
+    for (int index = 0; index < 8; ++index) {
+        EXPECT_DOUBLE_EQ(block.value.analogValues.at(index), expected[index]);
+    }
+    ASSERT_TRUE(adapter.stopSampleTask(task.value, OperationOptions{}).ok());
+    ASSERT_TRUE(adapter.closeSampleTask(task.value, OperationOptions{}).ok());
+    ASSERT_TRUE(adapter.closeDevice(session.value, OperationOptions{}).ok());
+    EXPECT_TRUE(adapter.shutdown().ok());
 }

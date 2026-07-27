@@ -24,7 +24,7 @@
   ],
   "hardwareRequirements": [
     {
-      "requirementId": "ni6259.digital_stimulus",
+      "requirementId": "pxi6259.digital_stimulus",
       "deviceId": "ni6259_stimulus",
       "adapterId": "ni.daqmx",
       "requiredModules": ["digital"],
@@ -35,7 +35,7 @@
         "DUT_DI12_STIM", "DUT_DI13_STIM", "DUT_DI14_STIM", "DUT_DI15_STIM"
       ],
       "priority": 0,
-      "match": {"vendor": "NI", "model": "USB-6259"}
+      "match": {"vendor": "NI", "model": "PXI-6259"}
     }
   ],
   "protocolProfiles": [
@@ -74,7 +74,7 @@
   "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 2000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
   "reportFields": {
     "title": "数字量输入",
-    "description": "通过 NI USB-6259 数字输出刺激 16 路 DUT DI，并读取板端位图。",
+    "description": "通过 NI PXI-6259 数字输出刺激 16 路 DUT DI，并读取板端位图。",
     "supportedRunModes": ["single", "pc_periodic"],
     "measurements": [
       {"id": "status", "label": "设备状态", "unit": "", "primary": false},

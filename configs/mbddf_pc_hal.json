@@ -13,9 +13,6 @@
       "providerId": "vendor.cabi",
       "libraryPath": "${HWTEST_NI_DAQMX_ADAPTER_PATH}",
       "settings": {
-        "deviceName": "Dev1",
-        "expectedProductType": "USB-6259",
-        "serialNumber": "CONFIGURE_ME",
         "timeoutSeconds": 1.0
       }
     }
@@ -32,8 +29,63 @@
         "alias": "ni6259_stimulus",
         "adapterId": "ni.daqmx",
         "vendor": "NI",
-        "model": "USB-6259",
-        "serialNumber": "CONFIGURE_ME"
+        "model": "PXI-6259",
+        "serialNumber": "CONFIGURE_ME",
+        "properties": {
+          "vendor": {
+            "ni": {
+              "deviceName": "PXI1Slot2"
+            }
+          },
+          "taskProfiles": [
+            {
+              "id": "ai-finite",
+              "kind": "analogInput",
+              "mode": "finite",
+              "resources": ["PXI_AI_0", "PXI_AI_1"],
+              "sampleRateHz": 50000.0,
+              "samplesPerChannel": 1024
+            },
+            {
+              "id": "ao-continuous",
+              "kind": "analogOutput",
+              "mode": "continuous",
+              "resources": ["PXI_AO_0"],
+              "sampleRateHz": 10000.0,
+              "bufferSamplesPerChannel": 4096
+            },
+            {
+              "id": "dio-finite",
+              "kind": "digitalOutput",
+              "mode": "finite",
+              "resources": ["DUT_DI0_STIM", "DUT_DI1_STIM"],
+              "sampleRateHz": 1000.0,
+              "samplesPerChannel": 16
+            },
+            {
+              "id": "di-continuous",
+              "kind": "digitalInput",
+              "mode": "continuous",
+              "resources": ["PXI_DI_16"],
+              "sampleRateHz": 10000.0,
+              "bufferSamplesPerChannel": 4096
+            },
+            {
+              "id": "counter-edge",
+              "kind": "counterInput",
+              "mode": "continuous",
+              "resources": ["PXI_CTR_0"]
+            },
+            {
+              "id": "counter-pulse",
+              "kind": "counterOutput",
+              "mode": "continuous",
+              "resources": ["PXI_CTR_1"],
+              "counterFrequencyHz": 1000.0,
+              "counterDutyCycle": 0.5
+            }
+          ]
+        }
       }
     ],
     "resources": {
@@ -80,7 +132,13 @@
       "DUT_DI12_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 12, "properties": {"portNumber": 0, "lineNumber": 12}},
       "DUT_DI13_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 13, "properties": {"portNumber": 0, "lineNumber": 13}},
       "DUT_DI14_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 14, "properties": {"portNumber": 0, "lineNumber": 14}},
-      "DUT_DI15_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 15, "properties": {"portNumber": 0, "lineNumber": 15}}
+      "DUT_DI15_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 15, "properties": {"portNumber": 0, "lineNumber": 15}},
+      "PXI_AI_0": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 0, "properties": {"channel": "ai0", "terminalConfig": "Differential", "minValue": -10.0, "maxValue": 10.0}},
+      "PXI_AI_1": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 1, "properties": {"channel": "ai1", "terminalConfig": "Differential", "minValue": -10.0, "maxValue": 10.0}},
+      "PXI_AO_0": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "output", "physicalIndex": 0, "properties": {"channel": "ao0", "minValue": -10.0, "maxValue": 10.0}},
+      "PXI_DI_16": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "input", "physicalIndex": 16, "properties": {"portNumber": 0, "lineNumber": 16}},
+      "PXI_CTR_0": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "counter", "direction": "input", "physicalIndex": 0, "properties": {"counterNumber": 0}},
+      "PXI_CTR_1": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "counter", "direction": "output", "physicalIndex": 1, "properties": {"counterNumber": 1}}
     }
   },
   "safeState": {
@@ -99,6 +157,7 @@
     "DUT_DI12_STIM": "Low",
     "DUT_DI13_STIM": "Low",
     "DUT_DI14_STIM": "Low",
-    "DUT_DI15_STIM": "Low"
+    "DUT_DI15_STIM": "Low",
+    "PXI_AO_0": 0.0
   }
 }

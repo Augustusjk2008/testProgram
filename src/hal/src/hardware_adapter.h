@@ -1,5 +1,7 @@
 #pragma once
 
+#include "hal/i_sample_task_io.h"
+
 #include "resource_mapper.h"
 
 namespace hwtest::hal {
@@ -108,6 +110,87 @@ public:
                                                            int physicalIndex,
                                                            int maxFrames,
                                                            const OperationOptions& options) = 0;
+
+    virtual HalResult<SampleTaskId> createSampleTask(const SessionId& sessionId,
+                                                     const QVector<int>& physicalIndexes,
+                                                     const SampleTaskConfig& config,
+                                                     const OperationOptions& options)
+    {
+        Q_UNUSED(sessionId)
+        Q_UNUSED(physicalIndexes)
+        Q_UNUSED(config)
+        Q_UNUSED(options)
+        HalResult<SampleTaskId> result;
+        result.status = unsupportedSampleTaskStatus(QStringLiteral("sampleTask.create"));
+        return result;
+    }
+
+    virtual HalStatus startSampleTask(const SampleTaskId& taskId,
+                                      const OperationOptions& options)
+    {
+        Q_UNUSED(taskId)
+        Q_UNUSED(options)
+        return unsupportedSampleTaskStatus(QStringLiteral("sampleTask.start"));
+    }
+
+    virtual HalResult<SampleTaskBlock> readSampleTask(const SampleTaskId& taskId,
+                                                      int maxSamplesPerChannel,
+                                                      const OperationOptions& options)
+    {
+        Q_UNUSED(taskId)
+        Q_UNUSED(maxSamplesPerChannel)
+        Q_UNUSED(options)
+        HalResult<SampleTaskBlock> result;
+        result.status = unsupportedSampleTaskStatus(QStringLiteral("sampleTask.read"));
+        return result;
+    }
+
+    virtual HalStatus writeSampleTask(const SampleTaskId& taskId,
+                                      const SampleTaskBlock& block,
+                                      const OperationOptions& options)
+    {
+        Q_UNUSED(taskId)
+        Q_UNUSED(block)
+        Q_UNUSED(options)
+        return unsupportedSampleTaskStatus(QStringLiteral("sampleTask.write"));
+    }
+
+    virtual HalResult<SampleTaskStatus> sampleTaskStatus(const SampleTaskId& taskId,
+                                                         const OperationOptions& options)
+    {
+        Q_UNUSED(taskId)
+        Q_UNUSED(options)
+        HalResult<SampleTaskStatus> result;
+        result.status = unsupportedSampleTaskStatus(QStringLiteral("sampleTask.status"));
+        return result;
+    }
+
+    virtual HalStatus stopSampleTask(const SampleTaskId& taskId,
+                                     const OperationOptions& options)
+    {
+        Q_UNUSED(taskId)
+        Q_UNUSED(options)
+        return unsupportedSampleTaskStatus(QStringLiteral("sampleTask.stop"));
+    }
+
+    virtual HalStatus closeSampleTask(const SampleTaskId& taskId,
+                                      const OperationOptions& options)
+    {
+        Q_UNUSED(taskId)
+        Q_UNUSED(options)
+        return unsupportedSampleTaskStatus(QStringLiteral("sampleTask.close"));
+    }
+
+private:
+    static HalStatus unsupportedSampleTaskStatus(const QString& operation)
+    {
+        HalStatus status;
+        status.code = HalStatusCode::NotSupported;
+        status.error.code = HalStatusCode::NotSupported;
+        status.error.operation = operation;
+        status.error.message = QStringLiteral("Adapter does not provide the optional sample-task API");
+        return status;
+    }
 };
 
 } // namespace hwtest::hal

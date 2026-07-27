@@ -72,10 +72,11 @@ HalService -> AdapterRouter（按设备 adapterId）
 | `IDigitalIo` | DI/DO 读写及边沿等待 |
 | `ISerialBus` | 串口配置与原始字节收发 |
 | `ICanFdBus` | CAN/CANFD 配置与原始总线帧收发 |
+| `ISampleTaskIo` | 可选采样任务的创建、启动、读写、状态、停止和释放；覆盖 AI/AO/DI/DO 与计数器任务 |
 | `IControlChannel` | 按逻辑资源打开/关闭控制通道，并执行原始字节读写 |
 | `availableSerialPorts()` | 只读枚举宿主串口并返回稳定排序的 `SerialPortDescriptor` 值列表 |
 
-`IHalDevice::controlChannel()` 返回当前控制通道接口。公共方法签名以对应头文件为准；没有新增或冻结 `INetworkBus`，`IControlChannel` 不向算法暴露 `QSerialPort`、`QUdpSocket` 或 UDP 数据报类型。TCP 仍待真实用例、deadline 和流语义明确后评审。
+`IHalDevice::controlChannel()` 返回当前控制通道接口，`IHalDevice::sampleTasks()` 以默认返回 `nullptr` 的可选入口暴露 `ISampleTaskIo`。公共方法签名以对应头文件为准；没有新增或冻结 `INetworkBus`，`IControlChannel` 不向算法暴露 `QSerialPort`、`QUdpSocket` 或 UDP 数据报类型。TCP 仍待真实用例、deadline 和流语义明确后评审。
 
 `availableSerialPorts()` 定义在 `hal_factory.h`，内部使用 `QSerialPortInfo::availablePorts()`，只返回端口名、说明、厂家、序列号和系统位置，不创建 HAL 会话、不打开端口，也不等价于 `IHalService::scanDevices()`。应用层将其映射为自身 DTO，TUI 不直接依赖 HAL 或 Qt SerialPort 类型。空列表表示当前未发现宿主串口；端口是否被占用、是否有权限以及 DUT 是否响应，只能在后续 HAL 打开和通讯时确定。
 
@@ -83,8 +84,8 @@ HalService -> AdapterRouter（按设备 adapterId）
 
 - `initialize(const QVariantMap&)`：加载资源、安全配置，验证多设备资源映射并登记 `AdapterRouter` 条目；不加载厂商 DLL。控制资源的 `providerId` 在首次打开时由 `ControlChannelManager` 解析。
 - `scanDevices()` / `queryCapabilities()`：返回 HAL 归一化描述。当前结果来自 `ResourceMapper` 配置，不是物理扫描。
-- `openDevice()`：按目标设备 `adapterId` 惰性取得/初始化后端，返回全局不冲突的公开 `SessionId`；连接、底层 handle 和 Adapter 租约归 HAL 所有。
-- `closeDevice()` / `shutdown()`：先尽力执行物理安全态并关闭连接，再释放相应 Adapter 租约/后端；不得构造产品协议停机命令。
+- `openDevice()`：按目标设备 `adapterId` 惰性取得/初始化后端，构造单设备 `AdapterDeviceOpenSpec`，并将其 `schema=hwtest.adapter-device-open`、`version=1` JSON 原样作为 C ABI `openOptionsJson` 传给 Adapter；返回全局不冲突的公开 `SessionId`。连接、底层 handle 和 Adapter 租约归 HAL 所有。
+- `closeDevice()` / `shutdown()`：先停止并释放该会话已跟踪的采样任务，再尽力执行物理安全态、关闭连接并释放相应 Adapter 租约/后端；不得构造产品协议停机命令。
 - `device(sessionId)`：返回受该 HAL 会话生命周期约束的聚合设备接口。
 
 ### 2.2 原始通讯语义
@@ -180,7 +181,15 @@ HAL 可以转换工程单位和厂家单位，但不得把产品字段转换或�
 
 `[当前实现]` `HalDevice::close()` 在关闭底层设备前尽力应用安全态。对于同一 HAL 设备的已配置数字输出，HAL 先按 `physicalIndex` 汇总，再只调用一次底层 `writeDigitalBatch()`；模拟输出、串口和 CAN 仍按各自资源处理。这是 HAL 批处理语义，不承诺厂商 Adapter 已按端口 bank 实现原子整幅写入，也不构成物理安全验收。
 
-`[当前实现]` 可选 `hwtest_adapter_ni_daqmx` 在厂商边界进一步按 `portNumber`、方向和连续 `lineNumber` 分组，使用 `DAQmxCreateDOChan`/`DAQmxCreateDIChan` 的 `ChanForAllLines` task，并用 `DAQmxWriteDigitalU32`/`DAQmxReadDigitalU32` 读写完整配置线段。打开、ABI reset 和关闭都会写安全 mask；关闭再 `DAQmxStopTask`/`DAQmxClearTask`，不调用会影响整卡其他任务的 `DAQmxResetDevice`。这条 NI 语义目前只有 Fake SDK 自动化证据。
+`[当前实现]` `AdapterDeviceOpenSpec` 是 HAL 私有 DTO，不是公共 HAL 头或 ABI v1 的破坏性修改。它从 `ResourceMapper` 只投影一个设备的逻辑/物理身份、资源通道、该设备 safe state 和 `taskProfiles`；物理名优先来自 `hardware.devices[].properties.vendor.ni.deviceName`。`HalService` 将同一份已筛选 safe state 交给 `HalDevice`，并作为 `openOptionsJson` 交给厂家 Adapter。投影可以携带 `taskProfiles`，但当前 NI Adapter 只校验其数组结构，并不据此创建或执行任务；运行时身份、通道和 safe state 由 open parser 解析，任务仍由 `ISampleTaskIo` 的显式创建调用配置。
+
+`[当前实现]` 可选 `hwtest_adapter_ni_daqmx` 的目标型号为 **NI PXI-6259**。其驱动初始化只读取驱动级 `settings.timeoutSeconds`，拒绝把 `hardware`、`safeState` 或 open schema 作为初始化配置；设备身份、资源和 safe state 由 `openDevice()` 的版本化投影解析。投影解析、拓扑校验和厂商 I/O 实现分离：前者位于 `src/adapters/ni_daqmx/ni_daqmx_config.*`，后者位于 `ni_daqmx_adapter.cpp`。打开时 Adapter 以投影物理名发现设备，并用 `DAQmxGetSysDevNames`、`DAQmxGetDevProductType`、`DAQmxGetDevSerialNum` 核验 PXI-6259 型号和非占位序列号；`CONFIGURE_ME` 必须被拒绝，防止模板误开。
+
+`[当前实现]` `AdapterRouter::configForAdapter()` 对 Vendor C ABI 后端只返回对应 Adapter 的驱动级配置，不再把全局 `hardware`/`safeState` 交给 `CAbiAdapter::initialize()`；Mock 后端继续接收其进程内拓扑。动态 C ABI fixture 会主动拒绝初始化 JSON 中的 `hardware`/`safeState`，`HalServiceTest.PassesOnlyDriverSettingsToVendorAdapterInitialization` 锁定初始化边界；`HalServiceTest.RoutesDriverSettingsAndDeviceProjectionIntoNiAdapter` 再经生产 NI parser 与 Fake DAQmx 锁定完整组合链。
+
+PXI-6259 配置拓扑为 AI `ai0..ai31`（硬件能力还报告最多 16 路 differential）、AO `ao0..ao3`、DIO `port0/line0..31` 或 `port1..2/line0..7`（共 48 线）以及 `ctr0..ctr1`。Adapter 已实现按需 AI/AO/DI/DO，以及 AI/AO/DI/DO 的有限和连续任务；采样任务可选择内部默认或外部时钟、start/reference/pause 触发，并支持计数边沿输入和频率脉冲输出。当前代码对 PXI-6259 施加 AI 单通道 1.25 MS/s、AI 多通道总 1 MS/s、AO 1--2 通道 2.86 MS/s / 3 通道 1.54 MS/s / 4 通道 1.25 MS/s、硬件定时 DIO 10 MHz 且仅 port0、计数器脉冲频率不高于 20 MHz 的限制。短读以实际每通道样本数返回，部分写入、overflow/underflow 和 DAQmx 错误均归一到 HAL 状态/诊断。
+
+NI 的 on-demand 数字路径按 `portNumber`、方向和连续 `lineNumber` 分组，使用 `DAQmxCreateDOChan`/`DAQmxCreateDIChan` 的 `ChanForAllLines` task 和 `DAQmxWriteDigitalU32`/`DAQmxReadDigitalU32` 处理完整配置线段。设备关闭先停止并释放已跟踪的采样任务，再写 DO/AO safe state；安全写使用的临时 DAQmx task 在各自调用内清理，不调用会影响整卡其他任务的 `DAQmxResetDevice`。上述 NI 语义目前只有 Fake NIDAQmx 自动化证据。
 
 目标生命周期：
 
@@ -220,7 +229,7 @@ int HAL_ADAPTER_CALL hal_adapter_get_api_v1(const HalAdapterHostApiV1* host,
                                             HalAdapterApiV1* outApi);
 ```
 
-当前 ABI 版本为 `HAL_ADAPTER_ABI_VERSION == 1`。函数表覆盖设备生命周期、模拟量、数字量、串口和 CAN/CANFD 操作。
+核心 ABI 版本仍为 `HAL_ADAPTER_ABI_VERSION == 1`。基础函数表保持生命周期、模拟量、数字量、串口和 CAN/CANFD 操作；`openDevice` 原有的 `openOptionsJson` 参数现在承载 HAL 生成的单设备投影。采样任务函数没有被插入或重排进核心 `HalAdapterApiV1`。
 
 `[当前实现]` `CAbiAdapter` 通过 `AdapterLoader`/`QLibrary` 解析 `hal_adapter_get_api_v1`，校验 ABI 版本及函数表 `structSize`，并实际调用外部 DLL 的初始化、设备生命周期、能力、模拟/数字、串口和 CAN 函数。缺失函数指针返回 `NotSupported`；厂家状态码、原始 code 和诊断文本按现有 `HalStatusCode` 归一化并保留。它不再委托 `MockAdapter`。`IHalService::scanDevices()` 和 `queryCapabilities()` 当前仍返回配置映射，不是通过已加载 DLL 动态发现。
 
@@ -237,13 +246,29 @@ int HAL_ADAPTER_CALL hal_adapter_get_api_v1(const HalAdapterHostApiV1* host,
 
 该 ABI 只服务 Vendor Adapter Provider。Qt Provider 和 Mock Provider 为进程内实现，不经过此 ABI。
 
+### 6.1 可选采样任务 ABI v1
+
+`hal_adapter_task_abi.h` 定义独立的 `HAL_ADAPTER_TASK_ABI_VERSION == 1`、opaque task handle 和 `HalAdapterTaskApiV1`。它覆盖 AI/AO/DI/DO、计数输入/输出，按需/有限/连续模式，采样时钟、start/reference/pause 触发、计数器配置、块缓冲和任务状态，以及 create/start/read/write/status/stop/close 生命周期。
+
+厂商 DLL 可选导出：
+
+```cpp
+int HAL_ADAPTER_CALL hal_adapter_get_task_api_v1(
+    const HalAdapterHostApiV1* host,
+    HalAdapterTaskApiV1* outApi);
+```
+
+`AdapterLoader` 仅在核心 ABI 已成功加载后尝试解析该符号；符号缺失、版本不符或结构过小不会卸载核心 ABI。`CAbiAdapter` 因而保持既有 ABI v1 Adapter 可加载；对没有 task API 的 Adapter，任务操作返回 `NotSupported`。公共 `ISampleTaskIo` 通过 `IHalDevice::sampleTasks()` 的可选入口暴露同一 create/start/read/write/status/stop/close 语义，HAL 负责逻辑资源到物理索引的校验、会话所有权和 task ABI 映射。
+
 当前 Adapter 状态码映射保持兼容；其中 `HAL_ADAPTER_PROTOCOL_ERROR` 只有在厂家明确说明为传输层错误时才映射 `ProtocolError`，否则使用 `AdapterError` 并保留厂家码。
 
-`[当前实现]` 仓库有 `src/adapters/ni_daqmx/` 原生 Adapter。根 CMake 的 `HWTEST_ENABLE_NI_DAQMX` 默认关闭；开启时先使用显式 `NI_DAQMX_INCLUDE_DIR`/`NI_DAQMX_LIBRARY`，未提供时通过 `find_path`/`find_library` 搜索 `NIDAQmx.h` 和 `NIDAQmx`/`nicaiu` 导入库，仍缺任一项则配置失败，并生成共享 DLL `hwtest_adapter_ni_daqmx`。它导出 `hal_adapter_get_api_v1`，可经 `AdapterRouter -> CAbiAdapter` 由 `providerId = vendor.cabi` 加载。
+`[当前实现]` 仓库有 `src/adapters/ni_daqmx/` 原生 **PXI-6259** Adapter。根 CMake 的 `HWTEST_ENABLE_NI_DAQMX` 默认关闭；开启时先使用显式 `NI_DAQMX_INCLUDE_DIR`/`NI_DAQMX_LIBRARY`，未提供时通过 `find_path`/`find_library` 搜索 `NIDAQmx.h` 和 `NIDAQmx`/`nicaiu` 导入库，仍缺任一项则配置失败，并生成共享 DLL `hwtest_adapter_ni_daqmx`。它导出核心 `hal_adapter_get_api_v1` 和可选 `hal_adapter_get_task_api_v1`；`AdapterRouter -> CAbiAdapter` 使用驱动级初始化配置加载该 DLL，单设备投影随后由 `openDevice()` 传入。
 
-该 Adapter 只声明数字模块；未填充的模拟量、串口、CAN ABI 槽位由通用 C ABI 层返回 `NotSupported`。一个 `ni.daqmx` Adapter 实例只允许一个逻辑/物理 NI 设备，`hardware.devices` 的型号/序列号必须与 `settings` 一致，所有数字资源必须属于该设备。初始化时通过 `DAQmxGetSysDevNames`、`DAQmxGetDevProductType`、`DAQmxGetDevSerialNum` 核验配置的 `deviceName`、产品型号和十进制/十六进制序列号；配置还要求数字资源的物理索引和端口/线唯一、每个端口方向组使用连续线范围、每个输出具有合法安全态，并按 USB-6259 拓扑限制 P0 为 0..31、P1/P2 为 0..7。DAQmx 错误会保留厂家码，并归一化超时、设备移除和未找到等状态。
+该 Adapter 声明 `analog`、`digital`、`counter` 模块，支持按需 AI/AO/DI/DO 和基于可选 task ABI 的有限/连续 AI/AO/DI/DO、计数边沿输入、频率脉冲输出。`DAQmxCfgSampClkTiming` 接收空时钟源作为内部默认时钟，非空源按外部时钟传入；start/reference/pause 触发分别映射到相应 DAQmx 调用。读取保留实际短读样本数，任务状态报告已启动/完成、可用样本、累计样本和 overflow/underflow；DAQmx 错误保留厂家码并归一化超时、设备移除、忙和 I/O 错误。
 
-`[当前实现]` 因而“NI-DAQmx 路径已实现，但 USB-6259 真机未验收”是当前源码/CMake/测试注册事实。`configs/mbddf_pc_hal.json` 仍是部署模板：`libraryPath` 由 `HWTEST_NI_DAQMX_ADAPTER_PATH` 提供，序列号为 `CONFIGURE_ME`。在隔离台架填入真实 DLL、设备名、型号、序列号和接线前，不能把该路径写成已加载的 NI 驱动、已输出电平或已验收 USB-6259。
+PXI-6259 的已实现配置校验和能力声明为：AI 32 路（硬件能力含 16 路 differential）、AO 4 路、DIO 48 线、2 个 32 位计数器；AI 单通道 1.25 MS/s、AI 多通道总 1 MS/s，AO 的每通道上限随通道数为 2.86/1.54/1.25 MS/s，硬件定时 DIO 10 MHz 且只允许 port0。通道解析限制为 `ai0..ai31`、`ao0..ao3`、`port0/line0..31` 或 `port1..2/line0..7`、`ctr0..ctr1`；计数器频率脉冲上限为 20 MHz。该配置/拓扑 parser 独立于 `ni_daqmx_adapter.cpp`，位于 `ni_daqmx_config.*`。
+
+`[当前实现]` 因而“PXI-6259 NI-DAQmx 软件路径已实现、但真机未验收”才是源码/CMake/测试注册事实。`configs/mbddf_pc_hal.json` 仍是部署模板：`libraryPath` 由 `HWTEST_NI_DAQMX_ADAPTER_PATH` 提供，MAX 设备名位于设备 `properties.vendor.ni.deviceName`，序列号为 `CONFIGURE_ME`。该占位值会在驱动级 Adapter 初始化完成后的 NI open projection 解析阶段被拒绝。在隔离台架填入真实 DLL、MAX 身份、序列号和接线前，不能把该路径写成已加载的 NI 驱动、已输出电平或已验收 PXI-6259。
 
 ---
 
@@ -274,9 +299,9 @@ HAL 关键生命周期和 I/O 操作应产生结构化事件，至少可追踪�
 
 当前保留直连 `SystemStatusSimulator` 的 golden 测试，并已有“算法 -> HAL -> `qt.udp` -> 本机隔离模拟目标”的 `SYSTEM_STATUS`/`ELEC_HEALTH_STATUS` 集成测试。后者证明 Qt UDP Provider 路径，但不是 HAL Mock Provider、真实网口或真实 DUT 证据。`MockAdapter` 的串口 echo 和 CAN loopback 仍只证明基础原始 I/O。
 
-`[当前实现]` `hal_adapter_digital_fixture` 是仅供测试动态加载的通用 Fake ABI v1 DLL；另有把生产 NI Adapter 源码链接到 Fake NIDAQmx 的 `hal_adapter_ni_daqmx_fixture`，由真实 `AdapterLoader -> CAbiAdapter` 动态加载。`CAbiAdapterTest` 覆盖加载、逻辑 alias 到物理设备名映射、数字批量读写、厂家状态映射、缺失符号/函数、close 错误后的 handle 消费，以及 I/O/close 串行化；`HalServiceTest` 覆盖 Mock 与 Fake DLL 的多 Adapter 惰性路由；`ResourceMapperTest` 和 `HalDeviceTest` 分别锁定严格多设备映射、一次数字安全态批写及 close 错误后不二次关闭。
+`[当前实现]` `hal_adapter_digital_fixture` 是仅供测试动态加载的通用 Fake ABI v1 DLL；另有把生产 PXI-6259 Adapter 源码链接到 Fake NIDAQmx 的 `hal_adapter_ni_daqmx_fixture`，由真实 `AdapterLoader -> CAbiAdapter` 动态加载。`CAbiAdapterTest` 覆盖加载、逻辑 alias 到物理设备名映射、数字批量读写、厂家状态映射、缺失符号/函数、可选 task API、连续模拟输入完整块传递、close 错误后的 handle 消费，以及 I/O/close 串行化；`HalServiceTest` 覆盖 Mock 与 Fake DLL 的多 Adapter 惰性路由和设备范围 open projection；`ResourceMapperTest` 和 `HalDeviceTest` 分别锁定严格多设备映射、单设备 safe state、采样任务先 stop/close 再安全输出，以及 close 错误后不二次关闭。
 
-`NiDaqmxAdapterFakeTest` 则把同一 `ni_daqmx_adapter.cpp` 链接仓库内 Fake `NIDAQmx` API，覆盖单设备/身份/USB-6259 端口边界、DO/DI 持久 task、物理通道字符串与 DAQmx layout、完整端口 mask、安全态、DI 读取、超时、设备移除、reset/close 收尾、close 失败后继续 Stop/Clear 且 shutdown 不二次释放，以及不调用 `DAQmxResetDevice`。它在 `BUILD_TESTING` 时注册为标签 `hal;adapter;ni_daqmx;fake` 的 CTest，不依赖已安装 NI SDK。两类 Fake 都不构成实际 USB-6259、接线、电平兼容、物理输出或物理安全态证据。
+`NiDaqmxAdapterFakeTest` 把同一 `ni_daqmx_adapter.cpp` 和 `ni_daqmx_config.cpp` 链接仓库内 Fake `NIDAQmx` API，覆盖 PXI-6259 open projection、`CONFIGURE_ME` 门禁、拓扑/速率边界、按需 AI/AO/DI/DO、有限/连续任务路径、内部/外部时钟、start/reference/pause 触发、边沿计数输入、频率脉冲输出、短读、overflow/underflow、错误注入、任务状态和安全关闭顺序。它在 `BUILD_TESTING` 时注册为标签 `hal;adapter;ni_daqmx;fake` 的 CTest，不依赖已安装 NI SDK。两类 Fake 都不构成真实 NI SDK、实际 PXI-6259、接线、电平兼容、物理输出、触发时序或物理安全态证据。
 
 完整测试分层、证据等级和真实硬件隔离要求见 [测试规范](../testing/testing-specification.md)。
 
@@ -289,10 +314,10 @@ HAL 关键生命周期和 I/O 操作应产生结构化事件，至少可追踪�
 | 后端选择 | 控制资源按 `providerId` 路由；非控制设备按 `adapterId` 经 `AdapterRouter` 惰性选择 Mock 或配置的 C ABI DLL | 补控制通道通用 Router、Provider 扫描和更多已验收后端 |
 | Qt 串口 | `qt.serial` 已实现宿主端口枚举、配置、打开、原始读写和关闭；早期 COM3 到真实 MB_DDF_v2 的 SYSTEM_STATUS 单次/三周期 smoke 每周期有 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，SYSTEM_STATUS 与 ELEC_HEALTH_STATUS 均成功复测且后端诊断不再出现该警告 | 补自动化 hardware target，并完成长时、超时、拔插、运行中停止和物理收尾验收 |
 | UDP/TCP | `qt.udp` 已实现并有本机闭环；TCP 未实现 | 明确现场 UDP 端点；另行评审 TCP |
-| Vendor Adapter | 通用 `CAbiAdapter` 已实际加载并调用 ABI v1；可选 `hwtest_adapter_ni_daqmx` 已实现数字 I/O 与端口 bank 批写；自动化使用动态 Fake DLL 与 Fake NIDAQmx | 补其他原生厂家 Adapter；USB-6259 真机验收与 `hardware` CTest 标签均未实现 |
+| Vendor Adapter | 通用 `CAbiAdapter` 已实际加载并调用核心 ABI v1 与可选 task ABI；可选 `hwtest_adapter_ni_daqmx` 已实现 PXI-6259 按需/任务式模拟、数字和计数器 I/O；自动化使用动态 Fake DLL 与 Fake NIDAQmx | 补其他原生厂家 Adapter；PXI-6259 真机验收与 `hardware` CTest 标签均未实现 |
 | 设备发现 | HAL 设备来自配置；宿主串口可独立只读枚举 | Provider 设备扫描并与配置 match |
 | deadline | 部分方法传递 timeout | 一次 HAL 操作共享总预算 |
 | 产品级 Mock | Simulator 绕过 HAL；另有 Qt UDP 隔离模拟目标 | 增加控制通道 Mock Provider 闭环 |
-| 生产安全 | 关闭前尽力应用 safeState；同一设备数字输出合并为一次后端批写；close 错误仍消费会话并禁止二次释放；NI Adapter 对配置连续端口线段的完整 mask 和异常 close 仅由 Fake SDK/动态 Fake DLL 锁定 | 异常、停止和关闭路径均有可验证物理收尾；真实 USB-6259 和其他厂商端口语义另行验收 |
+| 生产安全 | 关闭前先停止/释放会话采样任务，再尽力应用 safeState；同一设备数字输出合并为一次后端批写；close 错误仍消费会话并禁止二次释放；NI Adapter 的任务停止、DO/AO 安全写与异常 close 仅由 Fake SDK/动态 Fake DLL 锁定 | 异常、停止和关闭路径均有可验证物理收尾；真实 PXI-6259 和其他厂商端口语义另行验收 |
 
 在代码达到目标前，文档和测试报告必须继续保留“未实现”标记，不得以 Mock echo、Simulator 或已存在的接口声明替代实现证据。

@@ -13,6 +13,7 @@ target_include_directories(hwtest_fake_nidaqmx
 add_executable(hwtest_ni_daqmx_adapter_fake_tests
     ni_daqmx_adapter_fake_test.cpp
     ../ni_daqmx_adapter.cpp
+    ../ni_daqmx_config.cpp
 )
 set_target_properties(hwtest_ni_daqmx_adapter_fake_tests PROPERTIES AUTOMOC OFF)
 

@@ -12,31 +12,33 @@
 
 | 目录 | 测试目标 | 测试源文件 | 源级 GoogleTest 定义 | 当前范围 |
 | --- | --- | ---: | ---: | --- |
-| tests/hal/ | hwtest_hal_tests | 10 | 43 | HAL 接口、资源、安全、Mock、多 Adapter 路由、真实 C ABI 调用、宿主串口枚举、Qt 控制 Provider |
+| tests/hal/ | hwtest_hal_tests | 10 | 51 | HAL 接口、资源、安全、Mock、多 Adapter 路由、真实 C ABI 调用、宿主串口枚举、Qt 控制 Provider、版本化设备投影与可选任务 ABI |
 | tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
 | tests/biz/ | hwtest_biz_tests | 6 | 41 | 配置、计划、单次/PC 周期/设备流调度、Qt 工作线程、样本、报告和架构边界 |
 | tests/algorithm/ | hwtest_algorithm_tests | 3 | 28 | MB_DDF CSV、流式控制传输、固定命令、配置驱动单步交换、DI stimulus、定时器 START/STOP 清理和设备流能力判定 |
 | tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 91 | 共享启动/控制器、TUI/GUI/WebSocket、DI 双设备准备/安全态校验/收尾、连续运行样本、异步停止与关闭、跨前端等价性、架构边界、配置 descriptor、测试配置白名单选择及既有经 HAL/Qt UDP 的两个独立测试闭环 |
 | src/adapters/ni_daqmx/tests/ | hwtest_ni_daqmx_adapter_fake_tests | 1 | 0 | 原生 NI-DAQmx Adapter 与 Fake NIDAQmx API 的自定义 main/CTest |
-| 合计 | 7 个 GoogleTest + 1 个 Fake CTest | 31 | 210 | 当前源级 GoogleTest 清单及一个非 GoogleTest 测试源 |
+| 合计 | 7 个 GoogleTest + 1 个 Fake CTest | 31 | 218 | 当前源级 GoogleTest 清单及一个非 GoogleTest 测试源 |
 
-210 是当前测试源码中的 GoogleTest 定义数。Windows 完整构建后的 CTest 清单预期为 221 条：210 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试和 1 条 `NiDaqmxAdapterFakeTest`。清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
+218 是当前测试源码中的 GoogleTest 定义数。Windows 完整构建后的 CTest 清单为 229 条：218 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试和 1 条 `NiDaqmxAdapterFakeTest`。清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
 
-30 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 210。
+2026-07-27 在 Windows/Visual Studio 2022 x64 构建树中设置已批准的 `MB_DDF_PROTOCOL_CSV_DIR` 后，Debug 与 Release 完整构建均成功，两个配置的 CTest 均为 229/229 通过。该结果包含仓库 Fake NIDAQmx、动态 Adapter fixture 和自退出的应用进程测试；证据等级仍按下文分类。
 
-浏览器前端当前有 7 个 `*.test.ts` 文件、32 条 Vitest，用于协议解析/请求、配置 descriptor 与测试配置白名单目录校验、默认配置选择、配置测量标签/单位、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组，以及 DI WebSocket payload 严格解析、命令队列合并、revision、失败回滚、复位串行、active-low、回读位和 settling。它们由 `npm test` 独立运行，不计入上述 221 条 CTest。
+30 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 218。
+
+浏览器前端当前有 7 个 `*.test.ts` 文件、32 条 Vitest，用于协议解析/请求、配置 descriptor 与测试配置白名单目录校验、默认配置选择、配置测量标签/单位、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组，以及 DI WebSocket payload 严格解析、命令队列合并、revision、失败回滚、复位串行、active-low、回读位和 settling。它们由 `npm test` 独立运行，不计入上述 229 条 CTest。
 
 ## 2. 当前覆盖与条件资产
 
 | 目标 | 当前已覆盖的行为 | 证据边界 |
 | --- | --- | --- |
-| HAL | 错误映射、严格多设备资源映射、会话、Mock AD/DA/DI/DO、宿主串口枚举、串口 echo、CANFD loopback、控制资源路由、Qt UDP 回环和 timeout；动态 Fake ABI v1 的实际装载/数字批写/状态映射/缺符号、AdapterRouter 惰性多后端路由、逻辑 alias 映射、C ABI I/O/close 串行化、close 错误消费 handle，以及关闭前一次数字安全态批写 | 自动化测试中的串口枚举不打开设备；动态 DLL 是 `tests/hal/fixtures` 的 Fake，Qt UDP 仅是本机 Provider 证据；COM3 实机结果属于下述独立手工 smoke，不是默认 CTest、NI SDK 或 USB-6259 证据 |
-| 原生 NI-DAQmx Adapter | 同一生产源码的动态 Fake DLL 加载、设备/资源单实例约束、身份与 USB-6259 端口边界、DI/DO 长期 task、物理通道/layout、连续 port bank 完整 mask、错误映射、安全态/stop/clear、close 失败收尾；可选真实 SDK 构建 | 动态 fixture 与 `NiDaqmxAdapterFakeTest` 都链接仓库 Fake `NIDAQmx`；即使测试名/配置出现 USB-6259，也不是已安装 NI SDK、实际 USB-6259、接线、电平兼容、物理输出或安全态验收 |
+| HAL | 错误映射、严格多设备资源映射、会话、Mock AD/DA/DI/DO、宿主串口枚举、串口 echo、CANFD loopback、控制资源路由、Qt UDP 回环和 timeout；动态 Fake ABI v1 的实际装载/数字批写/状态映射/缺符号、AdapterRouter 惰性多后端路由、逻辑 alias 映射、driver-only 初始化、版本化单设备 open projection、`HalService -> AdapterRouter -> CAbiAdapter -> NI parser/Fake DAQmx` 组合链、核心 ABI v1 的可选 task API 兼容、C ABI I/O/close 串行化、短读任务块、任务先 stop/close 再 safe state，以及 close 错误消费 handle | 自动化测试中的串口枚举不打开设备；动态 DLL 是 `tests/hal/fixtures` 的 Fake，Qt UDP 仅是本机 Provider 证据；COM3 实机结果属于下述独立手工 smoke，不是默认 CTest、NI SDK 或 PXI-6259 证据 |
+| 原生 NI-DAQmx Adapter | 同一生产源码和独立 `ni_daqmx_config.*` 的 Fake 构建；PXI-6259 identity/open projection/占位 serial/topology/速率边界，按需 AI/AO/DI/DO，有限/连续任务路径，内部/外部时钟、start/reference/pause 触发、边沿计数/频率脉冲、短读、overflow/underflow、错误注入、任务状态、安全态/stop/clear 顺序；Vendor C ABI driver-only 初始化与单设备 open projection 交接；默认关闭的真实 SDK 构建路径 | `NiDaqmxAdapterFakeTest` 链接仓库 Fake `NIDAQmx`；独立可选 DLL 构建也使用 Fake 头/导入库。两者均不代表已安装 NI SDK、实际 PXI-6259、MAX 身份、接线、电平兼容、物理输出、触发时序或安全态验收 |
 | 日志 | LogService、JsonLineFileSink、HalLogEvent 到 LogEvent 桥接 | 不覆盖 UI 或真实设备日志链 |
 | BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、专用 QThread 的 event dispatcher/计时器注册、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象；Qt 线程回归只证明同步任务具备 Qt dispatcher，不证明算法调用期间持续泵送事件、HAL actor 或跨线程取消；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
-| 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器、固定命令执行器、配置驱动单步交换、DI_READ golden、DI stimulus 配置/全量批写/active-low/revision/白名单/错误回退、定时器 START/STOP 清理、ELEC_HEALTH_STATUS 字段判定和设备流拒绝 | DI stimulus 使用 `IHalDevice` Fake；其余五项目前只有协议/脚本化执行、Fake 或本机模拟证据，尚无真实板端、NI 或 USB-6259 验收；本机 UDP 模拟目标不等同于真实板端通讯 |
-| 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、测试配置目录发现及白名单 `configId` 切换、控制资源与会话串口选择、DI descriptor/双设备准备/复位/revision/异步停止安全收尾、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影（含配置 descriptor 和数字刺激 DTO）、DI 动作严格参数白名单、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | DI 应用测试将 `ni.daqmx.libraryPath` 指向动态 Fake DLL，并使用本机 UDP peer；Web 集成当前覆盖参数白名单与权威快照，不覆盖成功 DI 写、revision 冲突或断开安全态的 Web 端到端链。默认自动化不能外推到真实网口、NI/USB-6259、其他 DUT 或长期稳定性 |
-| 浏览器前端 | Vitest 下的类型化协议、测试目录与 descriptor 校验、默认配置选择、字段标签/单位、有界数据结构、字段发现、时间窗、降采样和图组；DI WebSocket snapshot/reply 严格解析，以及 16 路面板所复用的 32 ms 合并、revision、失败回滚、reset 串行、active-low、`di_state[0]`/`di_state[1]` 回读和 settling；TypeScript/Vite 单文件生产构建 | SessionProvider/总览页面板已由源码接线，但没有独立浏览器组件或真实 WebSocket/USB-6259 端到端验收；Vitest 不证明真实硬件、长期浏览器稳定性或设备流算法 |
+| 算法 | 帧编解码、CSV 无效输入、流式短读/粘包/噪声/超时、SYSTEM_STATUS 模拟器、固定命令执行器、配置驱动单步交换、DI_READ golden、DI stimulus 配置/全量批写/active-low/revision/白名单/错误回退、定时器 START/STOP 清理、ELEC_HEALTH_STATUS 字段判定和设备流拒绝 | DI stimulus 使用 `IHalDevice` Fake；其余五项目前只有协议/脚本化执行、Fake 或本机模拟证据，尚无真实板端、NI 或 PXI-6259 验收；本机 UDP 模拟目标不等同于真实板端通讯 |
+| 应用/TUI/GUI/WebSocket | 共享启动参数与覆盖顺序、测试配置目录发现及白名单 `configId` 切换、控制资源与会话串口选择、DI descriptor/双设备准备/复位/revision/异步停止安全收尾、线程亲和和运行代次隔离、同步/异步停止门禁、GUI/Web 非阻塞关闭、Web JSON/Origin/单客户端/16 KiB/关闭码、完整快照/样本投影（含配置 descriptor 和数字刺激 DTO）、DI 动作严格参数白名单、PC 周期两轮 UDP 指令—反馈闭环、TUI/GUI 与 TUI/Web 的配置/通过/超时/停止等价性、GUI/Web 源码和链接架构扫描、runner/TUI/GUI/Web/根脚本入口 | DI 应用测试将 `ni.daqmx.libraryPath` 指向动态 Fake DLL，并使用本机 UDP peer；Web 集成当前覆盖参数白名单与权威快照，不覆盖成功 DI 写、revision 冲突或断开安全态的 Web 端到端链。默认自动化不能外推到真实网口、NI/PXI-6259、其他 DUT 或长期稳定性 |
+| 浏览器前端 | Vitest 下的类型化协议、测试目录与 descriptor 校验、默认配置选择、字段标签/单位、有界数据结构、字段发现、时间窗、降采样和图组；DI WebSocket snapshot/reply 严格解析，以及 16 路面板所复用的 32 ms 合并、revision、失败回滚、reset 串行、active-low、`di_state[0]`/`di_state[1]` 回读和 settling；TypeScript/Vite 单文件生产构建 | SessionProvider/总览页面板已由源码接线，但没有独立浏览器组件或真实 WebSocket/PXI-6259 端到端验收；Vitest 不证明真实硬件、长期浏览器稳定性或设备流算法 |
 
 下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
 
@@ -78,8 +80,8 @@
 | 1. 协议 Simulator | 配置 -> BIZ -> SystemStatusAlgorithmExecutor -> SystemStatusSimulator -> golden request frame | 已有；遗留的非 HAL 跨层替身回归，依赖外部 CSV | 仅证明当前 SYSTEM_STATUS 的模拟器闭环、CRC 和超时处理；不是产品模拟或集成验收范式 |
 | 2. HAL Mock 集成 | 算法 -> IControlChannel -> HAL Mock Provider | SYSTEM_STATUS/ELEC_HEALTH_STATUS 正向闭环未实现 | 现有 MockAdapter 回环不是控制通道 Mock Provider；算法 fake 只作传输契约测试 |
 | 3. Qt Provider | `qt.serial`/`qt.udp` 标准 Qt 通讯 Provider | 部分实现 | Qt UDP 已有原始回环及经 BIZ/算法/HAL 的本机模拟目标闭环；Qt 串口已有带历史线程告警的早期 COM3/DUT smoke，以及 QThread 迁移后成功且无该警告的单次/三周期复测；自动化 hardware target 和异常路径仍缺失，TCP 未实现 |
-| 4. Vendor Adapter | 厂家 Adapter DLL/SDK 经 C ABI 接入 | 通用 C ABI 与可选原生 NI-DAQmx Adapter 已实现，自动化仅有 Fake | `CAbiAdapter` 已实际装载/调用 ABI v1，并有惰性多 Adapter 与数字批写回归；`hwtest_adapter_ni_daqmx` 有默认关闭的真实 SDK 构建路径和 Fake NIDAQmx CTest。Fake 不能证明已安装 SDK 或真实厂家设备；没有 `hardware` 真机标签 |
-| 5. 真实硬件 | 隔离台架上的真实目标和测试设备 | 部分手工证据 | 已有上述授权 COM3 SYSTEM_STATUS/ELEC_HEALTH_STATUS 历史及 QThread 迁移后复测；NI-DAQmx 路径已实现但没有 DI/NI/USB-6259 真机、宿主 CTest hardware target、长期稳定性、异常收尾或完整物理安全验收 |
+| 4. Vendor Adapter | 厂家 Adapter DLL/SDK 经 C ABI 接入 | 通用 C ABI 与可选原生 NI-DAQmx Adapter 已实现，自动化仅有 Fake | `CAbiAdapter` 已实际装载/调用核心 ABI v1，并有惰性多 Adapter、数字批写和可选 task ABI 兼容回归；`hwtest_adapter_ni_daqmx` 具有默认关闭、待具备 SDK 后才可配置的构建路径，以及覆盖 PXI-6259 软件任务路径的 Fake NIDAQmx CTest。Fake 不能证明已安装 SDK 或真实厂家设备；没有 `hardware` 真机标签 |
+| 5. 真实硬件 | 隔离台架上的真实目标和测试设备 | 部分手工证据 | 已有上述授权 COM3 SYSTEM_STATUS/ELEC_HEALTH_STATUS 历史及 QThread 迁移后复测；NI-DAQmx 路径已实现但没有 DI/NI/PXI-6259 真机、宿主 CTest hardware target、长期稳定性、异常收尾或完整物理安全验收 |
 
 新增五级中的任何目标时，文档、CMake 和测试必须同时标明其级别、依赖资产、隔离条件和通过证据。在代码与测试落地前，一律标记为“未实现”。
 
@@ -96,7 +98,7 @@
 
 跨层验收必须明确是契约测试、协议测试、HAL Mock 集成、Provider 集成、Vendor Adapter 集成或真实硬件验收。不得把串口 echo、CANFD loopback 或 Simulator 结果描述为真实通讯证据。
 
-`SYSTEM_STATUS` 与 `ELEC_HEALTH_STATUS` 当前都有“配置 -> BIZ -> 算法 -> HalControlTransport -> HAL -> qt.udp -> 本机模拟目标”自动化成功链，以及上述 `qt.serial -> COM3 -> MB_DDF_v2` 手工成功链。BIZ QThread 回归证明调度 worker 具备 Qt dispatcher，迁移后的真实串口短时成功复测进一步证明固定 COM3/DUT 链路未再产生目标计时器警告；两者仍不能替代长时和异常验收。DI 的算法、应用、通用 C ABI、NI Adapter 和前端证据分别是 Fake/Mock/纯前端层级，不能与上述 COM3 真机证据混合。HAL Mock Provider 正向链、真实串口自动化异常路径、USB-6259 验收和 `ProtocolProfile -> CSV -> HAL ResourceId` 一致性校验仍是未实现验收项。
+`SYSTEM_STATUS` 与 `ELEC_HEALTH_STATUS` 当前都有“配置 -> BIZ -> 算法 -> HalControlTransport -> HAL -> qt.udp -> 本机模拟目标”自动化成功链，以及上述 `qt.serial -> COM3 -> MB_DDF_v2` 手工成功链。BIZ QThread 回归证明调度 worker 具备 Qt dispatcher，迁移后的真实串口短时成功复测进一步证明固定 COM3/DUT 链路未再产生目标计时器警告；两者仍不能替代长时和异常验收。DI 的算法、应用、通用 C ABI、NI Adapter 和前端证据分别是 Fake/Mock/纯前端层级，不能与上述 COM3 真机证据混合。HAL Mock Provider 正向链、真实串口自动化异常路径、PXI-6259 验收和 `ProtocolProfile -> CSV -> HAL ResourceId` 一致性校验仍是未实现验收项。
 
 ## 5. 测试准入
 
@@ -104,7 +106,7 @@
 - 修改 BIZ 时，必须运行 hwtest_biz_tests 和 BIZ 架构扫描；BIZ 测试不得引入硬件执行依赖。
 - 修改协议 CSV 规则、解析器或资产引用时，必须同步 device-communication-protocol.md 和协议契约测试，并记录基线路径、观测时间与清单；manifest/hash 机制落地后再记录固定版本和内容哈希。
 - 修改 Mock/Fake 行为时，必须说明证据级别；可配置超时/错误注入和 SYSTEM_STATUS/ELEC_HEALTH_STATUS 控制通道 Mock Provider 集成仍未实现，不得作为既有能力验收。动态 Fake C ABI fixture 只能验证 ABI/Adapter 路径，不能改写为厂家 SDK 或真机结果。
-- 修改 Qt Provider、通用 C ABI、原生 Vendor Adapter 或真实硬件路径时，必须新增相应级别的隔离测试；当前 Qt UDP 有本机隔离测试，通用 C ABI 已有动态 Fake DLL、多 Adapter 懒加载、状态映射和数字批写回归，NI-DAQmx 已有可选 SDK 构建路径及 `NiDaqmxAdapterFakeTest`，BIZ 已有 Qt dispatcher/计时器注册回归，Qt 串口已有带历史告警的早期 smoke、无响应无告警诊断和迁移后成功无告警的手工复测；CTest `hardware` 标签、自动化异常路径和全面真实硬件验收仍未实现。
+- 修改 Qt Provider、通用 C ABI、原生 Vendor Adapter 或真实硬件路径时，必须新增相应级别的隔离测试；当前 Qt UDP 有本机隔离测试，通用 C ABI 已有动态 Fake DLL、多 Adapter 懒加载、状态映射、数字批写和可选 task ABI 回归，PXI-6259 NI-DAQmx 已有可选 SDK 构建路径及 `NiDaqmxAdapterFakeTest`，BIZ 已有 Qt dispatcher/计时器注册回归，Qt 串口已有带历史告警的早期 smoke、无响应无告警诊断和迁移后成功无告警的手工复测；CTest `hardware` 标签、自动化异常路径和全面真实硬件验收仍未实现。
 - 修改 `digitalStimulus` 配置、刺激 DTO/动作、revision 语义或安全收尾时，必须同步算法、应用、WebSocket 和前端纯逻辑回归；至少覆盖配置白名单、陈旧 revision 无写入、全量批写、写失败状态、动作参数拒绝和停止/收尾的 Fake/Mock 边界。成功 Web DI 写、revision 冲突和断开安全态的 Web 端到端覆盖仍待补齐。
 - 修改共享应用控制器、runner 或 TUI 命令时，必须运行 `hwtest_app_tests`；修改 Qt GUI 时还必须运行 `hwtest_gui_tests`；修改 WebSocket 协议、服务器、入口或脚本时必须运行 `hwtest_web_tests`、`ctest -L websocket` 和 `HwtestWeb*` 进程测试。修改 `front/` 时必须运行 `npm test` 和 `npm run build`。Qt GUI、WebSocket 后端和浏览器 Web UI 必须复用控制器 DTO/事件，不得以新增前端为由复制组合根。
 - 修复行为缺陷时，先补能复现问题的回归测试，再修改实现。
@@ -163,7 +165,9 @@ NI-DAQmx 的默认自动化是 Fake，不要求安装真实 SDK 或连接设备�
     cmake -S . -B build_ni -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DHWTEST_ENABLE_NI_DAQMX=ON -DNI_DAQMX_INCLUDE_DIR="<NIDAQmx.h 所在目录>" -DNI_DAQMX_LIBRARY="<NIDAQmx.lib 路径>"
     cmake --build build_ni --config Debug --parallel
 
-上述配置会在常规目标之外生成 `hwtest_adapter_ni_daqmx`；真实 USB-6259 的部署、接线、测试和安全验收必须在授权的隔离台架另行记录，不能由该命令或 Fake CTest 得出。
+上述配置会在常规目标之外生成 `hwtest_adapter_ni_daqmx`；真实 PXI-6259 的部署、MAX 身份、接线、测试和安全验收必须在授权的隔离台架另行记录，不能由该命令或 Fake CTest 得出。
+
+2026-07-27 另以仓库 Fake `NIDAQmx.h` 和 Debug Fake 导入库配置 `BUILD_TESTING=OFF`、`HWTEST_ENABLE_NI_DAQMX=ON` 的独立构建树，`hwtest_adapter_ni_daqmx` Debug DLL 构建成功；`dumpbin /exports` 同时确认 `hal_adapter_get_api_v1` 与 `hal_adapter_get_task_api_v1`。该记录只证明可选目标和 ABI 导出面可构建。
 
 要执行已批准 MB_DDF 基线的相关测试，而不是接受跳过，先在同一 PowerShell 会话显式设置并检查资产目录。该目录是当前协议事实源，但不是不可变的仓库内 fixture；每次结果应记录观测时间与实际文件清单：
 

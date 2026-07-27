@@ -55,6 +55,30 @@ bool AdapterLoader::load(const QString& libraryPath,
     return true;
 }
 
+bool AdapterLoader::loadTaskApi(const HalAdapterHostApiV1& hostApi,
+                                HalAdapterTaskApiV1* outApi)
+{
+    if (outApi == nullptr) return false;
+    *outApi = HalAdapterTaskApiV1{};
+    if (!isLoaded()) return false;
+    const auto symbol = reinterpret_cast<HalAdapterGetTaskApiV1Fn>(
+        m_library->resolve("hal_adapter_get_task_api_v1"));
+    if (symbol == nullptr) return false;
+
+    HalAdapterTaskApiV1 api {};
+    if (symbol(&hostApi, &api) != 0 ||
+        api.abiVersion != HAL_ADAPTER_TASK_ABI_VERSION ||
+        api.structSize < static_cast<int>(sizeof(HalAdapterTaskApiV1)) ||
+        api.createTask == nullptr || api.startTask == nullptr ||
+        api.readTask == nullptr || api.writeTask == nullptr ||
+        api.getTaskStatus == nullptr || api.stopTask == nullptr ||
+        api.closeTask == nullptr) {
+        return false;
+    }
+    *outApi = api;
+    return true;
+}
+
 void AdapterLoader::unload()
 {
     if (m_library != nullptr) {

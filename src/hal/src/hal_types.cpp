@@ -1,4 +1,5 @@
 #include "hal/hal_types.h"
+#include "hal/i_sample_task_io.h"
 
 #include <QMetaType>
 
@@ -32,6 +33,10 @@ void registerHalMetaTypes()
     qRegisterMetaType<CanFdConfig>("hwtest::hal::CanFdConfig");
     qRegisterMetaType<CanFdFrame>("hwtest::hal::CanFdFrame");
     qRegisterMetaType<CanFdFilter>("hwtest::hal::CanFdFilter");
+    qRegisterMetaType<SampleTaskId>("hwtest::hal::SampleTaskId");
+    qRegisterMetaType<SampleTaskConfig>("hwtest::hal::SampleTaskConfig");
+    qRegisterMetaType<SampleTaskBlock>("hwtest::hal::SampleTaskBlock");
+    qRegisterMetaType<SampleTaskStatus>("hwtest::hal::SampleTaskStatus");
     qRegisterMetaType<QVector<DeviceDescriptor>>("QVector<hwtest::hal::DeviceDescriptor>");
     qRegisterMetaType<QVector<SerialPortDescriptor>>("QVector<hwtest::hal::SerialPortDescriptor>");
     qRegisterMetaType<QVector<AnalogSample>>("QVector<hwtest::hal::AnalogSample>");

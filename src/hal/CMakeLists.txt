@@ -2,6 +2,7 @@ set(HAL_PUBLIC_HEADERS
     include/hal/hal_global.h
     include/hal/hal_types.h
     include/hal/hal_adapter_abi.h
+    include/hal/hal_adapter_task_abi.h
     include/hal/i_hal_service.h
     include/hal/i_hal_device.h
     include/hal/i_analog_io.h
@@ -9,6 +10,7 @@ set(HAL_PUBLIC_HEADERS
     include/hal/i_serial_bus.h
     include/hal/i_canfd_bus.h
     include/hal/i_control_channel.h
+    include/hal/i_sample_task_io.h
     include/hal/hal_factory.h
 )
 
@@ -23,6 +25,7 @@ set(HAL_PRIVATE_HEADERS
     src/qt_udp_control_provider.h
     src/control_channel_manager.h
     src/resource_mapper.h
+    src/adapter_device_open_spec.h
     src/safety_guard.h
     src/hal_device.h
     src/hal_service.h
@@ -35,6 +38,7 @@ set(HAL_SOURCES
     src/qt_udp_control_provider.cpp
     src/control_channel_manager.cpp
     src/resource_mapper.cpp
+    src/adapter_device_open_spec.cpp
     src/safety_guard.cpp
     src/mock_adapter.cpp
     src/c_abi_adapter.cpp

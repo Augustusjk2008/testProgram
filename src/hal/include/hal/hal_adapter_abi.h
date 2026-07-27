@@ -73,6 +73,7 @@ typedef struct HalAdapterDeviceInfo {
 #define HAL_MODULE_DIGITAL    0x00000002u
 #define HAL_MODULE_SERIAL     0x00000004u
 #define HAL_MODULE_CANFD      0x00000008u
+#define HAL_MODULE_COUNTER    0x00000010u
 
 typedef HalAdapterStatus (HAL_ADAPTER_CALL *HalAdapterGetInfoFn)(HalAdapterInfo* outInfo);
 typedef HalAdapterStatus (HAL_ADAPTER_CALL *HalAdapterInitializeFn)(const char* configJson,
@@ -99,6 +100,14 @@ typedef struct HalAdapterAnalogRange {
     double maxValue;
     int unit;
 } HalAdapterAnalogRange;
+
+typedef enum HalAdapterAnalogUnit {
+    HAL_ADAPTER_ANALOG_UNIT_VOLT = 0,
+    HAL_ADAPTER_ANALOG_UNIT_MILLIVOLT = 1,
+    HAL_ADAPTER_ANALOG_UNIT_AMPERE = 2,
+    HAL_ADAPTER_ANALOG_UNIT_MILLIAMPERE = 3,
+    HAL_ADAPTER_ANALOG_UNIT_RAW_COUNT = 4
+} HalAdapterAnalogUnit;
 
 typedef struct HalAdapterAnalogSample {
     int channelIndex;

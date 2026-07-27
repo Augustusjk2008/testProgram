@@ -40,6 +40,7 @@ add_library(hal_adapter_digital_fixture SHARED
 
 add_library(hal_adapter_ni_daqmx_fixture SHARED
     ${PROJECT_SOURCE_DIR}/src/adapters/ni_daqmx/ni_daqmx_adapter.cpp
+    ${PROJECT_SOURCE_DIR}/src/adapters/ni_daqmx/ni_daqmx_config.cpp
 )
 
 set_target_properties(hal_adapter_ni_daqmx_fixture PROPERTIES
@@ -49,6 +50,7 @@ set_target_properties(hal_adapter_ni_daqmx_fixture PROPERTIES
 
 target_include_directories(hal_adapter_ni_daqmx_fixture
     PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/adapters/ni_daqmx
         ${PROJECT_SOURCE_DIR}/src/adapters/ni_daqmx/tests/fake
         ${PROJECT_SOURCE_DIR}/src/hal/include
 )

@@ -1,5 +1,6 @@
 #include "hal/hal_factory.h"
 #include "hal/hal_types.h"
+#include "hal/i_sample_task_io.h"
 
 #include <gtest/gtest.h>
 
@@ -15,6 +16,9 @@ TEST(HalTypesTest, RegistersMetaTypesAndFormatsEnums)
     EXPECT_EQ(toString(SerialParity::Even), QStringLiteral("Even"));
     EXPECT_EQ(toString(SerialStopBits::OneAndHalf), QStringLiteral("OneAndHalf"));
     EXPECT_EQ(toString(SerialFlowControl::Software), QStringLiteral("Software"));
+    EXPECT_NE(QMetaType::type("hwtest::hal::SampleTaskConfig"), QMetaType::UnknownType);
+    EXPECT_NE(QMetaType::type("hwtest::hal::SampleTaskBlock"), QMetaType::UnknownType);
+    EXPECT_NE(QMetaType::type("hwtest::hal::SampleTaskStatus"), QMetaType::UnknownType);
 }
 
 TEST(HalTypesTest, EnumeratesSerialPortsAsStableDescriptors)

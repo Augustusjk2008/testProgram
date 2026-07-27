@@ -6,7 +6,7 @@
 
 - 本仓库同时维护 Windows/Qt 宿主测试程序与 `dut/` 中的 MB_DDF_v2 嵌入式快照。根规则覆盖宿主工程，`src/hal/AGENTS.md` 与 `dut/AGENTS.md` 分别覆盖对应子树。
 - 架构总览以 `docs/design/overview/five-layer-architecture.md` 为准；BIZ、HAL、设备通讯、WebSocket 前端和日志契约分别位于 `docs/design/contracts/`；测试清单、统计和验证证据统一记录在 `docs/design/testing/testing-specification.md`。
-- 公共 API、CMake 目标、测试注册和已核对源码用于描述当前实现。带环境、日期和结果的运行记录引用测试规范。
+- 公共 API、CMake 目标、测试注册和已核对源码共同描述当前实现；运行记录统一引用测试规范。
 - 代码与文档出现差异时，先按分层、安全和公共契约判断；实现合理时同步事实源，实现偏离契约时修正代码并补回归测试。
 - `docs/plan/` 与 `docs/superpowers/plans/` 保存历史执行记录。历史方案保留原文，并在顶部链接现行事实源。
 - 审查、搜索和统计聚焦源码与事实源，默认过滤 `tmp/`、`build*/`、`cmake-build*/`、`out/` 和 `.git/`。
@@ -15,13 +15,14 @@
 ## 当前项目
 
 - 根入口 `CMakeLists.txt` 使用 C++17，先探测 Qt 5.15 Core/Network/SerialPort/Widgets，再要求 Qt 5.15 WebSockets；基础 Qt 5 选择失败时进入同一组件集的 Qt 6 fallback。
-- HAL 位于 `src/hal/`，目标为 `hwtest_hal`。控制资源通过 `qt.serial` 或 `qt.udp` Provider 路由；其他设备通过 `AdapterRouter` 路由到 `MockAdapter` 或 C ABI v1 Adapter。`src/adapters/ni_daqmx/` 在 `HWTEST_ENABLE_NI_DAQMX=ON` 时构建 NI-DAQmx Adapter，当前覆盖数字 I/O，并以 Fake API 自动化测试覆盖 USB-6259 软件路径。
+- HAL 位于 `src/hal/`，目标为 `hwtest_hal`。控制资源通过 `qt.serial` 或 `qt.udp` Provider 路由；其他设备通过 `AdapterRouter` 路由到 `MockAdapter` 或 C ABI v1 Adapter。HAL 以版本化 `AdapterDeviceOpenSpec` 向厂家 Adapter 投影单设备身份、资源、任务档案和安全态。
+- `src/adapters/ni_daqmx/` 在 `HWTEST_ENABLE_NI_DAQMX=ON` 时构建 PXI-6259 NI-DAQmx Adapter。核心 ABI v1 保持稳定，可选 task ABI v1 与 `ISampleTaskIo` 提供 AI/AO/DI/DO、有限/连续采样、时钟、start/reference/pause 触发、边沿计数和频率脉冲输出；Fake NI-DAQmx 覆盖软件路径。
 - 日志模块位于 `src/logging/`：`hwtest_log_types` 提供仅依赖 Qt Core 的值类型，`hwtest_log` 提供日志服务、文件 sink 和 HAL 日志桥接。
 - BIZ 位于 `src/biz/`，目标为 `hwtest_biz`，负责配置、拓扑排序、运行模式、重试、状态、结果和报告。工作任务运行于带 Qt event dispatcher 的 `QThread`。
 - 算法位于 `src/algorithm/`，目标为 `hwtest_algorithm_mbddf`，提供 MB_DDF CSV 编解码和七项已注册算法：`mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config`、`mbddf.timer_jitter`、`mbddf.di_read`。
 - 七份 `configs/mbddf_*.testcfg.json` 均声明 `single`；系统状态、电气健康、内存、定时器和 DI 还声明 `pc_periodic`。BIZ 提供 `single`、`pc_periodic` 和 `device_stream` 三种通用运行语义，配置能力以各 JSON 的 `reportFields.supportedRunModes` 为准。
 - 电气健康以设备 `status`/`err_code` 判定；SPI Flash 写入固定隔离测试区并保留写入结果；`TIMER_JITTER` 在结束阶段发送 STOP 清理。
-- `DiStimulusController` 通过 HAL 批量数字输出维护 16 路逻辑掩码、revision 和安全复位；NI 配置中的物理 safe state 与 DI descriptor 的 inactive level 保持一致。
+- `DiStimulusController` 通过 HAL 批量数字输出维护 16 路逻辑掩码、revision 和安全复位；PXI-6259 配置中的物理 safe state 与 DI descriptor 的 inactive level 保持一致。
 - 应用层位于 `src/app/`，共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support` 和 `hwtest_web_support`，产出 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web`。四个入口统一使用 `TestApplicationController` 和 MB_DDF 注册表；启动选项动态扫描 `configs/*.testcfg.json`，并校验配置结构与已注册算法。
 - `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置目录切换、运行控制、动态测量字段和 16 路 DI 刺激/回读状态。
 - `tests/` 按 HAL、日志、BIZ、算法和应用组织 GoogleTest 目标；NI Fake Adapter 使用独立 CTest 入口；`front/` 的 Vitest 独立运行。测试清单与统计以测试规范为准。
@@ -50,8 +51,9 @@
 
 - 新增 BIZ 测试配置使用 `executionConfig` 传递算法执行参数；读取器继续支持旧根字段 `halConfig` 的迁移。
 - BIZ 保存并透传 `ProtocolProfile`、`SafetyPolicy` 与硬件需求，协议解释由算法层完成，安全动作由 HAL 完成。
+- 厂家 Adapter 初始化配置只承载驱动级设置；设备身份、资源映射和 safe state 通过 `hwtest.adapter-device-open` v1 传入 `openDevice()`。NI JSON 解析集中在 `ni_daqmx_config.*`。
 - 公共 HAL 和 BIZ 头文件属于兼容面；结构体优先在尾部扩展，既有枚举值与语义保持稳定。
-- Adapter ABI 变更同步更新 `src/hal/include/hal/hal_adapter_abi.h`、HAL 契约和 ABI 测试。
+- Adapter ABI 变更同步更新 `hal_adapter_abi.h`、可选 `hal_adapter_task_abi.h`、HAL 契约和 ABI 测试。
 - 命名空间统一使用 `hwtest::hal`、`hwtest::logging`、`hwtest::biz`、`hwtest::algorithm::mbddf` 和 `hwtest::app`。
 
 ## 代码与文档
@@ -63,7 +65,7 @@
 
 ## 本地服务与前端
 
-- 自动化代理仅在用户于当前对话明确授权后变更 `hwtest_web`、Vite 或其他常驻服务状态。常规验证使用会自行退出的单元测试、集成测试和 smoke test；已有服务按只读方式检查状态。
+- `hwtest_web`、Vite 和其他常驻服务状态由用户在当前对话明确授权；常规验证使用自行退出的单元测试、集成测试和 smoke test，已有服务按只读方式检查。
 - WebSocket 后端默认监听 `127.0.0.1:18765`。用户手动运行时，在仓库根目录以前台方式执行：
 
 ```powershell
@@ -95,7 +97,7 @@ ctest --test-dir build_vs -C Release --output-on-failure
 ```
 
 - 涉及源协议 CSV 的验证设置 `MB_DDF_PROTOCOL_CSV_DIR=H:\Resources\RTLinux\Demos\MB_DDF_v2\docs\design\product_protocol_csv`；`GTEST_SKIP` 记为待验证证据。
-- USB-6259 真机验收记录共地、电平、隔离、接线映射、NI SDK 版本、设备身份和硬件运行结果。
+- 当前 NI 证据等级为 Fake NI-DAQmx 自动化。PXI-6259 真机验收记录共地、电平、隔离、接线映射、NI SDK 版本、MAX 设备身份、采样/触发参数、长时运行和安全收尾结果。
 - 修改 BIZ 时运行 BIZ 契约与架构测试；修改算法层时运行 `tests/algorithm/`；产品模拟与集成测试沿 HAL 路径执行。
 - 说明性文档改动至少运行链接/术语检查和 `git diff --check`。
 - 宿主工程与 DUT 使用独立构建树和验证入口。进入 `dut/` 后按局部 `AGENTS.md` 与 `README.md` 使用 `build.ps1`、`debug.ps1`、`tests/test-dds-only.ps1`、`tests/test-all.ps1` 和 `tests/test-deploy.ps1`。

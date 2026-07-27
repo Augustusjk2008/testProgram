@@ -58,3 +58,6 @@ front/.env.local
 
 # tmp
 tmp/
+
+# codegraph
+.codegraph/

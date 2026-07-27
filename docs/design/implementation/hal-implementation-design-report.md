@@ -6,12 +6,14 @@
 > 本文定位：记录 `src/hal/` 在该日期的历史代码结构、调用路径、已知限制和迁移顺序。
 > 稳定接口与目标语义见 [HAL 层接口协议](../contracts/hal-interface-protocol.md)；测试规则见 [测试规范](../testing/testing-specification.md)。
 > 本报告不重复公共头声明、稳定错误码、日志字段映射或全局测试命令。
+>
+> **现行更正（2026-07-27）**：本快照中“`CAbiAdapter -> MockAdapter`”“Loader 未接入主链”“没有厂家 Adapter DLL 调用链”的表述已不再代表当前源码。当前 `AdapterRouter -> CAbiAdapter` 可实际加载并调用配置的核心 ABI v1 DLL；Vendor C ABI 初始化接收驱动级 Adapter 配置，HAL 再以单设备 `hwtest.adapter-device-open` v1 投影调用 `openDevice()`。PXI-6259 NI-DAQmx Adapter 的配置解析已拆分为 `ni_daqmx_config.*`，并另有可选 task ABI 与 `ISampleTaskIo`。上述 DLL/任务路径的自动化证据均为 Fake，不是 NI SDK 或 PXI-6259 真机验收。下文的 COM3 手工记录和历史数值仍按原快照保留。
 
 ---
 
 ## 1. 结论
 
-当前 HAL 已实现资源映射、基础安全校验、会话、既有硬件接口和控制通道。控制资源可按配置选择 Qt 串口或 UDP；其他资源仍使用兼容 Mock 后端：
+截至本快照日期，HAL 已实现资源映射、基础安全校验、会话、既有硬件接口和控制通道。控制资源可按配置选择 Qt 串口或 UDP；当时其他资源仍使用兼容 Mock 后端：
 
 ```text
 控制：HalDevice -> ControlChannelManager -> qt.serial / qt.udp -> Qt 标准 API
@@ -27,7 +29,7 @@
                    -> Qt Serial/TCP/UDP Provider -> Qt 标准 API
 ```
 
-当前只在 `module = "control"` 的资源上实现局部 `providerId` 路由。没有通用 Router、控制通道 Mock Provider、TCP 或真实厂家 DLL 调用；真实硬件证据仅限 2026-07-26 的 COM3 `SYSTEM_STATUS`/`ELEC_HEALTH_STATUS` smoke，也没有定义 `INetworkBus`。
+本快照只在 `module = "control"` 的资源上记录局部 `providerId` 路由。当前工作区仍没有通用控制 Router、控制通道 Mock Provider、TCP 或 `INetworkBus`；配置驱动的 Adapter DLL C ABI 调用链和 driver-only 初始化/单设备打开投影边界已按上方现行更正落地。真实硬件证据仍仅限 2026-07-26 的 COM3 `SYSTEM_STATUS`/`ELEC_HEALTH_STATUS` smoke，不包含 NI/PXI-6259 验收。
 
 ---
 
@@ -48,14 +50,14 @@
 | `ResourceMapper` | 从配置构造设备、资源、能力和 safe state |
 | `SafetyGuard` | 模拟量、数字量、串口和 CAN 基础参数校验 |
 | `HardwareAdapter` | HAL 内部 C++ 后端抽象 |
-| `CAbiAdapter` | 当前兼容 seam；实际全部转发给 `MockAdapter` |
-| `AdapterLoader` | 可加载 DLL 并解析 ABI v1 入口，但未接入主链 |
+| `CAbiAdapter` | 历史快照中的兼容 seam；当前已实际加载 DLL、调用核心 ABI v1，并可选解析 task ABI |
+| `AdapterLoader` | 历史快照中仅可加载 DLL；当前已接入 `CAbiAdapter` 主链并可选解析 task ABI |
 | `MockAdapter` | 内存设备、回环和 echo 后端 |
 | `HalErrorMapper` | C ABI 状态到 `HalStatusCode` 的当前映射 |
 
 ---
 
-## 3. 当前对象关系
+## 3. 历史对象关系（非当前）
 
 ```mermaid
 flowchart LR
@@ -73,11 +75,11 @@ flowchart LR
   Mock --> State["in-memory device/session state"]
 ```
 
-`HardwareAdapter` 已隔离 `HalService` / `HalDevice` 与具体后端，但当前它只是单后端抽象，不是按 `providerId` 分派的 Router。
+`HardwareAdapter` 在本快照中已隔离 `HalService` / `HalDevice` 与具体后端。当前实现另有按设备 `adapterId` 的 `AdapterRouter`；它仍不等同于控制资源的通用 `providerId` Router。
 
 ---
 
-## 4. `HalService` 当前流程
+## 4. `HalService` 历史流程（非当前）
 
 ### 4.1 初始化
 
@@ -92,7 +94,7 @@ initialize(halConfig)
   -> m_initialized = true
 ```
 
-`createBackend()` 当前忽略配置并总是返回 `CAbiAdapter`。`CAbiAdapter` 又持有一个 `MockAdapter` 并逐方法转发，因此 `adapterId`、库路径或设备类型不会改变实际后端。
+本快照中的 `createBackend()` 忽略配置并总是返回 `CAbiAdapter`，后者当时又持有一个 `MockAdapter` 并逐方法转发。当前 `AdapterRouter` 已按 `adapterId` 懒加载 Mock 或 C ABI 后端，且 `HalService::openDevice()` 会传递单设备 open projection。
 
 ### 4.2 扫描与能力
 
@@ -114,7 +116,7 @@ initialize(halConfig)
 
 `shutdown()` 遍历会话调用 `HalDevice::close()`，清空会话，再关闭和释放后端。方法是幂等的，析构也会调用它。
 
-当前实现会尝试安全收尾，但未汇总并返回所有关闭错误；真实物理安全效果也尚无厂家后端或硬件测试证明。
+当前实现会尝试安全收尾，但未汇总并返回所有关闭错误；Mock、动态 Fake ABI 与 NI Fake 已覆盖软件收尾路径，真实物理安全效果仍无 NI SDK 或 PXI-6259 板卡验收。
 
 ---
 
@@ -169,7 +171,7 @@ safeState{}
 
 ## 6. `HalDevice` 当前行为
 
-`HalDevice` 同时实现 `IHalDevice`、`IAnalogIo`、`IDigitalIo`、`ISerialBus` 和 `ICanFdBus`。每次操作先检查：
+本快照中的 `HalDevice` 同时实现 `IHalDevice`、`IAnalogIo`、`IDigitalIo`、`ISerialBus` 和 `ICanFdBus`。当前实现还公开 `ISampleTaskIo`，并通过 `IHalDevice::sampleTasks()` 提供会话内任务生命周期。每次普通 I/O 操作先检查：
 
 ```text
 会话已打开
@@ -215,14 +217,14 @@ HAL 校验普通 CAN payload 不超过 8 字节、CANFD 不超过 64 字节，�
 
 ### 6.4 安全关闭
 
-`HalDevice::close()` 先执行 `applySafeState()`，再关闭后端会话。当前支持：
+本快照中 `HalDevice::close()` 先执行 `applySafeState()`，再关闭后端会话。当前实现已更正为先停止并释放已跟踪采样任务，随后应用 AO/DO safe state，再关闭后端会话。快照所列安全动作包括：
 
 - analog output 写安全值；
 - digital output 写安全电平；
 - serial 关闭端口；
 - canfd 关闭总线。
 
-实现保留第一个后端错误并继续处理后续资源。不存在的安全资源会被忽略。此机制目前只在 Mock 路径验证，尚未形成真实硬件安全证据。
+实现保留第一个后端错误并继续处理后续资源。不存在的安全资源会被忽略。HAL Mock/动态 Fake 与 NI Fake 均覆盖软件安全关闭路径，但尚未形成真实硬件安全证据。
 
 ---
 
@@ -236,15 +238,15 @@ HAL 校验普通 CAN payload 不超过 8 字节、CANFD 不超过 64 字节，�
 
 ### 7.2 `CAbiAdapter`
 
-名称容易造成误解：当前 `CAbiAdapter` 没有加载 DLL，也没有调用 `HalAdapterApiV1`。它的所有方法直接委托成员 `MockAdapter`。
+名称在本快照中容易造成误解：当时 `CAbiAdapter` 没有加载 DLL，也没有调用 `HalAdapterApiV1`，而是直接委托成员 `MockAdapter`。
 
-因此当前事实是：
+因此当时的快照路径是：
 
 ```text
 createBackend() -> CAbiAdapter -> MockAdapter
 ```
 
-目标中，C ABI 应只位于 Vendor Adapter Provider 内。Qt Provider 和 Mock Provider 不应绕经 Vendor C ABI。
+当前 `CAbiAdapter` 已通过 `AdapterLoader` 实际加载并调用 ABI v1，并可选解析 task ABI；Qt Provider 和 Mock Provider 仍不应绕经 Vendor C ABI。
 
 ### 7.3 `AdapterLoader` 与 ABI v1
 
@@ -255,7 +257,7 @@ createBackend() -> CAbiAdapter -> MockAdapter
 - 校验 ABI 版本和 `structSize`；
 - 保存函数表并在析构时卸载。
 
-但它未接入 `HalService::createBackend()` 或 `CAbiAdapter`，所以 Loader 单测只能证明加载器本身，不能证明真实 Adapter 调用链。
+在本快照时它未接入 `HalService::createBackend()` 或 `CAbiAdapter`。当前该差距已关闭：`CAbiAdapter` 使用 Loader 装载核心 ABI，并以可选符号加载 task API。
 
 `hal_adapter_abi.h` 当前为 ABI v1。兼容规则和状态边界见 HAL 契约，不在本报告重复。
 
@@ -309,12 +311,12 @@ Qt UDP 本机模拟目标闭环已经打通。2026-07-26 已通过 `hwtest_web -
 | Router 只覆盖控制资源 | 其他资源仍无法显式选择 Qt/Vendor/Mock | 扩展统一 Provider 生命周期和配置校验 |
 | Mock 静默默认 | 生产误连 Mock 或首设备 | 生产模式缺配置即失败 |
 | Qt Provider 证据不完整 | 串口已有 QThread 迁移后无目标计时器警告的短时手工成功复测，但缺少自动化 hardware target 和长时/异常路径；现场 UDP 行为未知 | 补串口自动化 hardware target 及长时/异常收尾，确认现场 UDP 端点；TCP 另行评审 |
-| Vendor 调用链缺失 | ABI/Loader 与运行时脱节 | 在 Vendor Provider 内接入 ABI v1 |
+| Vendor 调用链（历史差距，已关闭） | 本快照中 ABI/Loader 与运行时脱节 | 当前已接入核心 ABI v1 与可选 task ABI；真机 PXI-6259 验收仍待补 |
 | 扫描来自配置 | 无法证明物理设备身份 | Provider 扫描并按 match 唯一绑定 |
 | deadline 非端到端 | write/read 累计超时 | 单调时钟计算剩余预算 |
 | 旧 `HalSerialTransport` 无流式缓冲 | 误用旧路径会受短读影响 | 产品路径固定使用 `HalControlTransport`，后续评估删除旧桥接 |
 | 产品 Mock 绕过 HAL | 无法验证资源和安全链 | 算法经 HAL Mock Provider 闭环 |
-| 安全态只在 Mock 证明 | 真实硬件风险未知 | 厂家/Qt Provider 契约和硬件验收 |
+| 安全态仅有 Mock/NI Fake 软件证据 | 真实硬件风险未知 | 厂家/Qt Provider 契约和硬件验收 |
 
 ---
 
@@ -324,7 +326,7 @@ Qt UDP 本机模拟目标闭环已经打通。2026-07-26 已通过 `hwtest_web -
 2. 在已有 COM3 迁移后成功单次/三周期和 BIZ QThread 自动回归基础上，继续验证 614400/8E1 的短读、拆包、长时、超时、拔插、运行中停止和异常收尾，并评估独立 hardware target。
 3. 确认 PC 到 DUT 的实际 UDP 地址/端口；不得复用板端网口自环测试事实作推断。
 4. 把当前 `MockAdapter` 迁为直接的 Mock Provider，并补 SYSTEM_STATUS/ELEC_HEALTH_STATUS 控制通道闭环。
-5. 把 `AdapterLoader + HalAdapterApiV1` 接入 Vendor Adapter Provider，保留 ABI v1 兼容测试。
+5. 本快照建议的 `AdapterLoader + HalAdapterApiV1` 接入已完成，并保留核心 ABI v1/可选 task ABI 兼容测试；后续重点是 PXI-6259 真机验收而非把 Fake 结果写成真机结论。
 6. 统一全 HAL deadline、连接取消、日志覆盖和异常安全收尾；TCP 在实际用例明确后另行评审。
 7. 完成隔离真实 DUT 验收，再扩充更多 MB_DDF 测试项；浏览器新增测试项目时继续复用已实现的 `hwtest_web` 和当前应用控制器。
 

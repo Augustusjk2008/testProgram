@@ -5,6 +5,7 @@
 #include "hal/i_control_channel.h"
 #include "hal/i_digital_io.h"
 #include "hal/i_hal_device.h"
+#include "hal/i_sample_task_io.h"
 #include "hal/i_serial_bus.h"
 
 #include "hardware_adapter.h"
@@ -13,6 +14,7 @@
 #include "safety_guard.h"
 
 #include <functional>
+#include <QSet>
 
 namespace hwtest::hal {
 
@@ -21,7 +23,8 @@ class HalDevice final : public IHalDevice,
                         public IDigitalIo,
                         public ISerialBus,
                         public ICanFdBus,
-                        public IControlChannel {
+                        public IControlChannel,
+                        public ISampleTaskIo {
 public:
     using LogCallback = std::function<void(const HalLogEvent& event)>;
 
@@ -42,6 +45,7 @@ public:
     ISerialBus* serialBus() override;
     ICanFdBus* canFdBus() override;
     IControlChannel* controlChannel() override;
+    ISampleTaskIo* sampleTasks() override;
 
     HalStatus close(const OperationOptions& options = {});
     HalStatus reset(const OperationOptions& options = {});
@@ -121,6 +125,23 @@ public:
                                                    int maxFrames,
                                                    const OperationOptions& options) override;
 
+    HalResult<SampleTaskId> createTask(const SampleTaskConfig& config,
+                                       const OperationOptions& options) override;
+    HalStatus startTask(const SampleTaskId& taskId,
+                        const OperationOptions& options) override;
+    HalResult<SampleTaskBlock> readTask(const SampleTaskId& taskId,
+                                        int maxSamplesPerChannel,
+                                        const OperationOptions& options) override;
+    HalStatus writeTask(const SampleTaskId& taskId,
+                        const SampleTaskBlock& block,
+                        const OperationOptions& options) override;
+    HalResult<SampleTaskStatus> taskStatus(const SampleTaskId& taskId,
+                                           const OperationOptions& options) override;
+    HalStatus stopTask(const SampleTaskId& taskId,
+                       const OperationOptions& options) override;
+    HalStatus closeTask(const SampleTaskId& taskId,
+                        const OperationOptions& options) override;
+
 private:
     struct ChannelInfo {
         ResourceBinding binding;
@@ -133,6 +154,8 @@ private:
                                       const QString& expectedDirection,
                                       HalStatus* status = nullptr) const;
     HalStatus ensureOpen(const QString& operation) const;
+    HalStatus ensureSampleTask(const SampleTaskId& taskId,
+                               const QString& operation) const;
     HalStatus ensureModuleBinding(const ResourceId& resourceId,
                                   const QString& module,
                                   const QString& expectedDirection,
@@ -173,6 +196,7 @@ private:
     QHash<ResourceId, AnalogRange> m_analogOutputRanges;
     QHash<ResourceId, SerialConfig> m_openSerialPorts;
     QHash<ResourceId, CanFdConfig> m_openCanBuses;
+    QSet<SampleTaskId> m_sampleTasks;
     ControlChannelManager m_controlChannels;
     bool m_open = true;
     SafetyGuard m_safetyGuard;

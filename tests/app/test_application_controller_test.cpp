@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -78,12 +79,31 @@ bool selectDigitalAdapterFixture(const QString& halPath, QString* error)
     QJsonObject ni = adapters.value(QStringLiteral("ni.daqmx")).toObject();
     ni.insert(QStringLiteral("libraryPath"),
               QString::fromLatin1(HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH));
-    QJsonObject settings = ni.value(QStringLiteral("settings")).toObject();
-    settings.insert(QStringLiteral("deviceName"), QStringLiteral("fixture_device"));
-    settings.insert(QStringLiteral("serialNumber"), QStringLiteral("62590001"));
-    ni.insert(QStringLiteral("settings"), settings);
     adapters.insert(QStringLiteral("ni.daqmx"), ni);
     root.insert(QStringLiteral("adapters"), adapters);
+    QJsonObject hardware = root.value(QStringLiteral("hardware")).toObject();
+    QJsonArray devices = hardware.value(QStringLiteral("devices")).toArray();
+    for (int index = 0; index < devices.size(); ++index) {
+        QJsonObject device = devices.at(index).toObject();
+        if (device.value(QStringLiteral("alias")).toString() !=
+            QStringLiteral("ni6259_stimulus")) {
+            continue;
+        }
+        QJsonObject properties = device.value(QStringLiteral("properties")).toObject();
+        QJsonObject vendor = properties.value(QStringLiteral("vendor")).toObject();
+        QJsonObject niProperties = vendor.value(QStringLiteral("ni")).toObject();
+        niProperties.insert(QStringLiteral("deviceName"), QStringLiteral("fixture_device"));
+        vendor.insert(QStringLiteral("ni"), niProperties);
+        properties.insert(QStringLiteral("vendor"), vendor);
+        device.insert(QStringLiteral("properties"), properties);
+        devices.replace(index, device);
+        break;
+    }
+    hardware.insert(QStringLiteral("devices"), devices);
+    root.insert(QStringLiteral("hardware"), hardware);
+    QJsonObject safeState = root.value(QStringLiteral("safeState")).toObject();
+    safeState.remove(QStringLiteral("PXI_AO_0"));
+    root.insert(QStringLiteral("safeState"), safeState);
 
     QFile output(halPath);
     if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -167,12 +187,31 @@ TEST(TestApplicationControllerTest, DiPreparationOpensStimulusAndUsesRevisionedA
     QJsonObject ni = adapters.value(QStringLiteral("ni.daqmx")).toObject();
     ni.insert(QStringLiteral("libraryPath"),
               QString::fromLatin1(HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH));
-    QJsonObject settings = ni.value(QStringLiteral("settings")).toObject();
-    settings.insert(QStringLiteral("deviceName"), QStringLiteral("fixture_device"));
-    settings.insert(QStringLiteral("serialNumber"), QStringLiteral("62590001"));
-    ni.insert(QStringLiteral("settings"), settings);
     adapters.insert(QStringLiteral("ni.daqmx"), ni);
     root.insert(QStringLiteral("adapters"), adapters);
+    QJsonObject hardware = root.value(QStringLiteral("hardware")).toObject();
+    QJsonArray devices = hardware.value(QStringLiteral("devices")).toArray();
+    for (int index = 0; index < devices.size(); ++index) {
+        QJsonObject device = devices.at(index).toObject();
+        if (device.value(QStringLiteral("alias")).toString() !=
+            QStringLiteral("ni6259_stimulus")) {
+            continue;
+        }
+        QJsonObject properties = device.value(QStringLiteral("properties")).toObject();
+        QJsonObject vendor = properties.value(QStringLiteral("vendor")).toObject();
+        QJsonObject niProperties = vendor.value(QStringLiteral("ni")).toObject();
+        niProperties.insert(QStringLiteral("deviceName"), QStringLiteral("fixture_device"));
+        vendor.insert(QStringLiteral("ni"), niProperties);
+        properties.insert(QStringLiteral("vendor"), vendor);
+        device.insert(QStringLiteral("properties"), properties);
+        devices.replace(index, device);
+        break;
+    }
+    hardware.insert(QStringLiteral("devices"), devices);
+    root.insert(QStringLiteral("hardware"), hardware);
+    QJsonObject safeState = root.value(QStringLiteral("safeState")).toObject();
+    safeState.remove(QStringLiteral("PXI_AO_0"));
+    root.insert(QStringLiteral("safeState"), safeState);
 
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
@@ -209,7 +248,9 @@ TEST(TestApplicationControllerTest, DiPreparationOpensStimulusAndUsesRevisionedA
     ASSERT_TRUE(controller.resetDigitalStimulus().ok);
     EXPECT_EQ(controller.snapshot().digitalStimulus.appliedMask, 0u);
     EXPECT_EQ(controller.snapshot().digitalStimulus.revision, 3u);
-    ASSERT_TRUE(controller.shutdown().ok);
+    const ActionResult shutdown = controller.shutdown();
+    ASSERT_TRUE(shutdown.ok) << shutdown.code.toStdString() << ": "
+                             << shutdown.message.toStdString();
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("configured"));
 }
 
@@ -270,7 +311,9 @@ TEST(TestApplicationControllerTest, AsyncStopReturnsDiStimulusToSafeState)
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("stopped"));
     EXPECT_EQ(controller.snapshot().digitalStimulus.appliedMask, 0u);
     EXPECT_EQ(controller.snapshot().digitalStimulus.revision, revision + 2);
-    EXPECT_TRUE(controller.shutdown().ok);
+    const ActionResult shutdown = controller.shutdown();
+    EXPECT_TRUE(shutdown.ok) << shutdown.code.toStdString() << ": "
+                             << shutdown.message.toStdString();
 }
 
 TEST(TestApplicationControllerTest, SynchronousStopReturnsDiStimulusToSafeState)
@@ -310,7 +353,9 @@ TEST(TestApplicationControllerTest, SynchronousStopReturnsDiStimulusToSafeState)
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("stopped"));
     EXPECT_EQ(controller.snapshot().digitalStimulus.appliedMask, 0u);
     EXPECT_EQ(controller.snapshot().digitalStimulus.revision, revision + 2);
-    EXPECT_TRUE(controller.shutdown().ok);
+    const ActionResult shutdown = controller.shutdown();
+    EXPECT_TRUE(shutdown.ok) << shutdown.code.toStdString() << ": "
+                             << shutdown.message.toStdString();
 }
 
 TEST(TestApplicationControllerTest, RejectsActionsFromOutsideTheControllerAffinityThread)

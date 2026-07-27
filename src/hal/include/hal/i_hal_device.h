@@ -10,6 +10,7 @@ class IAnalogIo;
 class ICanFdBus;
 class IDigitalIo;
 class ISerialBus;
+class ISampleTaskIo;
 
 class HWTEST_HAL_EXPORT IHalDevice {
 public:
@@ -23,6 +24,7 @@ public:
     virtual ISerialBus* serialBus() = 0;
     virtual ICanFdBus* canFdBus() = 0;
     virtual IControlChannel* controlChannel() { return nullptr; }
+    virtual ISampleTaskIo* sampleTasks() { return nullptr; }
 };
 
 } // namespace hwtest::hal

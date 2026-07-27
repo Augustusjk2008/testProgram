@@ -1,4 +1,5 @@
 #include "adapter_loader.h"
+#include "hal/hal_adapter_task_abi.h"
 
 #include <gtest/gtest.h>
 
@@ -48,4 +49,34 @@ TEST(AdapterLoaderTest, ReportsMissingSymbol)
                                     &api);
     EXPECT_FALSE(loaded);
     EXPECT_FALSE(loader.errorString().isEmpty());
+}
+
+TEST(AdapterLoaderTest, ResolvesOptionalTaskApiWithoutChangingBaseAbi)
+{
+    AdapterLoader loader;
+    HalAdapterApiV1 api {};
+    HalAdapterTaskApiV1 taskApi {};
+    const QString libraryPath = QString::fromLatin1(
+        HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH);
+
+    ASSERT_TRUE(loader.load(libraryPath, hostApi(), &api));
+    ASSERT_TRUE(loader.loadTaskApi(hostApi(), &taskApi));
+    EXPECT_EQ(taskApi.abiVersion, HAL_ADAPTER_TASK_ABI_VERSION);
+    EXPECT_EQ(taskApi.structSize, static_cast<int>(sizeof(HalAdapterTaskApiV1)));
+    EXPECT_NE(taskApi.createTask, nullptr);
+    EXPECT_NE(taskApi.readTask, nullptr);
+    EXPECT_NE(taskApi.closeTask, nullptr);
+}
+
+TEST(AdapterLoaderTest, MissingOptionalTaskApiKeepsBaseAdapterLoaded)
+{
+    AdapterLoader loader;
+    HalAdapterApiV1 api {};
+    HalAdapterTaskApiV1 taskApi {};
+
+    ASSERT_TRUE(loader.load(QString::fromLatin1(HAL_TEST_ADAPTER_FIXTURE_PATH),
+                            hostApi(),
+                            &api));
+    EXPECT_FALSE(loader.loadTaskApi(hostApi(), &taskApi));
+    EXPECT_TRUE(loader.isLoaded());
 }

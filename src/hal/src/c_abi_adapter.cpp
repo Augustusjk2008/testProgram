@@ -96,6 +96,56 @@ int adapterLevel(DigitalLevel value)
     return 2;
 }
 
+int adapterTaskKind(SampleTaskKind kind)
+{
+    switch (kind) {
+    case SampleTaskKind::AnalogInput: return HAL_ADAPTER_TASK_ANALOG_INPUT;
+    case SampleTaskKind::AnalogOutput: return HAL_ADAPTER_TASK_ANALOG_OUTPUT;
+    case SampleTaskKind::DigitalInput: return HAL_ADAPTER_TASK_DIGITAL_INPUT;
+    case SampleTaskKind::DigitalOutput: return HAL_ADAPTER_TASK_DIGITAL_OUTPUT;
+    case SampleTaskKind::CounterInput: return HAL_ADAPTER_TASK_COUNTER_INPUT;
+    case SampleTaskKind::CounterOutput: return HAL_ADAPTER_TASK_COUNTER_OUTPUT;
+    }
+    return HAL_ADAPTER_TASK_ANALOG_INPUT;
+}
+
+int adapterTaskMode(SampleTaskMode mode)
+{
+    switch (mode) {
+    case SampleTaskMode::OnDemand: return HAL_ADAPTER_TASK_ON_DEMAND;
+    case SampleTaskMode::Finite: return HAL_ADAPTER_TASK_FINITE;
+    case SampleTaskMode::Continuous: return HAL_ADAPTER_TASK_CONTINUOUS;
+    }
+    return HAL_ADAPTER_TASK_ON_DEMAND;
+}
+
+int adapterEdge(SignalEdge edge)
+{
+    return edge == SignalEdge::Falling ? HAL_ADAPTER_EDGE_FALLING
+                                       : HAL_ADAPTER_EDGE_RISING;
+}
+
+int adapterTriggerType(TriggerType type)
+{
+    switch (type) {
+    case TriggerType::None: return HAL_ADAPTER_TRIGGER_NONE;
+    case TriggerType::DigitalEdge: return HAL_ADAPTER_TRIGGER_DIGITAL_EDGE;
+    case TriggerType::AnalogEdge: return HAL_ADAPTER_TRIGGER_ANALOG_EDGE;
+    case TriggerType::DigitalLevel: return HAL_ADAPTER_TRIGGER_DIGITAL_LEVEL;
+    }
+    return HAL_ADAPTER_TRIGGER_NONE;
+}
+
+int adapterTriggerRole(TriggerRole role)
+{
+    switch (role) {
+    case TriggerRole::Start: return HAL_ADAPTER_TRIGGER_START;
+    case TriggerRole::Reference: return HAL_ADAPTER_TRIGGER_REFERENCE;
+    case TriggerRole::Pause: return HAL_ADAPTER_TRIGGER_PAUSE;
+    }
+    return HAL_ADAPTER_TRIGGER_START;
+}
+
 AnalogSample analogSample(const HalAdapterAnalogSample& source)
 {
     AnalogSample sample;
@@ -199,6 +249,23 @@ HalAdapterDeviceHandle CAbiAdapter::deviceHandle(const SessionId& sessionId,
     return it.value();
 }
 
+HalAdapterTaskHandle CAbiAdapter::taskHandle(const SampleTaskId& taskId,
+                                             const QString& operation,
+                                             HalStatus* status) const
+{
+    const auto it = m_tasks.constFind(taskId);
+    if (it == m_tasks.constEnd()) {
+        if (status != nullptr) {
+            *status = makeError(HalStatusCode::NotFound,
+                                operation,
+                                QStringLiteral("Adapter task not found"),
+                                {}, {}, {}, {{QStringLiteral("taskId"), taskId}});
+        }
+        return nullptr;
+    }
+    return it.value().handle;
+}
+
 HalStatus CAbiAdapter::initialize(const QVariantMap& config)
 {
     const std::lock_guard<std::recursive_mutex> lock(m_apiMutex);
@@ -236,6 +303,8 @@ HalStatus CAbiAdapter::initialize(const QVariantMap& config)
                          m_loader.errorString(),
                          {}, {}, {}, {{QStringLiteral("libraryPath"), libraryPath}});
     }
+    m_taskApi = HalAdapterTaskApiV1{};
+    m_loader.loadTaskApi(host, &m_taskApi);
     if (m_api.getInfo == nullptr || m_api.initialize == nullptr ||
         m_api.shutdown == nullptr) {
         m_loader.unload();
@@ -278,6 +347,15 @@ HalStatus CAbiAdapter::shutdown()
 {
     const std::lock_guard<std::recursive_mutex> lock(m_apiMutex);
     HalStatus firstError;
+    const auto tasks = m_tasks.keys();
+    for (const SampleTaskId& taskId : tasks) {
+        const HalStatus status = stopSampleTask(taskId, OperationOptions{});
+        if (!status.ok() && firstError.ok()) firstError = status;
+    }
+    for (const SampleTaskId& taskId : tasks) {
+        const HalStatus status = closeSampleTask(taskId, OperationOptions{});
+        if (!status.ok() && firstError.ok()) firstError = status;
+    }
     const auto sessions = m_devices.keys();
     for (const SessionId& sessionId : sessions) {
         const HalStatus status = closeDevice(sessionId, OperationOptions{});
@@ -290,11 +368,13 @@ HalStatus CAbiAdapter::shutdown()
     }
     m_devices.clear();
     m_deviceIds.clear();
+    m_tasks.clear();
     m_handle = nullptr;
     m_initialized = false;
     m_adapterId.clear();
     m_config.clear();
     m_api = HalAdapterApiV1{};
+    m_taskApi = HalAdapterTaskApiV1{};
     m_loader.unload();
     return firstError;
 }
@@ -432,8 +512,12 @@ HalResult<SessionId> CAbiAdapter::openDevice(const DeviceId& deviceId,
         return result;
     }
 
-    QString physicalDeviceId = m_config.value(QStringLiteral("settings")).toMap()
-                                   .value(QStringLiteral("deviceName")).toString().trimmed();
+    QString physicalDeviceId = openOptions.value(QStringLiteral("physicalDeviceId"))
+                                   .toString().trimmed();
+    if (physicalDeviceId.isEmpty()) {
+        physicalDeviceId = m_config.value(QStringLiteral("settings")).toMap()
+                               .value(QStringLiteral("deviceName")).toString().trimmed();
+    }
     if (physicalDeviceId.isEmpty()) physicalDeviceId = deviceId;
     const QByteArray physicalId = physicalDeviceId.toUtf8();
     const QByteArray optionsJson = jsonBytes(openOptions);
@@ -462,7 +546,21 @@ HalStatus CAbiAdapter::closeDevice(const SessionId& sessionId,
                                    const OperationOptions& options)
 {
     const std::lock_guard<std::recursive_mutex> lock(m_apiMutex);
-    Q_UNUSED(options)
+    HalStatus firstError;
+    QList<SampleTaskId> taskIds;
+    for (const SampleTaskId& taskId : m_tasks.keys()) {
+        if (m_tasks.value(taskId).sessionId == sessionId) {
+            taskIds.push_back(taskId);
+        }
+    }
+    for (const SampleTaskId& taskId : taskIds) {
+        const HalStatus taskStatus = stopSampleTask(taskId, options);
+        if (!taskStatus.ok() && firstError.ok()) firstError = taskStatus;
+    }
+    for (const SampleTaskId& taskId : taskIds) {
+        const HalStatus taskStatus = closeSampleTask(taskId, options);
+        if (!taskStatus.ok() && firstError.ok()) firstError = taskStatus;
+    }
     HalStatus lookup;
     const HalAdapterDeviceHandle device = deviceHandle(
         sessionId, QStringLiteral("adapter.closeDevice"), &lookup);
@@ -475,7 +573,8 @@ HalStatus CAbiAdapter::closeDevice(const SessionId& sessionId,
     // ABI close consumes the native handle even when cleanup reports an error.
     m_devices.remove(sessionId);
     m_deviceIds.remove(sessionId);
-    return status;
+    if (!status.ok() && firstError.ok()) firstError = status;
+    return firstError;
 }
 
 HalStatus CAbiAdapter::resetDevice(const SessionId& sessionId,
@@ -603,6 +702,240 @@ HalStatus CAbiAdapter::writeAnalogBatch(const SessionId& sessionId,
                                                options.op.timeoutMs),
                              QStringLiteral("adapter.writeAnalog"),
                              m_deviceIds.value(sessionId));
+}
+
+HalResult<SampleTaskId> CAbiAdapter::createSampleTask(
+    const SessionId& sessionId,
+    const QVector<int>& physicalIndexes,
+    const SampleTaskConfig& config,
+    const OperationOptions& options)
+{
+    const std::lock_guard<std::recursive_mutex> lock(m_apiMutex);
+    HalResult<SampleTaskId> result;
+    if (m_taskApi.createTask == nullptr) {
+        result.status = unsupported(QStringLiteral("adapter.createSampleTask"));
+        return result;
+    }
+    HalStatus lookup;
+    const HalAdapterDeviceHandle device = deviceHandle(
+        sessionId, QStringLiteral("adapter.createSampleTask"), &lookup);
+    if (device == nullptr) { result.status = lookup; return result; }
+    if (physicalIndexes.isEmpty() || config.samplesPerChannel <= 0 ||
+        config.bufferSamplesPerChannel < 0 || config.sampleRateHz < 0.0) {
+        result.status = makeError(HalStatusCode::InvalidArgument,
+                                  QStringLiteral("adapter.createSampleTask"),
+                                  QStringLiteral("Invalid task channels or timing"));
+        return result;
+    }
+
+    const QByteArray clockSource = config.clock.source.toUtf8();
+    const QByteArray triggerSource = config.trigger.source.toUtf8();
+    HalAdapterTaskConfig native {};
+    native.structSize = static_cast<int>(sizeof(native));
+    native.kind = adapterTaskKind(config.kind);
+    native.mode = adapterTaskMode(config.mode);
+    native.channelIndexes = physicalIndexes.constData();
+    native.channelCount = physicalIndexes.size();
+    native.sampleRateHz = config.clock.rateHz > 0.0
+        ? config.clock.rateHz
+        : config.sampleRateHz;
+    native.samplesPerChannel = config.samplesPerChannel;
+    native.bufferSamplesPerChannel = config.bufferSamplesPerChannel;
+    native.sampleClockSource = clockSource.constData();
+    native.sampleClockEdge = adapterEdge(config.clock.edge);
+    native.triggerType = adapterTriggerType(config.trigger.type);
+    native.triggerRole = adapterTriggerRole(config.trigger.role);
+    native.triggerSource = triggerSource.constData();
+    native.triggerEdge = adapterEdge(config.trigger.edge);
+    native.triggerLevel = config.trigger.level;
+    native.counterMode = config.counter.mode == CounterMode::PulseFrequency
+        ? HAL_ADAPTER_COUNTER_PULSE_FREQUENCY
+        : HAL_ADAPTER_COUNTER_COUNT_EDGES;
+    native.counterMinValue = config.counter.minValue;
+    native.counterMaxValue = config.counter.maxValue;
+    native.counterFrequencyHz = config.counter.frequencyHz;
+    native.counterDutyCycle = config.counter.dutyCycle;
+    native.counterEdge = adapterEdge(config.counter.edge);
+    native.referencePretriggerSamples = config.trigger.referencePretriggerSamples;
+
+    HalAdapterTaskHandle task = nullptr;
+    result.status = fromAdapterStatus(m_taskApi.createTask(device, &native, &task),
+                                      QStringLiteral("adapter.createSampleTask"),
+                                      m_deviceIds.value(sessionId));
+    if (!result.ok()) return result;
+    if (task == nullptr) {
+        result.status = makeError(HalStatusCode::AdapterError,
+                                  QStringLiteral("adapter.createSampleTask"),
+                                  QStringLiteral("Adapter returned a null task handle"));
+        return result;
+    }
+    result.value = QStringLiteral("cabi-task:%1:%2")
+                       .arg(m_adapterId)
+                       .arg(++m_taskCounter);
+    m_tasks.insert(result.value,
+                   NativeTask{task, sessionId, config, physicalIndexes.size()});
+    Q_UNUSED(options)
+    return result;
+}
+
+HalStatus CAbiAdapter::startSampleTask(const SampleTaskId& taskId,
+                                       const OperationOptions& options)
+{
+    const std::lock_guard<std::recursive_mutex> lock(m_apiMutex);
+    if (m_taskApi.startTask == nullptr) {
+        return unsupported(QStringLiteral("adapter.startSampleTask"));
+    }
+    HalStatus lookup;
+    const HalAdapterTaskHandle task = taskHandle(
+        taskId, QStringLiteral("adapter.startSampleTask"), &lookup);
+    if (task == nullptr) return lookup;
+    return fromAdapterStatus(m_taskApi.startTask(task, options.timeoutMs),
+                             QStringLiteral("adapter.startSampleTask"));
+}
+
+HalResult<SampleTaskBlock> CAbiAdapter::readSampleTask(
+    const SampleTaskId& taskId,
+    int maxSamplesPerChannel,
+    const OperationOptions& options)
+{
+    const std::lock_guard<std::recursive_mutex> lock(m_apiMutex);
+    HalResult<SampleTaskBlock> result;
+    if (m_taskApi.readTask == nullptr) {
+        result.status = unsupported(QStringLiteral("adapter.readSampleTask"));
+        return result;
+    }
+    HalStatus lookup;
+    const HalAdapterTaskHandle task = taskHandle(
+        taskId, QStringLiteral("adapter.readSampleTask"), &lookup);
+    if (task == nullptr) { result.status = lookup; return result; }
+    if (maxSamplesPerChannel <= 0) {
+        result.status = makeError(HalStatusCode::InvalidArgument,
+                                  QStringLiteral("adapter.readSampleTask"),
+                                  QStringLiteral("maxSamplesPerChannel must be positive"));
+        return result;
+    }
+    const NativeTask nativeTask = m_tasks.value(taskId);
+    const bool analog = nativeTask.config.kind == SampleTaskKind::AnalogInput ||
+                        nativeTask.config.kind == SampleTaskKind::AnalogOutput;
+    const int capacity = nativeTask.channelCount * maxSamplesPerChannel;
+    result.value.channelCount = nativeTask.channelCount;
+    result.value.samplesPerChannel = maxSamplesPerChannel;
+    result.value.sampleType = analog ? SampleValueType::Float64
+                                     : SampleValueType::UInt32;
+    if (analog) result.value.analogValues.resize(capacity);
+    else result.value.integerValues.resize(capacity);
+
+    HalAdapterTaskBuffer buffer {};
+    buffer.structSize = static_cast<int>(sizeof(buffer));
+    buffer.sampleType = analog ? HAL_ADAPTER_SAMPLE_FLOAT64
+                               : HAL_ADAPTER_SAMPLE_UINT32;
+    buffer.data = analog
+        ? static_cast<void*>(result.value.analogValues.data())
+        : static_cast<void*>(result.value.integerValues.data());
+    buffer.capacityValues = capacity;
+    buffer.channelCount = nativeTask.channelCount;
+    buffer.samplesPerChannel = maxSamplesPerChannel;
+    result.status = fromAdapterStatus(m_taskApi.readTask(task, &buffer, options.timeoutMs),
+                                      QStringLiteral("adapter.readSampleTask"));
+    if (!result.ok()) return result;
+    const int values = qMax(0, buffer.channelCount * buffer.samplesPerChannel);
+    result.value.channelCount = buffer.channelCount;
+    result.value.samplesPerChannel = buffer.samplesPerChannel;
+    result.value.timestampUs = buffer.timestampUs;
+    result.value.metadata.insert(QStringLiteral("statusFlags"), buffer.statusFlags);
+    if (analog) result.value.analogValues.resize(values);
+    else result.value.integerValues.resize(values);
+    return result;
+}
+
+HalStatus CAbiAdapter::writeSampleTask(const SampleTaskId& taskId,
+                                       const SampleTaskBlock& block,
+                                       const OperationOptions& options)
+{
+    const std::lock_guard<std::recursive_mutex> lock(m_apiMutex);
+    if (m_taskApi.writeTask == nullptr) {
+        return unsupported(QStringLiteral("adapter.writeSampleTask"));
+    }
+    HalStatus lookup;
+    const HalAdapterTaskHandle task = taskHandle(
+        taskId, QStringLiteral("adapter.writeSampleTask"), &lookup);
+    if (task == nullptr) return lookup;
+    const bool analog = block.sampleType == SampleValueType::Float64;
+    HalAdapterTaskBuffer buffer {};
+    buffer.structSize = static_cast<int>(sizeof(buffer));
+    buffer.sampleType = analog ? HAL_ADAPTER_SAMPLE_FLOAT64
+                               : HAL_ADAPTER_SAMPLE_UINT32;
+    buffer.data = analog
+        ? static_cast<void*>(const_cast<double*>(block.analogValues.constData()))
+        : static_cast<void*>(const_cast<quint32*>(block.integerValues.constData()));
+    buffer.capacityValues = analog ? block.analogValues.size()
+                                   : block.integerValues.size();
+    buffer.channelCount = block.channelCount;
+    buffer.samplesPerChannel = block.samplesPerChannel;
+    buffer.timestampUs = block.timestampUs;
+    return fromAdapterStatus(m_taskApi.writeTask(task, &buffer, 0, options.timeoutMs),
+                             QStringLiteral("adapter.writeSampleTask"));
+}
+
+HalResult<SampleTaskStatus> CAbiAdapter::sampleTaskStatus(
+    const SampleTaskId& taskId,
+    const OperationOptions& options)
+{
+    const std::lock_guard<std::recursive_mutex> lock(m_apiMutex);
+    HalResult<SampleTaskStatus> result;
+    if (m_taskApi.getTaskStatus == nullptr) {
+        result.status = unsupported(QStringLiteral("adapter.sampleTaskStatus"));
+        return result;
+    }
+    HalStatus lookup;
+    const HalAdapterTaskHandle task = taskHandle(
+        taskId, QStringLiteral("adapter.sampleTaskStatus"), &lookup);
+    if (task == nullptr) { result.status = lookup; return result; }
+    HalAdapterTaskStatusInfo native {};
+    result.status = fromAdapterStatus(
+        m_taskApi.getTaskStatus(task, &native, options.timeoutMs),
+        QStringLiteral("adapter.sampleTaskStatus"));
+    if (!result.ok()) return result;
+    result.value.started = native.started != 0;
+    result.value.done = native.done != 0;
+    result.value.availableSamplesPerChannel = native.availableSamplesPerChannel;
+    result.value.totalSamplesPerChannel = native.totalSamplesPerChannel;
+    result.value.overflowed = native.overflowed != 0;
+    result.value.underflowed = native.underflowed != 0;
+    return result;
+}
+
+HalStatus CAbiAdapter::stopSampleTask(const SampleTaskId& taskId,
+                                      const OperationOptions& options)
+{
+    const std::lock_guard<std::recursive_mutex> lock(m_apiMutex);
+    if (m_taskApi.stopTask == nullptr) {
+        return unsupported(QStringLiteral("adapter.stopSampleTask"));
+    }
+    HalStatus lookup;
+    const HalAdapterTaskHandle task = taskHandle(
+        taskId, QStringLiteral("adapter.stopSampleTask"), &lookup);
+    if (task == nullptr) return lookup;
+    return fromAdapterStatus(m_taskApi.stopTask(task, options.timeoutMs),
+                             QStringLiteral("adapter.stopSampleTask"));
+}
+
+HalStatus CAbiAdapter::closeSampleTask(const SampleTaskId& taskId,
+                                       const OperationOptions& options)
+{
+    const std::lock_guard<std::recursive_mutex> lock(m_apiMutex);
+    Q_UNUSED(options)
+    if (m_taskApi.closeTask == nullptr) {
+        return unsupported(QStringLiteral("adapter.closeSampleTask"));
+    }
+    HalStatus lookup;
+    const HalAdapterTaskHandle task = taskHandle(
+        taskId, QStringLiteral("adapter.closeSampleTask"), &lookup);
+    if (task == nullptr) return lookup;
+    const HalStatus status = fromAdapterStatus(m_taskApi.closeTask(task),
+                                               QStringLiteral("adapter.closeSampleTask"));
+    m_tasks.remove(taskId);
+    return status;
 }
 
 HalResult<DigitalSample> CAbiAdapter::readDigital(const SessionId& sessionId,
