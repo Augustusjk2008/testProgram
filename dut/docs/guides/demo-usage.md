@@ -421,7 +421,7 @@ DH 示例只调用 `read_feedback()`，不会调用 `fire()` 或
 | ADS1258 | 读取/写回完整配置、清除错误计数、读取数据快照 | 恢复配置；错误计数无法恢复 |
 | DIDO | 翻转 DO0、读取输入输出快照 | 恢复全部 16 路输出 |
 | DH | 配置时基、保持 CH2 脉宽、执行主发动机2五步使能与点火、读取反馈 | 反向关闭使能链并恢复时基、模式和 CH2 脉宽；点火结果无法恢复 |
-| COM | COM1 配置内部回环和 Level 中断、清错、使能接收、查询 event fd 和 MTU | 校验收发 payload 后恢复配置；正常流程不执行锁存式软件复位 |
+| COM | COM1 配置内部回环和 Level 中断、清错、使能接收、查询 event fd 和 MTU；Adapter 预检后连续校验 16 个唯一 payload | 每轮严格校验长度和全部字节，跑满后恢复配置；正常流程不执行锁存式软件复位 |
 | DDS Adapter | 通过 `ComExternalEndpoint` 调用 `send/receive/mtu` | 与 COM1 共用恢复流程 |
 | XDMA DMA | DMA0 C2H 备份 64 字节、H2C 写测试图案、C2H 回读校验 | H2C 写回原 64 字节 |
 | CPU SPI Flash | `/dev/spidev0.0` 使用 `13h + 四字节地址` 备份 4 KiB、子扇区擦除、写入并读回 16 字节测试图样 | 再次擦除、按 256 B 页恢复备份并完整校验 |
@@ -429,6 +429,13 @@ DH 示例只调用 `read_feedback()`，不会调用 `fire()` 或
 `ComExternalEndpoint` 是 `ExternalEndpointAdapter` 的 COM 语义别名，二者不重复
 演示。`CallbackExternalEndpoint` 提供相同的 `ExternalEndpoint` 契约，只是将后端
 换成三个回调，因此也不重复调用。
+
+COM1 多轮回环固定发送 16 个不同的 32 字节 payload，不做失败重试。每轮日志包含轮次；
+不匹配时还包含实际长度、首个差异及收发十六进制。测试会继续完成余下轮次，但任一失败
+都会保留到最终结果。通过摘要必须为 `16/16，odd=8/8，even=8/8`；严格奇偶交替失败是
+“一个 RX bank 返回陈旧数据”的特征判据。该判据只覆盖 COM1 内部回环，不能代替 COM3
+外部线缆和产品协议验收。`hw_run` 还执行其他能力组，因此整套命令可因 DH、SPI 等独立
+故障返回非零；应以 COM1 分组摘要判断本项结果。
 
 全能力区段固定使用以下代表对象：
 

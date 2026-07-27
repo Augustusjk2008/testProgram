@@ -2,17 +2,6 @@
   "schemaVersion": 1,
   "actions": [
     {
-      "id": "test_only",
-      "label": "单独测试",
-      "icon": "TestTube2",
-      "windowsCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\hwtest.ps1 test -SkipBuild",
-      "linuxCommand": "",
-      "macosCommand": "",
-      "cwd": ".",
-      "confirm": false,
-      "enabled": true
-    },
-    {
       "id": "start_tui",
       "label": "启动 TUI",
       "icon": "Terminal",
@@ -64,6 +53,17 @@
       "linuxCommand": "",
       "macosCommand": "",
       "cwd": "./dut/",
+      "confirm": false,
+      "enabled": true
+    },
+    {
+      "id": "codegraph",
+      "label": "同步",
+      "icon": "Upload",
+      "windowsCommand": "codegraph sync",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
       "confirm": false,
       "enabled": true
     }

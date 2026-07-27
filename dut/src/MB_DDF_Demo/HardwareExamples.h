@@ -2,10 +2,12 @@
 
 #include "MB_DDF_Demo/DemoResult.h"
 
+#include <cstddef>
 #include <cstdint>
 
 #ifdef MB_DDF_TEST_BUILD
 namespace MB_DDF::HW {
+class IByteEndpoint;
 class ISpiTransport;
 }
 #endif
@@ -31,6 +33,10 @@ DemoResult run_hw_full_capability_example();
 
 #ifdef MB_DDF_TEST_BUILD
 namespace TestHooks {
+/// 仅供单元测试注入字节端点，验证 COM1 多轮回环及陈旧 RX bank 判据。
+bool run_com_loopback_iterations(HW::IByteEndpoint& endpoint,
+                                 size_t iteration_count,
+                                 uint32_t timeout_us);
 /// 仅供目标板单元测试注入内存 SPI Transport，覆盖完整备份/擦写/恢复状态机。
 bool run_spi_flash_workflow(HW::ISpiTransport& transport, uint32_t address);
 }

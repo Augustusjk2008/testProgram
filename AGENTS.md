@@ -103,3 +103,9 @@ ctest --test-dir build_vs -C Release --output-on-failure
 - 宿主工程与 DUT 使用独立构建树和验证入口。进入 `dut/` 后按局部 `AGENTS.md` 与 `README.md` 使用 `build.ps1`、`debug.ps1`、`tests/test-dds-only.ps1`、`tests/test-all.ps1` 和 `tests/test-deploy.ps1`。
 - DUT C++20 二进制面向 AArch64 目标板；Windows PyQt5/QtSerialPort 用例按 DUT 局部规则作为主机侧测试入口。
 - DUT 板端结果记录 AArch64 工具链、sysroot、部署目标与运行结果，并作为独立的板端验证证据归档。DIDO、DH、舵控和 SPI 写入在隔离且明确授权的目标板环境执行。
+- 
+## CodeGraph
+
+- 跨模块修改、架构分析、重构、调用链或影响面分析先用可用的 CodeGraph 工具；仅对未覆盖或将要修改的具体细节读源码。
+- CodeGraph 不可用时直接使用 `rg` 和源码阅读；变更后以测试、日志和 `git diff` 验证。
+- 大改动后运行 `codegraph sync .` 刷新索引。

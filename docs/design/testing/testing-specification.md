@@ -81,6 +81,15 @@
 - 随后经真实 `hwtest_web` WebSocket 路径执行 `load -> prepare -> pc_periodic -> quit`，以 `intervalMs=150`、`maxCycles=6` 完成六轮，最终为 `finished/Pass/Ok`、`cycleIndex=6`、`sampleCount=6`、`attempts=1`，样本序号为 `4660..4665`。六轮共用一次串口打开和关闭，宿主记录 12 次写、12 次读和 6 个成功结果；板端 event 2 从 3 增至 15，并记录 6 次陈旧 bank 请求。再执行 4 个独立单次任务均为 `Pass/Ok`，event 2 从 15 增至 23。测试后 `quit` 正常关闭后端，板端进程经 `SIGTERM` 停止，18765 无监听且无遗留 `hwtest_web`/`MB_DDF_v2` 进程。
 - 该证据确认宿主的任务范围连接复用和精确一次重发能够覆盖当前实机故障，但没有修复 FPGA COM3 双 RX bank 本身；若错误响应特征变化、连续两个 bank 都不可用或目标不产生中断，仍会按原有协议错误或超时失败，不能据此宣称底层硬件缺陷已消除。
 
+### 2.4 2026-07-27 COM1 双 RX bank 多轮回环门禁
+
+- DUT Demo 的 COM1 全能力流程新增 16 轮内部回环。每轮使用不同的 32 字节 payload，轮次编码在偏移 13；同一次 `XdmaTransport` 打开、同一份 Level 中断/内部回环配置下依次执行发送和接收，不重试，并逐轮严格比较长度和全部字节。失败日志保留轮次、实际长度、首个差异和收发十六进制，任一失败都会使能力组失败，但测试仍跑完余下轮次以观察奇偶分布；通过条件固定为 `16/16`、奇数 `8/8`、偶数 `8/8`。
+- AArch64 单元回归 `HwComLoopbackWorkflow*` 在 `root@192.168.1.29` 上执行两种内存端点模型且共 2 项通过。双 bank 都返回当前帧的模型为 `16/16`；一路固定返回首轮旧帧的模型稳定得到 `8/16`、奇数 `8/8`、偶数 `0/8`，工作流正确返回失败并继续完成全部 16 轮。该回归不访问 FPGA，只证明门禁能够识别交替陈旧 bank，不能作为真机缺陷证据。
+- 同一板端随后执行完整 `MB_DDF_HW_Tests`：160 项中 157 项通过、2 项 SPI Flash 真机用例按条件跳过、1 项既有 `SystemTestProviderTest.ReadsTargetScmiCpuAndXdmaPcieSources` 失败；失败原因是当前目标不存在 `/sys/kernel/debug/clk/scmi_clk_cpul/clk_rate`，与 COM 回环改动无关。不得把该次完整目标记录为全通过。
+- 随后按用户明确授权执行 `dut/debug.bat hw_run`，使用 Arm GNU `aarch64-none-linux-gnu 11.3 rel1` 构建 Release Demo 并部署到同一目标板。板端与本地二进制 SHA-256 均为 `31a6a2cbf9e23db199f770164484ec992790aa299449fbfc8486ba2589f099ae`。COM1 Adapter 预检通过，16 轮真实内部回环全部通过，摘要为 `16/16`、奇数 `8/8`、偶数 `8/8`，错误状态读取和原 COM 配置恢复也成功。
+- 本次 COM1 结果没有复现双 bank 缺陷。它表明当前 bitstream 的 COM1 内部回环路径通过修复门禁；不能据此宣称 2.3 节已确认的 COM3 外部 RX 缺陷也已修复，因为通道和接收来源均不同。要关闭 COM3 缺陷，仍需在 COM3 外部线缆路径以逐轮唯一请求复测，并确认不再出现奇偶交替的旧序号或旧 payload。
+- `hw_run` 整体退出码为 1，独立原因是 DH 主发动机 2 完成回告停留在 `0xFFFF` 并超时，以及 `/dev/spidev0.0` 的 Status/两个 Die Flag/JEDEC ID 均读到 `0xFF`；SPI 在地址读取和擦写前中止。该退出码不是 COM1 回环失败。运行结束后远端无 `MB_DDF_v2` 或 `gdbserver` 遗留进程。
+
 ## 3. 五级证据模型
 
 下表按证据强度递增。低级证据不能替代高级证据，也不得把未实现级别写成已验证能力。

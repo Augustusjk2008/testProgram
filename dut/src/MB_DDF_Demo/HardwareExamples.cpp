@@ -14,6 +14,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifdef MB_DDF_DEMO_WITH_HARDWARE
 #include "MB_DDF_HW/Device/Ad7606Device.h"
@@ -964,6 +965,158 @@ bool exercise_dh(const std::string& device_path) {
     return passed && restored;
 }
 
+constexpr size_t kComLoopbackIterationCount = 16;
+constexpr size_t kComLoopbackPayloadSize = 32;
+constexpr size_t kComReceiveBufferSize = 65536;
+
+std::array<uint8_t, kComLoopbackPayloadSize> make_com_loopback_payload(size_t iteration) {
+    std::array<uint8_t, kComLoopbackPayloadSize> payload{};
+    constexpr std::array<uint8_t, 13> marker = {
+        0x4D, 0x42, 0x5F, 0x44, 0x44, 0x46, 0x5F, 0x52, 0x58, 0x5F, 0x42, 0x41, 0x4E};
+    std::copy(marker.begin(), marker.end(), payload.begin());
+
+    const uint32_t round = static_cast<uint32_t>(iteration + 1);
+    payload[13] = static_cast<uint8_t>(round & 0xFFu);
+    payload[14] = static_cast<uint8_t>((round >> 8u) & 0xFFu);
+    payload[15] = static_cast<uint8_t>(~round & 0xFFu);
+    for (size_t index = 16; index < payload.size(); ++index) {
+        payload[index] = static_cast<uint8_t>(
+            0xA5u ^ ((round * 0x3Du) & 0xFFu) ^ ((index * 0x17u) & 0xFFu));
+    }
+    return payload;
+}
+
+std::string format_payload_hex(const uint8_t* data, size_t size, size_t limit = 64) {
+    std::ostringstream stream;
+    stream << std::hex << std::uppercase << std::setfill('0');
+    const size_t displayed = std::min(size, limit);
+    for (size_t index = 0; index < displayed; ++index) {
+        if (index != 0) {
+            stream << ' ';
+        }
+        stream << std::setw(2) << static_cast<unsigned>(data[index]);
+    }
+    if (displayed < size) {
+        stream << " ... (" << std::dec << size << " bytes)";
+    }
+    return stream.str();
+}
+
+bool verify_com_loopback_iterations(HW::IByteEndpoint& endpoint,
+                                    size_t iteration_count,
+                                    uint32_t timeout_us) {
+    if (iteration_count == 0) {
+        LOG_ERROR << "[DEMO] COM1 RX bank loopback requires at least one iteration";
+        return false;
+    }
+    if (endpoint.mtu() < kComLoopbackPayloadSize) {
+        LOG_ERROR << "[DEMO] COM1 RX bank loopback payload exceeds endpoint MTU: payload="
+                  << kComLoopbackPayloadSize << ", mtu=" << endpoint.mtu();
+        return false;
+    }
+
+    std::vector<uint8_t> received(kComReceiveBufferSize);
+    std::array<size_t, 2> parity_totals{};
+    std::array<size_t, 2> parity_passed{};
+    size_t passed_rounds = 0;
+
+    LOG_INFO << "[DEMO] COM1 dual RX bank loopback started: iterations=" << iteration_count
+             << ", payload_bytes=" << kComLoopbackPayloadSize
+             << ", every payload is unique and retries are disabled";
+    for (size_t iteration = 0; iteration < iteration_count; ++iteration) {
+        const size_t round = iteration + 1;
+        const size_t parity = iteration % 2;
+        ++parity_totals[parity];
+        const auto payload = make_com_loopback_payload(iteration);
+        std::fill(received.begin(), received.end(), uint8_t{0});
+
+        const auto sent = endpoint.send({payload.data(), payload.size()});
+        if (!sent) {
+            LOG_ERROR << "[DEMO] COM1 RX bank round " << round << "/" << iteration_count
+                      << " send failed: " << format_status(sent.status())
+                      << ", expected="
+                      << format_payload_hex(payload.data(), payload.size());
+            continue;
+        }
+        if (sent.value() != payload.size()) {
+            LOG_ERROR << "[DEMO] COM1 RX bank round " << round << "/" << iteration_count
+                      << " partial send: expected_bytes=" << payload.size()
+                      << ", sent_bytes=" << sent.value();
+            continue;
+        }
+
+        const auto result = endpoint.receive(
+            {received.data(), received.size()}, HW::Timeout::after_us(timeout_us));
+        if (!result) {
+            LOG_ERROR << "[DEMO] COM1 RX bank round " << round << "/" << iteration_count
+                      << " receive failed: " << format_status(result.status())
+                      << ", expected="
+                      << format_payload_hex(payload.data(), payload.size());
+            continue;
+        }
+
+        const size_t received_size = result.value();
+        const size_t common_size = std::min(payload.size(), received_size);
+        size_t first_difference = common_size;
+        for (size_t index = 0; index < common_size; ++index) {
+            if (payload[index] != received[index]) {
+                first_difference = index;
+                break;
+            }
+        }
+        const bool matched = received_size == payload.size() &&
+                             first_difference == payload.size();
+        if (!matched) {
+            std::ostringstream difference;
+            if (first_difference < common_size) {
+                difference << "offset=" << first_difference
+                           << ", expected=" << hex_value(payload[first_difference], 2)
+                           << ", actual=" << hex_value(received[first_difference], 2);
+            } else if (received_size < payload.size()) {
+                difference << "offset=" << received_size << ", actual frame ended";
+            } else {
+                difference << "offset=" << payload.size() << ", unexpected trailing data";
+            }
+            LOG_ERROR << "[DEMO] COM1 RX bank round " << round << "/" << iteration_count
+                      << " mismatch: expected_bytes=" << payload.size()
+                      << ", actual_bytes=" << received_size
+                      << ", first_difference=" << difference.str()
+                      << ", expected="
+                      << format_payload_hex(payload.data(), payload.size())
+                      << ", actual="
+                      << format_payload_hex(received.data(), received_size);
+            continue;
+        }
+
+        ++passed_rounds;
+        ++parity_passed[parity];
+        LOG_INFO << "[DEMO] COM1 RX bank round " << round << "/" << iteration_count
+                 << " passed, bytes=" << received_size;
+    }
+
+    const bool passed = passed_rounds == iteration_count;
+    if (passed) {
+        LOG_INFO << "[DEMO] COM1 dual RX bank loopback passed: " << passed_rounds << "/"
+                 << iteration_count << ", odd=" << parity_passed[0] << "/"
+                 << parity_totals[0] << ", even=" << parity_passed[1] << "/"
+                 << parity_totals[1];
+        return true;
+    }
+
+    LOG_ERROR << "[DEMO] COM1 dual RX bank loopback failed: " << passed_rounds << "/"
+              << iteration_count << ", odd=" << parity_passed[0] << "/"
+              << parity_totals[0] << ", even=" << parity_passed[1] << "/"
+              << parity_totals[1];
+    const bool alternating_failure =
+        (parity_passed[0] == parity_totals[0] && parity_passed[1] == 0) ||
+        (parity_passed[1] == parity_totals[1] && parity_passed[0] == 0);
+    if (alternating_failure) {
+        LOG_ERROR << "[DEMO] COM1 failures alternate by round parity; this is consistent with "
+                     "one of the two FPGA RX banks returning stale data";
+    }
+    return false;
+}
+
 /**
  * @brief 通过 COM1 内部回环演示 COM Device、event fd 和 DDS Adapter。
  */
@@ -1031,6 +1184,8 @@ bool exercise_com_and_adapter(const std::string& device_path) {
     passed &= received_result && received_result.value() == payload.size() &&
               std::memcmp(payload.data(), received.data(), payload.size()) == 0;
 #endif
+    passed &= verify_com_loopback_iterations(
+        device, kComLoopbackIterationCount, 1000000);
     passed &= require_hardware_result(device.read_error_status(), "COM1 read error status");
 
     // reset 和清错无法恢复瞬时状态，但持久 COM 配置必须恢复。
@@ -1480,6 +1635,12 @@ bool exercise_spi_flash(HW::ISpiTransport* injected_transport = nullptr,
 } // namespace
 
 #if defined(MB_DDF_DEMO_WITH_HARDWARE) && defined(MB_DDF_TEST_BUILD)
+bool TestHooks::run_com_loopback_iterations(HW::IByteEndpoint& endpoint,
+                                            size_t iteration_count,
+                                            uint32_t timeout_us) {
+    return verify_com_loopback_iterations(endpoint, iteration_count, timeout_us);
+}
+
 bool TestHooks::run_spi_flash_workflow(HW::ISpiTransport& transport,
                                        uint32_t address) {
     return exercise_spi_flash(&transport, address);

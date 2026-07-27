@@ -104,6 +104,7 @@ if(ENABLE_HW_UNIT_TESTS AND TARGET MB_DDF_HW)
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_dido_device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_dh_controller.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_com_device.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_com_loopback_workflow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_flash_device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_spi_flash_device.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_spi_flash_workflow.cpp
