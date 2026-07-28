@@ -15,7 +15,7 @@
 ```powershell
 Set-Location front
 Copy-Item .env.example .env.local
-npm install
+npm ci
 npm run dev
 ```
 
@@ -28,7 +28,7 @@ npm run dev
 - 全局运行控制条贯穿所有页面，支持单次和 PC 周期测试。PC 周期只发送一次 `start`，由 BIZ 按“上一轮完成 → 等待轮间隔 → 再发指令并采反馈”调度。
 - 选择 `mbddf.di_read` 后，首页按后端 descriptor 紧凑显示 16 路 DUT DI 激励开关与 `di_state[0]` 回显状态，并保留只读 `di_state[1]` 诊断位图；快速操作会合并并串行发送带 revision 的请求，失败时回滚到后端权威状态，且可一键恢复安全态。
 - 设备主动持续回告保留独立运行语义，只有当前测试配置声明支持时才显示对应模式；当前 SYSTEM_STATUS 不支持该模式，后端算法返回 `CapabilityUnsupported`。
-- 自动发现样本中的数值字段，允许全部同图、每项一图或自定义图组；横轴固定为采样时间，配置按 SYSTEM_STATUS 通道保存在 `localStorage`。
+- 自动发现样本中的数值字段，允许全部同图、每项一图或自定义图组；横轴固定为采样时间，曲线配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存在 `localStorage`。
 - uPlot Canvas 绘图；每通道最多保留 50,000 点，样本最多 10 Hz 批量提交到 React/图表，绘制前按像素宽度做 min/max 降采样。诊断事件最多保留 500 条。
 
 ## 验证

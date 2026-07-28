@@ -214,6 +214,16 @@ describe('HwtestClient protocol boundary', () => {
         stimulus: digitalStimulusPayload({ revision: Number.MAX_SAFE_INTEGER + 1 }),
       },
       {
+        name: 'DUT bit outside WebSocket v1 range',
+        stimulus: digitalStimulusPayload({
+          switches: [{ switchId: 'di16', dutBit: 16, label: 'DI 16', activeLevel: 'High' }],
+        }),
+      },
+      {
+        name: 'mask outside WebSocket v1 range',
+        stimulus: digitalStimulusPayload({ appliedMask: 0x1_0000 }),
+      },
+      {
         name: 'duplicate switch id',
         stimulus: digitalStimulusPayload({
           switches: [

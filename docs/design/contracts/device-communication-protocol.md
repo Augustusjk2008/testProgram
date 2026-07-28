@@ -233,7 +233,7 @@ DUT 经 COM3 发送 128 字节 `imu_stream_feedback_response`：B9 为状态、B
 
 宿主的 `HalControlTransport` 为该模式提供分离的 `writeFrame()`/`readFrame()`。执行器发送 START 并校验 ACK 后持续读取 `09/01`，每帧完整解码并上报样本；`requestStop()` 只设置原子停止标志，worker 在最长 20 ms 读超时后发送 STOP 并等待 ACK。等待 STOP ACK 时到达的有效反馈仍会上报。同一会话 START/STOP 各最多发送一次；STOP 写失败、ACK 超时、解析失败、序号不匹配或远端错误只使本次结果失败，`finishRun()` 只关闭传输，不再补发 STOP。不允许 BIZ 以 `pc_periodic` 重复 START。停止时零有效帧判为 `SampleFail`，一帧及以上通过；传输、CRC、命令、ACK 序号或远端错误保持类型化失败。
 
-`mbddf.di_read` 的 `executionConfig.digitalStimulus` 是算法层消费的执行配置，不进入 CSV 或产品帧。`DiStimulusController` 要求 1..64 个通道、唯一且非空的 `switchId`/`resourceId`、唯一的 0..63 `dutBit`、合法的 `High`/`Low` `activeLevel` 与 0..60000 ms 的 `settlingMs`。设置时必须带与当前状态精确相等的 revision；陈旧 revision 返回既有 HAL `DataMismatch`，未知 `switchId` 返回 `NotFound`，二者都不得触发输出写入。每次成功设置或复位都为全部已配置资源构造完整 `writeDoBatch()` 映射；复位的逻辑 mask 为 0，低有效通道仍写其 inactive 物理电平。写成功后才递增 revision、更新 applied mask 和写入时间，写失败保留已应用状态并记录 HAL 错误。
+`mbddf.di_read` 的 `executionConfig.digitalStimulus` 是算法层消费的执行配置，不进入 CSV 或产品帧。`DiStimulusController` 要求 1..64 个通道、唯一且非空的 `switchId`/`resourceId`、唯一的 0..63 `dutBit`、合法的 `High`/`Low` `activeLevel` 与 0..60000 ms 的 `settlingMs`。设置时必须带与当前状态精确相等的 revision；陈旧 revision 返回既有 HAL `DataMismatch`，未知 `switchId` 返回 `NotFound`，二者都不得触发输出写入。每次成功设置或复位都为全部已配置资源构造完整 `writeDoBatch()` 映射；复位的逻辑 mask 为 0，低有效通道仍写其 inactive 物理电平。写成功后才递增 revision、更新 applied mask 和写入时间，写失败保留已应用状态并记录 HAL 错误。算法内部的 64 路能力不外推到 WebSocket v1；该 JSON 协议只公开 `dutBit` 0..15，超出范围时投影为不可用。
 
 当前 DI 配置声明 16 路 `DUT_DI*_STIM`、`di0` 至 `di15` 以及 `di_state[0]`/`di_state[1]` 展示字段。控制器加载时还要求每个刺激资源属于配置的 stimulus 设备、是数字输出，且 HAL `safeState` 等于该通道的逻辑 inactive 电平；不一致会以 `stimulus_safe_state_mismatch` 拒绝，尚未打开硬件。刺激与 DUT 回读不一致不是该测试的产品判定条件；产品判定仍只依据 `status` 和 `err_code`。配置中的 `ni.daqmx` 对应可选的 PXI-6259 原生 NI-DAQmx Adapter：Router 用驱动级配置初始化 Vendor Adapter，HAL 的 `openDevice()` 再把单设备身份、该设备全部已配置资源和 safe state 放入版本化 open projection；动态 fixture 回归锁定了两阶段 JSON 边界。MAX 名称位于 `hardware.devices[].properties.vendor.ni.deviceName`（当前模板为 `PXI1Slot2`），`serialNumber=CONFIGURE_ME` 会在投影解析时阻止误开。任务档案可随投影携带，但当前产品协议和 `DiStimulusController` 不创建 NI 采样任务。Fake 覆盖不能替代真实 I/O 验收；必须填入真实 DLL/身份并在隔离台架验收，不能由此推导真实输出或真实回读已验证。
 
@@ -286,7 +286,7 @@ CAN/CANFD 的帧边界由总线提供，但 payload 内的 MB_DDF 字段、CRC�
 | 算法/协议 | 定义名、命令键、序号、候选帧长度、CRC、字段诊断、判定输入 |
 | HAL | `ResourceId`、连接、原始读写、deadline、耗时、安全态和归一传输错误 |
 
-两侧复用同一 `requestId`。原始帧默认只记录长度、摘要和受限十六进制片段；完整原始帧需显式调试开关，并遵循数据敏感性要求。结构化字段主定义见 [日志接口协议](log-interface-protocol.md)。
+两侧复用同一 `requestId`。`[当前实现]` 算法日志对请求和响应分别记录 `FrameLength`、`FrameSha256` 与最多 16 字节的 `FrameHexPreview`；只有 `runtimeConfig.tags.logFullFrames=true` 时才附加完整 `FrameHex`。结果 `rawData` 和样本投影属于独立诊断面，不等同于日志 sink。结构化字段主定义见 [日志接口协议](log-interface-protocol.md)。
 
 ---
 

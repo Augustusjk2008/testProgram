@@ -147,7 +147,7 @@ function emptyDigitalStimulus(): DigitalStimulusSnapshot {
 function parseDigitalStimulus(value: JsonObject): DigitalStimulusSnapshot {
   try {
     const switchesValue = value.switches
-    if (!Array.isArray(switchesValue) || switchesValue.length > 64) {
+    if (!Array.isArray(switchesValue) || switchesValue.length > 16) {
       throw new Error('switches')
     }
 
@@ -156,7 +156,7 @@ function parseDigitalStimulus(value: JsonObject): DigitalStimulusSnapshot {
     const switches: DigitalSwitchDescriptor[] = switchesValue.map((item) => {
       if (!isObject(item)) throw new Error('switch')
       const switchId = requiredNonEmptyString(item, 'switchId')
-      const dutBit = requiredSafeInteger(item, 'dutBit', 0, 63)
+      const dutBit = requiredSafeInteger(item, 'dutBit', 0, 15)
       const label = requiredNonEmptyString(item, 'label')
       const activeLevel = requiredDigitalLevel(item, 'activeLevel')
       if (switchIds.has(switchId) || dutBits.has(dutBit)) {
@@ -171,7 +171,7 @@ function parseDigitalStimulus(value: JsonObject): DigitalStimulusSnapshot {
       available: requiredBoolean(value, 'available'),
       configured: requiredBoolean(value, 'configured'),
       switches,
-      appliedMask: requiredSafeInteger(value, 'appliedMask'),
+      appliedMask: requiredSafeInteger(value, 'appliedMask', 0, 0xFFFF),
       revision: requiredSafeInteger(value, 'revision'),
       lastWriteTimestampUs: requiredSafeInteger(value, 'lastWriteTimestampUs'),
       settlingMs: requiredSafeInteger(value, 'settlingMs', 0, 60_000),

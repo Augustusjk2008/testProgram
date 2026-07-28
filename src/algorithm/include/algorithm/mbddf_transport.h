@@ -32,6 +32,14 @@ class IByteTransport {
 public:
     virtual ~IByteTransport() = default;
 
+    // Associates subsequent physical I/O with the BIZ operation chain. Test
+    // transports may ignore it; HAL-backed transports copy it to every
+    // OperationOptions instance.
+    virtual void setRequestId(const hwtest::hal::RequestId& requestId)
+    {
+        Q_UNUSED(requestId)
+    }
+
     // The simulator transports ignore options. A real transport may use this
     // hook to apply the execution configuration before opening the device.
     virtual bool configure(const QVariantMap& options, QString* error)
@@ -122,6 +130,7 @@ public:
     HalControlTransport(hwtest::hal::IHalDevice* device,
                         hwtest::hal::ResourceId resourceId);
 
+    void setRequestId(const hwtest::hal::RequestId& requestId) override;
     bool configure(const QVariantMap& options, QString* error) override;
     bool open(QString* error) override;
     TransportResult transact(const QByteArray& frame, int timeoutMs) override;
@@ -134,6 +143,7 @@ private:
 
     hwtest::hal::IHalDevice* m_device = nullptr;
     hwtest::hal::ResourceId m_resourceId;
+    hwtest::hal::RequestId m_requestId;
     QByteArray m_receiveBuffer;
     int m_openTimeoutMs = 1000;
     int m_readChunkBytes = 260;
@@ -151,6 +161,7 @@ public:
                        hwtest::hal::ResourceId resourceId,
                        hwtest::hal::SerialConfig serialConfig);
 
+    void setRequestId(const hwtest::hal::RequestId& requestId) override;
     bool configure(const QVariantMap& options, QString* error) override;
     bool open(QString* error) override;
     TransportResult transact(const QByteArray& frame, int timeoutMs) override;
@@ -163,6 +174,7 @@ private:
 
     hwtest::hal::IHalDevice* m_device = nullptr;
     hwtest::hal::ResourceId m_resourceId;
+    hwtest::hal::RequestId m_requestId;
     hwtest::hal::SerialConfig m_serialConfig;
     QByteArray m_receiveBuffer;
     bool m_open = false;

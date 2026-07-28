@@ -1,5 +1,7 @@
 # 连续测试与遥测 Web 前端设计
 
+> **历史设计稿（2026-07-26）**：本文保留原始设计判断，不代表当前八项配置、WebSocket v1 或浏览器实现。现行事实见 `../../design/overview/five-layer-architecture.md`、`../../design/contracts/business-scheduling-layer.md`、`../../design/contracts/websocket-frontend-protocol.md` 和 `../../design/testing/testing-specification.md`。
+
 ## 1. 目标
 
 在现有 `TestApplicationController -> BIZ -> 算法 -> HAL` 链路上增加 PC 主动定时连续测试，并建立从算法 `RawSample` 到浏览器的实时样本通道。浏览器前端采用深色遥测控制舱风格，为当前唯一的 `mbddf.system_status` 测试提供可运行的小范围演示，同时让未来测试项目复用同一运行控制条、曲线配置器和诊断视图。
@@ -114,4 +116,3 @@
 - WebSocket 集成测试通过 UDP 隔离目标验证多轮双向交互、sample 消息和停止后不再发包。
 - 前端 Vitest 覆盖协议解析、字段扁平化、有界缓冲、时间窗和同图/分图/自定义分组。
 - 前端构建、C++ Debug/Release 和现有架构扫描全部保持通过。
-

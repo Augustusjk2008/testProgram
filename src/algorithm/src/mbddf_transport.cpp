@@ -250,6 +250,11 @@ HalControlTransport::HalControlTransport(hwtest::hal::IHalDevice* device,
 {
 }
 
+void HalControlTransport::setRequestId(const hwtest::hal::RequestId& requestId)
+{
+    m_requestId = requestId;
+}
+
 bool HalControlTransport::configure(const QVariantMap& options, QString* error)
 {
     if (m_open) {
@@ -299,6 +304,7 @@ bool HalControlTransport::open(QString* error)
 
     hwtest::hal::OperationOptions options;
     options.timeoutMs = m_openTimeoutMs;
+    options.requestId = m_requestId;
     const hwtest::hal::HalStatus status =
         m_device->controlChannel()->openControl(m_resourceId, options);
     if (!status.ok()) {
@@ -380,6 +386,7 @@ TransportResult HalControlTransport::writeFrame(const QByteArray& frame, int tim
     }
     hwtest::hal::OperationOptions options;
     options.timeoutMs = timeoutMs;
+    options.requestId = m_requestId;
     const hwtest::hal::HalStatus writeStatus =
         m_device->controlChannel()->writeControl(m_resourceId, frame, options);
     if (!writeStatus.ok()) {
@@ -415,6 +422,7 @@ TransportResult HalControlTransport::readFrame(int timeoutMs)
     QElapsedTimer timer;
     timer.start();
     hwtest::hal::OperationOptions options;
+    options.requestId = m_requestId;
     while (!takeBufferedFrame(&completeFrame)) {
         const int remaining = remainingMs(timer, timeoutMs);
         if (remaining <= 0) {
@@ -446,6 +454,7 @@ void HalControlTransport::close()
     if (m_open && m_device != nullptr && m_device->controlChannel() != nullptr) {
         hwtest::hal::OperationOptions options;
         options.timeoutMs = m_openTimeoutMs;
+        options.requestId = m_requestId;
         m_device->controlChannel()->closeControl(m_resourceId, options);
     }
     m_receiveBuffer.clear();
@@ -465,6 +474,11 @@ HalSerialTransport::HalSerialTransport(hwtest::hal::IHalDevice* device,
     , m_resourceId(std::move(resourceId))
     , m_serialConfig(serialConfig)
 {
+}
+
+void HalSerialTransport::setRequestId(const hwtest::hal::RequestId& requestId)
+{
+    m_requestId = requestId;
 }
 
 bool HalSerialTransport::configure(const QVariantMap& options, QString* error)
@@ -488,6 +502,7 @@ bool HalSerialTransport::open(QString* error)
     }
     hwtest::hal::OperationOptions options;
     options.timeoutMs = 2000;
+    options.requestId = m_requestId;
     const hwtest::hal::HalStatus status =
         m_device->serialBus()->openSerial(m_resourceId, m_serialConfig, options);
     if (!status.ok()) {
@@ -571,6 +586,7 @@ TransportResult HalSerialTransport::writeFrame(const QByteArray& frame, int time
     }
     hwtest::hal::OperationOptions options;
     options.timeoutMs = timeoutMs;
+    options.requestId = m_requestId;
     const hwtest::hal::HalStatus status =
         m_device->serialBus()->writeSerial(m_resourceId, frame, options);
     if (!status.ok()) {
@@ -612,6 +628,7 @@ TransportResult HalSerialTransport::readFrame(int timeoutMs)
         }
         hwtest::hal::OperationOptions options;
         options.timeoutMs = remaining;
+        options.requestId = m_requestId;
         const auto read = m_device->serialBus()->readSerial(m_resourceId, 260, options);
         if (!read.ok()) {
             const auto errorCode = read.status.code == hwtest::hal::HalStatusCode::Timeout
@@ -633,6 +650,7 @@ void HalSerialTransport::close()
     if (m_open && m_device != nullptr && m_device->serialBus() != nullptr) {
         hwtest::hal::OperationOptions options;
         options.timeoutMs = 2000;
+        options.requestId = m_requestId;
         m_device->serialBus()->closeSerial(m_resourceId, options);
     }
     m_receiveBuffer.clear();

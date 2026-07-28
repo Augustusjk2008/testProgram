@@ -773,14 +773,28 @@ public:
                 } else if (request.action == QStringLiteral("resume")) {
                     result = controllerGuard->resume();
                 } else if (request.action == QStringLiteral("setDigitalStimulus")) {
-                    result = controllerGuard->setDigitalStimulus(
-                        request.params.value(QStringLiteral("switchId")).toString(),
-                        request.params.value(QStringLiteral("active")).toBool(),
-                        static_cast<quint64>(request.params
-                                                 .value(QStringLiteral("expectedRevision"))
-                                                 .toDouble()));
+                    if (!digitalStimulusSupportedByVersionOne(
+                            controllerGuard->snapshot().digitalStimulus)) {
+                        result = protocolError(
+                            QStringLiteral("capability_unsupported"),
+                            QStringLiteral("WebSocket v1 supports digital stimulus bits 0..15 only"));
+                    } else {
+                        result = controllerGuard->setDigitalStimulus(
+                            request.params.value(QStringLiteral("switchId")).toString(),
+                            request.params.value(QStringLiteral("active")).toBool(),
+                            static_cast<quint64>(request.params
+                                                     .value(QStringLiteral("expectedRevision"))
+                                                     .toDouble()));
+                    }
                 } else if (request.action == QStringLiteral("resetDigitalStimulus")) {
-                    result = controllerGuard->resetDigitalStimulus();
+                    if (!digitalStimulusSupportedByVersionOne(
+                            controllerGuard->snapshot().digitalStimulus)) {
+                        result = protocolError(
+                            QStringLiteral("capability_unsupported"),
+                            QStringLiteral("WebSocket v1 supports digital stimulus bits 0..15 only"));
+                    } else {
+                        result = controllerGuard->resetDigitalStimulus();
+                    }
                 } else {
                     result = protocolError(QStringLiteral("unknown_action"),
                                            QStringLiteral("Action is not implemented"));

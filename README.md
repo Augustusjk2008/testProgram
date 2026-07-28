@@ -26,7 +26,7 @@
 
 # 终端 2：浏览器前端
 Set-Location front
-npm install
+npm ci
 npm run dev
 ```
 

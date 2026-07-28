@@ -6,7 +6,7 @@
 
 `[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；前端既可使用开发服务器，也可使用构建后的单文件 HTML，二者都与 `hwtest_web` 分开运行，浏览器仍只连接回环 WebSocket。
 
-`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider 和 `DigitalStimulusPanel` 接入总览页。面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。PC 周期参数区另提供“保存完整数据”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。此浏览器控制面实现不等价于 PXI-6259 真机已连接或已验收。
+`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider 和 `DigitalStimulusPanel` 接入总览页。面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。此浏览器控制面实现不等价于 PXI-6259 真机已连接或已验收。
 
 ## 2. 连接规则
 
@@ -106,13 +106,15 @@
 
 `measurements` 只描述展示标签、单位和首页主指标候选，不改变算法判定或硬件安全语义。首条样本可能包含 descriptor 未列出的数值字段，前端仍应自动发现并显示该字段；descriptor 缺失时，兼容客户端可以使用空 descriptor 和样本字段回退。
 
-`digitalStimulus` 是应用 DTO 的完整公开投影，不暴露 `resourceId`、设备 alias、`adapterId`、端口、厂家设置或 DLL 路径：
+`digitalStimulus` 是受 WebSocket v1 数值边界约束的应用 DTO 公开投影，不暴露 `resourceId`、设备 alias、`adapterId`、端口、厂家设置或 DLL 路径：
+
+WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0..15。控制器/算法可在其他前端保留 64 路内部能力；若当前快照包含高位通道、高位 mask 或非 JavaScript 安全整数 revision，Web 投影必须返回 `available=false`、空 switches、零 mask/revision 和 `CapabilityUnsupported`，刺激动作回复 `capability_unsupported`，不得把 `quint64` 高位转换为 JSON `double`。
 
 | JSON 字段 | 类型 | 语义 |
 | --- | --- | --- |
 | `available`、`configured` | boolean | 已加载配置声明刺激 / 已完成 DI 准备和控制器配置 |
 | `switches` | object[] | 每项只含 `switchId`、`dutBit`、`label`、`activeLevel`（`High` 或 `Low`） |
-| `appliedMask`、`revision` | number | 逻辑激活位图与当前乐观并发版本；写入成功后 revision 递增 |
+| `appliedMask`、`revision` | number | WebSocket v1 只承载低 16 位逻辑激活位图和 JavaScript 安全整数 revision；写入成功后 revision 递增 |
 | `lastWriteTimestampUs`、`settlingMs` | number | 最近一次成功写入的 UTC epoch 微秒与配置的稳定等待毫秒 |
 | `errorCode`、`message` | string | 最近一次刺激操作的 HAL 归一化错误或诊断；成功时为空 |
 
@@ -138,7 +140,8 @@
 | `command_in_progress` | 正在异步停止或安全收尾时又收到写动作 | 是 |
 | `test_config_not_found` | `selectTest.configId` 不在后端启动时发现的配置白名单中 | 是 |
 | `invalid_run_mode` | `start.mode` 不是固定三种模式之一 | 是 |
-| `CapabilityUnsupported` | `start.mode` 未在当前配置的 `supportedRunModes` 中声明 | 是 |
+| `CapabilityUnsupported` | `start.mode` 未在当前配置的 `supportedRunModes` 中声明，或刺激快照超出 WebSocket v1 的 16 位投影 | 是 |
+| `capability_unsupported` | `setDigitalStimulus`/`resetDigitalStimulus` 面对超出 v1 范围的刺激配置 | 是 |
 | `ParameterRangeError` | `start.intervalMs` 或 `start.maxCycles` 超出范围 | 是 |
 
 能够安全读取请求 `id` 时，协议错误 reply 使用该 id；否则使用空字符串。错误输入不得触发控制器动作。
@@ -171,7 +174,7 @@
 
 ### 6.1 连续模式数据文件
 
-`[当前实现]` `saveData=true` 且运行模式为 `pc_periodic` 或 `device_stream` 时，`TestApplicationController` 在后端记录完整 `ApplicationSample.values` 投影，而不是记录浏览器当前勾选的曲线字段。`pc_periodic` 记录 PC 每轮单发单回产生的样本；`device_stream` 记录一次启动后设备持续回告产生的全部样本，应用层不会为它重复发起 PC 请求。默认 HAL/应用组合配置为：
+`[当前实现]` `saveData=true` 且运行模式为 `pc_periodic` 或 `device_stream` 时，`TestApplicationController` 在后端记录配置 descriptor 定义的全部测量列，而不是任意 `ApplicationSample.values` 字段或浏览器当前勾选的曲线字段。`pc_periodic` 记录 PC 每轮单发单回产生的样本；`device_stream` 记录一次启动后设备持续回告产生的全部样本，应用层不会为它重复发起 PC 请求。默认 HAL/应用组合配置为：
 
 ```json
 {"dataStorage":{"directory":"../data"}}

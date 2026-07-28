@@ -96,6 +96,40 @@ private:
     hwtest::biz::TestState m_state = hwtest::biz::TestState::Uninitialized;
 };
 
+class AlgorithmLogCollector {
+public:
+    void append(const hwtest::logging::LogEvent& event)
+    {
+        if (event.source != QStringLiteral("algorithm")) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_event = event;
+        m_hasEvent = true;
+        m_condition.notify_all();
+    }
+
+    bool waitForEvent(int timeoutMs)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_condition.wait_for(lock,
+                                    std::chrono::milliseconds(timeoutMs),
+                                    [this] { return m_hasEvent; });
+    }
+
+    hwtest::logging::LogEvent event() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_event;
+    }
+
+private:
+    mutable std::mutex m_mutex;
+    std::condition_variable m_condition;
+    hwtest::logging::LogEvent m_event;
+    bool m_hasEvent = false;
+};
+
 class BlockingByteTransport final : public IByteTransport {
 public:
     bool open(QString* error) override
@@ -322,6 +356,30 @@ public:
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         return m_lastWriteOptions.timeoutMs;
+    }
+
+    hwtest::hal::RequestId lastOpenRequestId() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_lastOpenOptions.requestId;
+    }
+
+    hwtest::hal::RequestId lastCloseRequestId() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_lastCloseOptions.requestId;
+    }
+
+    hwtest::hal::RequestId lastWriteRequestId() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_lastWriteOptions.requestId;
+    }
+
+    hwtest::hal::RequestId lastReadRequestId() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_lastReadOptions.requestId;
     }
 
 private:
@@ -587,6 +645,7 @@ TEST(SystemStatusExecutorTest, ConfigBIZSimulatorAndGoldenFrameFormOneClosedLoop
 
     ResultCollector results;
     StateCollector states;
+    AlgorithmLogCollector logs;
     QObject::connect(service.get(),
                      &hwtest::biz::ITestRunService::resultProduced,
                      [&results](const hwtest::biz::TaskId&,
@@ -598,12 +657,18 @@ TEST(SystemStatusExecutorTest, ConfigBIZSimulatorAndGoldenFrameFormOneClosedLoop
                      [&states](const hwtest::biz::TaskId&, hwtest::biz::TestState state) {
                          states.append(state);
                      });
+    QObject::connect(service.get(),
+                     &hwtest::biz::ITestRunService::logProduced,
+                     [&logs](const hwtest::logging::LogEvent& event) {
+                         logs.append(event);
+                     });
 
     ASSERT_TRUE(service->loadConfiguration(configPath).ok());
     const auto started = service->startTest();
     ASSERT_TRUE(started.ok()) << started.status.error.message.toStdString();
     ASSERT_TRUE(results.waitForResult(3000));
     ASSERT_TRUE(states.waitForTerminal(3000));
+    ASSERT_TRUE(logs.waitForEvent(3000));
 
     const auto result = results.result();
     EXPECT_EQ(result.stepId, QStringLiteral("SYSTEM_STATUS"));
@@ -611,10 +676,67 @@ TEST(SystemStatusExecutorTest, ConfigBIZSimulatorAndGoldenFrameFormOneClosedLoop
     EXPECT_EQ(result.errorCode, hwtest::biz::ErrorCode::Ok);
     EXPECT_EQ(result.rawData.value(QStringLiteral("requestFrameHex")).toString().toUpper(),
               QStringLiteral("55AA301101013412") + QString(86, QLatin1Char('0')) + QStringLiteral("AC1C"));
+    const hwtest::logging::LogEvent log = logs.event();
+    EXPECT_FALSE(log.context.contains(QStringLiteral("requestFrameHex")));
+    EXPECT_FALSE(log.context.contains(QStringLiteral("responseFrameHex")));
+    EXPECT_EQ(log.context.value(QStringLiteral("requestFrameLength")).toInt(), 53);
+    EXPECT_EQ(log.context.value(QStringLiteral("responseFrameLength")).toInt(), 53);
+    EXPECT_EQ(log.context.value(QStringLiteral("requestFrameSha256")).toString().size(), 64);
+    EXPECT_EQ(log.context.value(QStringLiteral("responseFrameSha256")).toString().size(), 64);
+    EXPECT_LE(log.context.value(QStringLiteral("requestFrameHexPreview")).toString().size(), 32);
+    EXPECT_LE(log.context.value(QStringLiteral("responseFrameHexPreview")).toString().size(), 32);
     EXPECT_EQ(simulatorPtr->transactionCount(), 1);
     ASSERT_EQ(simulatorPtr->lastRequest().left(5).toHex().toUpper(), QByteArray("55AA301101"));
 
     ASSERT_TRUE(service->shutdown().ok());
+}
+
+TEST(SystemStatusExecutorTest, ExplicitDebugTagIncludesFullFramesInAlgorithmLog)
+{
+    const QString assets = catalogDirectory();
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present: " << assets.toStdString();
+    }
+    qputenv("MB_DDF_PROTOCOL_CSV_DIR", assets.toUtf8());
+
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+    auto simulator = std::make_unique<SystemStatusSimulator>(&catalog);
+    simulator->setResponseValues({
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("err_code"), 0},
+    });
+    SystemStatusAlgorithmExecutor executor(std::move(simulator));
+
+    hwtest::biz::TestConfigManager configManager;
+    const auto loaded = configManager.load(QStringLiteral(HWTEST_MBDDF_SYSTEM_STATUS_CONFIG));
+    ASSERT_TRUE(loaded.ok()) << loaded.status.error.message.toStdString();
+    hwtest::biz::TestConfig debugConfig = loaded.value;
+    debugConfig.runtimeConfig.tags.insert(QStringLiteral("logFullFrames"), true);
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString configPath = directory.filePath(QStringLiteral("debug-frames.testcfg"));
+    ASSERT_TRUE(configManager.save(configPath, debugConfig).ok());
+
+    RunServiceHandle service = makeRunService(&executor);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+    AlgorithmLogCollector logs;
+    QObject::connect(service.get(),
+                     &hwtest::biz::ITestRunService::logProduced,
+                     [&logs](const hwtest::logging::LogEvent& event) {
+                         logs.append(event);
+                     });
+
+    ASSERT_TRUE(service->loadConfiguration(configPath).ok());
+    ASSERT_TRUE(service->startTest().ok());
+    ASSERT_TRUE(logs.waitForEvent(3000));
+
+    const QVariantMap context = logs.event().context;
+    EXPECT_FALSE(context.value(QStringLiteral("requestFrameHex")).toString().isEmpty());
+    EXPECT_FALSE(context.value(QStringLiteral("responseFrameHex")).toString().isEmpty());
+    EXPECT_TRUE(service->shutdown().ok());
 }
 
 TEST(ElecHealthStatusExecutorTest, ConfigBIZScriptedTransportProducesReadOnlyExchange)
@@ -1131,6 +1253,11 @@ TEST(SystemStatusExecutorTest, HalControlTransportOpensOnceForRetryingRun)
     EXPECT_EQ(channel.writeCount(), 2);
     EXPECT_EQ(channel.writeAt(0), expectedSystemStatusRequest());
     EXPECT_EQ(channel.writeAt(1), expectedSystemStatusRequest());
+    const hwtest::hal::RequestId requestId = channel.lastOpenRequestId();
+    EXPECT_FALSE(requestId.isEmpty());
+    EXPECT_EQ(channel.lastWriteRequestId(), requestId);
+    EXPECT_EQ(channel.lastReadRequestId(), requestId);
+    EXPECT_EQ(channel.lastCloseRequestId(), requestId);
 
     ASSERT_TRUE(service->shutdown().ok());
 }

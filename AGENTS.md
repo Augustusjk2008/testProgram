@@ -24,7 +24,7 @@
 - 电气健康以设备 `status`/`err_code` 判定；SPI Flash 写入固定隔离测试区并保留写入结果；`TIMER_JITTER` 在结束阶段发送 STOP 清理。
 - `DiStimulusController` 通过 HAL 批量数字输出维护 16 路逻辑掩码、revision 和安全复位；PXI-6259 配置中的物理 safe state 与 DI descriptor 的 inactive level 保持一致。
 - 应用层位于 `src/app/`，共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support` 和 `hwtest_web_support`，产出 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web`。四个入口统一使用 `TestApplicationController` 和 MB_DDF 注册表；启动选项动态扫描 `configs/*.testcfg.json`，并校验配置结构、运行模式能力与已注册算法。`ContinuousDataRecorder` 可在显式启用的 `pc_periodic` 或 `device_stream` 任务中把完整应用样本增量保存为 UTF-8-SIG/TSV TXT，`single` 任务不保存。
-- `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置目录切换、运行控制、两种连续模式的完整数据保存开关、动态测量字段和 16 路 DI 刺激/回读状态。保存目录只由后端 `dataStorage.directory` 配置，曲线字段选择不改变保存列。
+- `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置目录切换、运行控制、两种连续模式、配置定义的全部测量列保存开关、动态测量字段和 16 路 DI 刺激/回读状态。保存目录只由后端 `dataStorage.directory` 配置，曲线字段选择不改变保存列。
 - `tests/` 按 HAL、日志、BIZ、算法和应用组织 GoogleTest 目标；NI Fake Adapter 使用独立 CTest 入口；`front/` 的 Vitest 独立运行。测试清单与统计以测试规范为准。
 - `dut/docs/design/product_protocol_csv/` 保存 MB_DDF 协议 CSV 快照；宿主协议测试通过 `MB_DDF_PROTOCOL_CSV_DIR` 使用外部源事实目录。
 
@@ -50,7 +50,7 @@
 ## 配置与兼容
 
 - 新增 BIZ 测试配置使用 `executionConfig` 传递算法执行参数；读取器继续支持旧根字段 `halConfig` 的迁移。
-- BIZ 保存并透传 `ProtocolProfile`、`SafetyPolicy` 与硬件需求，协议解释由算法层完成，安全动作由 HAL 完成。
+- BIZ 保存并透传 `ProtocolProfile`、`SafetyPolicy` 与硬件需求，协议解释由算法层完成。`SafetyPolicy.enterSafeStateOnStop/Error` 当前仅为兼容字段，不驱动运行期分支；HAL 在会话关闭前按已配置 safe state 尽力收尾。
 - 厂家 Adapter 初始化配置只承载驱动级设置；设备身份、资源映射和 safe state 通过 `hwtest.adapter-device-open` v1 传入 `openDevice()`。NI JSON 解析集中在 `ni_daqmx_config.*`。
 - 公共 HAL 和 BIZ 头文件属于兼容面；结构体优先在尾部扩展，既有枚举值与语义保持稳定。
 - Adapter ABI 变更同步更新 `hal_adapter_abi.h`、可选 `hal_adapter_task_abi.h`、HAL 契约和 ABI 测试。

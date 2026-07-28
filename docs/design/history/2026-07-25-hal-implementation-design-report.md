@@ -1,0 +1,335 @@
+# HAL 实现设计报告
+
+> **历史归档**：本文件已从现行实现目录移出，仅用于追溯 2026-07-25 快照。当前事实源见 `../contracts/hal-interface-protocol.md`、`../overview/five-layer-architecture.md` 和 `../testing/testing-specification.md`。
+
+> **已被替代（2026-07-27）**：本文保留为 2026-07-25 的实现快照，其中“单 CAbiAdapter 委托 MockAdapter”等描述不再代表当前代码。现行事实以 [五层架构总览](../overview/five-layer-architecture.md)、[HAL 层接口协议](../contracts/hal-interface-protocol.md) 和 [测试规范](../testing/testing-specification.md) 为准。
+
+> 快照日期：2026-07-25
+> 本文定位：记录 `src/hal/` 在该日期的历史代码结构、调用路径、已知限制和迁移顺序。
+> 稳定接口与目标语义见 [HAL 层接口协议](../contracts/hal-interface-protocol.md)；测试规则见 [测试规范](../testing/testing-specification.md)。
+> 本报告不重复公共头声明、稳定错误码、日志字段映射或全局测试命令。
+>
+> **现行更正（2026-07-27）**：本快照中“`CAbiAdapter -> MockAdapter`”“Loader 未接入主链”“没有厂家 Adapter DLL 调用链”的表述已不再代表当前源码。当前 `AdapterRouter -> CAbiAdapter` 可实际加载并调用配置的核心 ABI v1 DLL；Vendor C ABI 初始化接收驱动级 Adapter 配置，HAL 再以单设备 `hwtest.adapter-device-open` v1 投影调用 `openDevice()`。PXI-6259 NI-DAQmx Adapter 的配置解析已拆分为 `ni_daqmx_config.*`，并另有可选 task ABI 与 `ISampleTaskIo`。上述 DLL/任务路径的自动化证据均为 Fake，不是 NI SDK 或 PXI-6259 真机验收。下文的 COM3 手工记录和历史数值仍按原快照保留。
+
+---
+
+## 1. 结论
+
+截至本快照日期，HAL 已实现资源映射、基础安全校验、会话、既有硬件接口和控制通道。控制资源可按配置选择 Qt 串口或 UDP；当时其他资源仍使用兼容 Mock 后端：
+
+```text
+控制：HalDevice -> ControlChannelManager -> qt.serial / qt.udp -> Qt 标准 API
+其他：HalService -> CAbiAdapter -> MockAdapter -> 内存状态
+```
+
+已确认的目标是：
+
+```text
+目标：HalService -> providerId Router
+                   -> Mock Provider
+                   -> Vendor Adapter Provider -> C ABI -> 厂家库/驱动
+                   -> Qt Serial/TCP/UDP Provider -> Qt 标准 API
+```
+
+本快照只在 `module = "control"` 的资源上记录局部 `providerId` 路由。当前工作区仍没有通用控制 Router、控制通道 Mock Provider、TCP 或 `INetworkBus`；配置驱动的 Adapter DLL C ABI 调用链和 driver-only 初始化/单设备打开投影边界已按上方现行更正落地。真实硬件证据仍仅限 2026-07-26 的 COM3 `SYSTEM_STATUS`/`ELEC_HEALTH_STATUS` smoke，不包含 NI/PXI-6259 验收。
+
+---
+
+## 2. 构建与目录
+
+`src/hal/CMakeLists.txt` 生成 `hwtest_hal`。公共头位于 `src/hal/include/hal/`，内部实现位于 `src/hal/src/`；模块公开链接 Qt Core，私有使用 Qt Network/SerialPort，并依赖根工程注入三个 Qt 目标。当前没有可直接执行 `cmake -S src/hal` 的独立自举入口。
+
+内部文件职责：
+
+| 文件/类 | 当前作用 |
+| --- | --- |
+| `hal_factory.cpp` | 创建和销毁 `IHalService` |
+| `HalService` | 初始化、资源表、后端、设备会话和服务日志 |
+| `HalDevice` | 会话内资源校验、I/O 转发和安全关闭 |
+| `ControlChannelManager` | 解析控制资源 `providerId`，持有单个已打开 Qt Provider 并补齐错误上下文 |
+| `QtSerialControlProvider` | 按资源属性持有 `QSerialPort`，执行打开、总预算写入、短读和关闭 |
+| `QtUdpControlProvider` | 按资源属性持有 `QUdpSocket`，执行绑定、远端来源过滤、数据报读写、大小校验和关闭 |
+| `ResourceMapper` | 从配置构造设备、资源、能力和 safe state |
+| `SafetyGuard` | 模拟量、数字量、串口和 CAN 基础参数校验 |
+| `HardwareAdapter` | HAL 内部 C++ 后端抽象 |
+| `CAbiAdapter` | 历史快照中的兼容 seam；当前已实际加载 DLL、调用核心 ABI v1，并可选解析 task ABI |
+| `AdapterLoader` | 历史快照中仅可加载 DLL；当前已接入 `CAbiAdapter` 主链并可选解析 task ABI |
+| `MockAdapter` | 内存设备、回环和 echo 后端 |
+| `HalErrorMapper` | C ABI 状态到 `HalStatusCode` 的当前映射 |
+
+---
+
+## 3. 历史对象关系（非当前）
+
+```mermaid
+flowchart LR
+  Factory["createHalService"] --> Service["HalService"]
+  Service --> Mapper["ResourceMapper"]
+  Service --> Backend["HardwareAdapter"]
+  Backend --> CAbi["CAbiAdapter"]
+  CAbi --> Mock["MockAdapter"]
+  Service --> Device["HalDevice per session"]
+  Device --> Guard["SafetyGuard"]
+  Device --> Backend
+  Device --> Control["ControlChannelManager"]
+  Control --> Serial["qt.serial / QSerialPort"]
+  Control --> Udp["qt.udp / QUdpSocket"]
+  Mock --> State["in-memory device/session state"]
+```
+
+`HardwareAdapter` 在本快照中已隔离 `HalService` / `HalDevice` 与具体后端。当前实现另有按设备 `adapterId` 的 `AdapterRouter`；它仍不等同于控制资源的通用 `providerId` Router。
+
+---
+
+## 4. `HalService` 历史流程（非当前）
+
+### 4.1 初始化
+
+```text
+initialize(halConfig)
+  -> shutdown() 清理旧状态
+  -> ResourceMapper.load(halConfig)
+  -> createBackend(halConfig)
+  -> 固定创建 CAbiAdapter
+  -> CAbiAdapter.initialize()
+  -> MockAdapter.initialize()
+  -> m_initialized = true
+```
+
+本快照中的 `createBackend()` 忽略配置并总是返回 `CAbiAdapter`，后者当时又持有一个 `MockAdapter` 并逐方法转发。当前 `AdapterRouter` 已按 `adapterId` 懒加载 Mock 或 C ABI 后端，且 `HalService::openDevice()` 会传递单设备 open projection。
+
+### 4.2 扫描与能力
+
+`scanDevices()` 返回 `ResourceMapper::devices()`；`queryCapabilities()` 返回 `ResourceMapper::capabilities()`。两者不调用 `HardwareAdapter::enumerateDevices()` 或 `queryCapabilities()`，所以当前“发现结果”是配置推导值，不是物理设备证据。
+
+### 4.3 打开与会话
+
+`openDevice()`：
+
+1. 检查初始化状态和配置中的设备描述；
+2. 调后端创建 `SessionId`；
+3. 取该设备的资源绑定和安全态；
+4. 创建 `HalDevice` 并存入 `m_sessions`；
+5. 发出设备状态和操作日志。
+
+`device(sessionId)` 返回内部 `HalDevice*`；调用方不得让该指针超过服务或会话生命周期。`closeDevice()` 先调用 `HalDevice::close()`，随后从会话表删除。
+
+### 4.4 关闭
+
+`shutdown()` 遍历会话调用 `HalDevice::close()`，清空会话，再关闭和释放后端。方法是幂等的，析构也会调用它。
+
+当前实现会尝试安全收尾，但未汇总并返回所有关闭错误；Mock、动态 Fake ABI 与 NI Fake 已覆盖软件收尾路径，真实物理安全效果仍无 NI SDK 或 PXI-6259 板卡验收。
+
+---
+
+## 5. 当前配置与资源模型
+
+`ResourceMapper` 当前读取：
+
+```text
+hardware.devices[]
+hardware.resources{}
+safeState{}
+```
+
+设备字段包含 `alias`、`adapterId`、厂商/型号/序列号等描述；资源字段包含逻辑 ID、设备 alias、模块、方向、`physicalIndex` 和属性。资源表只负责 `ResourceId -> 物理资源描述`，不解释 CSV 或产品协议。
+
+为了无配置开发，当前有宽松回退：
+
+- 无设备时创建 `mock_device_0`；
+- 无资源时创建 AD、DA、DI、DO、串口和 CANFD 六个默认资源；
+- 未知设备引用可能绑定到第一个设备；
+- 缺少 `adapterId` 时回退 `mock.adapter.v1`；
+- 能力和部分限制值从资源配置推导或固定填入。
+
+这些行为适合 Mock 开发，不适合生产部署。目标 Provider 路由落地后，生产配置应显式提供 `providerId` 和设备 match；缺失或匹配不唯一必须失败，不得静默选择 Mock 或首个设备。
+
+当前配置示意：
+
+```json
+{
+  "hardware": {
+    "devices": [
+      {"alias": "main_daq", "adapterId": "mock.adapter.v1"}
+    ],
+    "resources": {
+      "SERIAL_A": {
+        "device": "main_daq",
+        "module": "serial",
+        "direction": "bidirectional",
+        "physicalIndex": 0
+      }
+    }
+  },
+  "safeState": {
+    "SERIAL_A": {"action": "close"}
+  }
+}
+```
+
+该示例是当前兼容形状，不是目标 `providerId` 配置；目标骨架只在 HAL 契约中定义。
+
+---
+
+## 6. `HalDevice` 当前行为
+
+本快照中的 `HalDevice` 同时实现 `IHalDevice`、`IAnalogIo`、`IDigitalIo`、`ISerialBus` 和 `ICanFdBus`。当前实现还公开 `ISampleTaskIo`，并通过 `IHalDevice::sampleTasks()` 提供会话内任务生命周期。每次普通 I/O 操作先检查：
+
+```text
+会话已打开
+  -> ResourceId 存在
+  -> module 匹配
+  -> direction 匹配或为 bidirectional
+  -> 输出类操作通过 SafetyGuard
+  -> 转换为 physicalIndex 后调用 HardwareAdapter
+```
+
+### 6.1 模拟量和数字量
+
+- AD/DA 配置会缓存量程；读结果的通道会改写回逻辑 `ResourceId`。
+- DA 写入使用显式量程或资源安全属性，支持拒绝越界或 `safeClamp` 钳位。
+- DO 禁止写 input 和 `Unknown`；DI/DO 批量方法当前逐项调用，首错即停。
+- `waitEdge()` 只转发后端；Mock 当前立即返回目标电平，不模拟真实等待。
+
+### 6.2 串口
+
+`openSerial()` 缓存配置并调用后端；`writeSerial()` / `readSerial()` 执行原始字节操作。
+
+当前 `transactSerial()`：
+
+```text
+backend.writeSerial(tx, transaction.op)
+  -> backend.readSerial(readMaxBytes, transaction.op)
+  -> 返回 rx 和时间戳
+```
+
+已确认限制：
+
+- 写和读分别使用同一个 `timeoutMs`，不是共享总 deadline；
+- 不累积多次读取；
+- 不保证完整产品帧；
+- `expectedPrefix`、`readMinBytes`、`terminator` 未参与判定；
+- Mock metadata 中保留 `expectedPrefix` 仅是兼容遗留，不代表校验。
+
+这些限制符合“HAL 不解析产品协议”的边界，但流式累积必须由算法传输实现补齐。
+
+### 6.3 CAN/CANFD
+
+HAL 校验普通 CAN payload 不超过 8 字节、CANFD 不超过 64 字节，并转发过滤、发送和接收。当前批量接收和部分辅助操作缺少完整操作日志；payload 产品语义不属于 HAL。
+
+### 6.4 安全关闭
+
+本快照中 `HalDevice::close()` 先执行 `applySafeState()`，再关闭后端会话。当前实现已更正为先停止并释放已跟踪采样任务，随后应用 AO/DO safe state，再关闭后端会话。快照所列安全动作包括：
+
+- analog output 写安全值；
+- digital output 写安全电平；
+- serial 关闭端口；
+- canfd 关闭总线。
+
+实现保留第一个后端错误并继续处理后续资源。不存在的安全资源会被忽略。HAL Mock/动态 Fake 与 NI Fake 均覆盖软件安全关闭路径，但尚未形成真实硬件安全证据。
+
+---
+
+## 7. 后端、Loader 与 ABI
+
+### 7.1 `HardwareAdapter`
+
+`HardwareAdapter` 覆盖设备生命周期、模拟/数字 I/O、串口和 CAN/CANFD，是当前 HAL 私有后端接口。公共 HAL 头不暴露它。
+
+目标实现可在该边界上演化 Provider Router，但需要先明确单设备多 Provider、连接所有权和 capability 合并规则；不能简单把 `HardwareAdapter` 改名后宣称路由已完成。
+
+### 7.2 `CAbiAdapter`
+
+名称在本快照中容易造成误解：当时 `CAbiAdapter` 没有加载 DLL，也没有调用 `HalAdapterApiV1`，而是直接委托成员 `MockAdapter`。
+
+因此当时的快照路径是：
+
+```text
+createBackend() -> CAbiAdapter -> MockAdapter
+```
+
+当前 `CAbiAdapter` 已通过 `AdapterLoader` 实际加载并调用 ABI v1，并可选解析 task ABI；Qt Provider 和 Mock Provider 仍不应绕经 Vendor C ABI。
+
+### 7.3 `AdapterLoader` 与 ABI v1
+
+`AdapterLoader` 已实现：
+
+- 使用 `QLibrary` 加载指定 DLL；
+- 解析 `hal_adapter_get_api_v1`；
+- 校验 ABI 版本和 `structSize`；
+- 保存函数表并在析构时卸载。
+
+在本快照时它未接入 `HalService::createBackend()` 或 `CAbiAdapter`。当前该差距已关闭：`CAbiAdapter` 使用 Loader 装载核心 ABI，并以可选符号加载 task API。
+
+`hal_adapter_abi.h` 当前为 ABI v1。兼容规则和状态边界见 HAL 契约，不在本报告重复。
+
+---
+
+## 8. `MockAdapter` 当前能力
+
+`MockAdapter` 使用内存表维护设备、会话和 I/O 状态：
+
+| 类型 | 当前模拟 |
+| --- | --- |
+| 模拟量 | 输出记录、同物理通道回环、可选随机噪声 |
+| 数字量 | 输出记录、同物理通道回环 |
+| 串口 | 写入 buffer，读取 echo；空 buffer 可返回 `mock-serial` |
+| CAN/CANFD | 发送帧入队，接收出队 |
+| 会话 | 初始化、打开、关闭、复位、健康检查 |
+
+当前 Mock 不模拟真实时间、并发、设备断开、可编排错误注入或产品协议设备行为。串口 echo 与 `SystemStatusSimulator` 是两个不同层次：前者验证原始 HAL I/O，后者验证产品协议但绕过 HAL。
+
+目标产品模拟应把设备行为放到 HAL Mock Provider 后方，使算法仍通过 HAL 资源和生命周期完成测试。
+
+---
+
+## 9. 算法层与应用接入现状
+
+`src/algorithm` 已实现当前产品路径 `HalControlTransport`：构造时接收 `IHalDevice*` 和逻辑 `ResourceId`，通过 `IControlChannel` 打开、原始读写和关闭；它在算法层完成 MB_DDF 同步字搜索、短读累积、长度分帧和剩余帧保留。旧 `HalSerialTransport` 继续作为 `ISerialBus` 兼容桥接。
+
+当前限制：
+
+- 传输对象不创建或拥有 `IHalService` / 设备会话，`hwtest_app_core::TestApplicationController` 负责按配置建立和收尾会话；`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web` 均复用该控制器；
+- MB_DDF 执行器每次 BIZ 重试都独立打开/关闭控制资源，并保持同一请求序号；固定命令覆盖 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS`，配置驱动交换执行器覆盖 `MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`，并可按配置追加定时器 STOP 清理；
+- `configs/mbddf_pc_hal.json` 同时定义串口和 UDP 资源，`control.resourceId` 是 PC 每次运行前的唯一选择点；
+- 当前支持六个独立单步算法 `mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config` 和 `mbddf.timer_jitter`；行式 TUI、Qt GUI 和 WebSocket 后端可在 configured 状态切换控制资源。浏览器遥测控制台已实现运行和观测，但当前未暴露控制资源/串口选择；已准备或运行期间的热切换仍未实现。新增四项尚无真实板端验收证据。
+
+Qt UDP 本机模拟目标闭环已经打通。2026-07-26 已通过 `hwtest_web -> TestApplicationController -> BIZ -> MB_DDF executor -> HalControlTransport -> HAL -> qt.serial -> COM3 -> MB_DDF_v2` 分别完成 `SYSTEM_STATUS` 与 `ELEC_HEALTH_STATUS` 的单次和三轮 PC 周期真实链路，两个测试项终态均为 `Pass/Ok`，各产生三个样本；早期 SYSTEM_STATUS 执行每轮都出现一次 `QObject::startTimer: Timers can only be used with threads started with QThread`。随后 BIZ worker 迁移为 `QThread` 并补 dispatcher/计时器自动回归，两个测试项在同一 COM3/板端链路再次完成单次和三轮 PC 周期，后端完整诊断中该警告出现次数均为 `0`；正常 `quit`、板端 `SIGTERM` 和 COM3 释放均完成。长时、拔插、超时、运行中停止和物理安全收尾仍未覆盖，因此不是全面 DUT 验收；现场网络端点仍无证据。
+
+---
+
+## 10. 错误与日志现状
+
+`HalErrorMapper` 当前把 Vendor ABI 风格状态码直接映射为 `HalStatusCode`。其中 `protocol error -> ProtocolError` 只是现有兼容映射，不能用于产品帧 CRC、字段、命令或序号错误；来源不明时目标实现应使用 `AdapterError` 并保留原始诊断。
+
+`HalService` 和 `HalDevice` 会产生 `HalLogEvent`，但 `flushSerial()`、`setCanFilters()`、`receiveCanBatch()` 等路径尚未完全覆盖。HAL 到日志服务的桥接在 `src/logging/`，字段唯一语义见 [日志接口协议](../contracts/log-interface-protocol.md)。
+
+---
+
+## 11. 与目标契约的差距
+
+| 差距 | 当前风险 | 目标动作 |
+| --- | --- | --- |
+| Router 只覆盖控制资源 | 其他资源仍无法显式选择 Qt/Vendor/Mock | 扩展统一 Provider 生命周期和配置校验 |
+| Mock 静默默认 | 生产误连 Mock 或首设备 | 生产模式缺配置即失败 |
+| Qt Provider 证据不完整 | 串口已有 QThread 迁移后无目标计时器警告的短时手工成功复测，但缺少自动化 hardware target 和长时/异常路径；现场 UDP 行为未知 | 补串口自动化 hardware target 及长时/异常收尾，确认现场 UDP 端点；TCP 另行评审 |
+| Vendor 调用链（历史差距，已关闭） | 本快照中 ABI/Loader 与运行时脱节 | 当前已接入核心 ABI v1 与可选 task ABI；真机 PXI-6259 验收仍待补 |
+| 扫描来自配置 | 无法证明物理设备身份 | Provider 扫描并按 match 唯一绑定 |
+| deadline 非端到端 | write/read 累计超时 | 单调时钟计算剩余预算 |
+| 旧 `HalSerialTransport` 无流式缓冲 | 误用旧路径会受短读影响 | 产品路径固定使用 `HalControlTransport`，后续评估删除旧桥接 |
+| 产品 Mock 绕过 HAL | 无法验证资源和安全链 | 算法经 HAL Mock Provider 闭环 |
+| 安全态仅有 Mock/NI Fake 软件证据 | 真实硬件风险未知 | 厂家/Qt Provider 契约和硬件验收 |
+
+---
+
+## 12. 建议迁移顺序
+
+1. 在已实现的控制资源路由上补齐连接取消和更完整的 Provider 日志证据。
+2. 在已有 COM3 迁移后成功单次/三周期和 BIZ QThread 自动回归基础上，继续验证 614400/8E1 的短读、拆包、长时、超时、拔插、运行中停止和异常收尾，并评估独立 hardware target。
+3. 确认 PC 到 DUT 的实际 UDP 地址/端口；不得复用板端网口自环测试事实作推断。
+4. 把当前 `MockAdapter` 迁为直接的 Mock Provider，并补 SYSTEM_STATUS/ELEC_HEALTH_STATUS 控制通道闭环。
+5. 本快照建议的 `AdapterLoader + HalAdapterApiV1` 接入已完成，并保留核心 ABI v1/可选 task ABI 兼容测试；后续重点是 PXI-6259 真机验收而非把 Fake 结果写成真机结论。
+6. 统一全 HAL deadline、连接取消、日志覆盖和异常安全收尾；TCP 在实际用例明确后另行评审。
+7. 完成隔离真实 DUT 验收，再扩充更多 MB_DDF 测试项；浏览器新增测试项目时继续复用已实现的 `hwtest_web` 和当前应用控制器。
+
+每一步都应先更新 HAL 契约和测试边界，再修改实现；目标能力在通过相应测试前继续标记“未实现”。

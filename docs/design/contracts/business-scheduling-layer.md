@@ -35,7 +35,7 @@ BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作�
 | `TestContext` | 一次任务的 `runId`、`requestId`、产品、操作者、工位和 tags；不得扩展为设备句柄或通讯对象 |
 | `RunMode`、`RunOptions` | 单次、PC 周期和设备持续回告三种通用运行语义，以及轮间隔和最大轮数 |
 | `TestResult`、`MeasurementRecord`、`RawSample` | 单步结果、测量记录和算法回传样本；BIZ 聚合结果、标记并转发样本，但不改变产品判定语义 |
-| `ProtocolProfile`、`HardwareRequirement`、`SafetyPolicy` | 兼容和透传模型；BIZ 保存/校验结构，不解释协议或实施安全动作 |
+| `ProtocolProfile`、`HardwareRequirement`、`SafetyPolicy` | 兼容和透传模型；BIZ 保存/校验结构，不解释协议或实施安全动作；`enterSafeStateOnStop/Error` 当前不驱动运行期分支 |
 | `RuntimeConfig`、`ReportOptions` | 业务调度与报告选项；文件 I/O 不属于生产硬件/通讯 I/O 边界 |
 
 `TestState`、`TestVerdict`、`SkipReason`、`RunControl`、`RunMode`、`CmpOp`、`Permission` 和 `ErrorCode` 的枚举值是公共兼容面。结构体应优先尾部扩展，不改变既有枚举数值或语义。`RawSample::cycleIndex` 和 `TestResult::cycleIndex` 是当前尾部扩展；轮次从 `1` 开始。
@@ -103,7 +103,7 @@ signals:
 - 空 `testItems` 表示全部启用步骤；`priority == -1` 使用 `RuntimeConfig::taskPriorityDefault`，其他值只接受 1 到 3。
 - `loadConfiguration()` 仅允许 `Idle` 或 `Finished`；`stopTest()` 在 `Idle` 幂等成功。
 - 活动任务的 `stopTest(timeoutMs)` 先请求算法停止，再在剩余时限内等待任务 worker 完成 `finishRun()`；成功返回时状态已收敛，超时返回 `ResourceTimeout` 且不得伪造 `Idle`。
-- `generateReport()` 只读取已编排的结果和日志摘要，不触发算法、日志存储或硬件操作。
+- `generateReport()` 只读取已编排的 `TestResult` 快照，不读取日志摘要，也不触发算法、日志存储或硬件操作。
 
 报告和工厂的公开接口为：
 
@@ -203,7 +203,7 @@ public:
 - `[当前实现]` 每一轮按拓扑顺序串行调度；`PcPeriodic` 在轮外重复该稳定顺序。`parallelEnabled`、`maxParallel` 和 `Permission` 仅保留为配置/兼容扩展面，尚不形成并行组或授权服务。
 - `getResourceStatus()` 当前返回 BIZ 只读快照；它不锁定、释放、复位或观察硬件资源。
 - BIZ 只生产或转发 `logProduced(const hwtest::logging::LogEvent&)`。`LogEvent` 的来源、字段、追踪和 HAL/Adapter 映射以 `log-interface-protocol.md` 为唯一主定义。
-- 报告只消费 BIZ 已编排的 `TestResult` 快照和摘要；报告文件 I/O 不触发执行器或设备操作。
+- 报告只消费 BIZ 已编排的 `TestResult` 快照，并由这些结果派生摘要；报告文件 I/O 不触发日志服务、执行器或设备操作。
 
 ## 6. 当前验证与扩展
 

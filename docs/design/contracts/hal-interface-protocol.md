@@ -173,13 +173,15 @@ HAL 对外只接受逻辑资源 ID，并负责：
 - 依据设备能力校验物理索引和功能支持；
 - 归一化模拟量、数字量、串口和 CAN/CANFD 参数；
 - 对输出执行范围、电平和 payload 上限校验；
-- 在关闭、停止或异常路径按策略进入物理安全态。
+- 在会话关闭前按已配置 safe state 尽力进入物理安全态。
 
 HAL 可以转换工程单位和厂家单位，但不得把产品字段转换或测试阈值判定伪装成硬件归一化。
 
 `[当前实现]` `ResourceMapper` 拒绝重复设备 alias；多设备配置中的每个资源必须显式指定已知设备，资源缺省 `adapterId` 时继承设备值，显式值不一致会失败；同一设备、模块、方向和物理索引的重复映射也会失败。单设备未声明 `device` 的既有配置仍兼容。
 
 `[当前实现]` `HalDevice::close()` 在关闭底层设备前尽力应用安全态。对于同一 HAL 设备的已配置数字输出，HAL 先按 `physicalIndex` 汇总，再只调用一次底层 `writeDigitalBatch()`；模拟输出、串口和 CAN 仍按各自资源处理。这是 HAL 批处理语义，不承诺厂商 Adapter 已按端口 bank 实现原子整幅写入，也不构成物理安全验收。
+
+`[当前实现]` BIZ `SafetyPolicy.enterSafeStateOnStop` 与 `enterSafeStateOnError` 仅被解析、保存和透传，HAL 与应用层均不按其布尔值选择分支。应用控制器的显式停止会无条件尝试复位 DI 刺激，错误终态不会因这两个字段立即触发额外复位；最终会话关闭仍执行上述 HAL safe state。不得把这两个兼容字段写成已生效的停止/异常策略。
 
 `[当前实现]` `AdapterDeviceOpenSpec` 是 HAL 私有 DTO，不是公共 HAL 头或 ABI v1 的破坏性修改。它从 `ResourceMapper` 只投影一个设备的逻辑/物理身份、资源通道、该设备 safe state 和 `taskProfiles`；物理名优先来自 `hardware.devices[].properties.vendor.ni.deviceName`。`HalService` 将同一份已筛选 safe state 交给 `HalDevice`，并作为 `openOptionsJson` 交给厂家 Adapter。投影可以携带 `taskProfiles`，但当前 NI Adapter 只校验其数组结构，并不据此创建或执行任务；运行时身份、通道和 safe state 由 open parser 解析，任务仍由 `ISampleTaskIo` 的显式创建调用配置。
 

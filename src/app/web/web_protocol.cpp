@@ -115,6 +115,20 @@ QJsonObject snapshotObject(const ApplicationSnapshot& snapshot)
 
 QJsonObject digitalStimulusObject(const DigitalStimulusSnapshot& stimulus)
 {
+    if (!digitalStimulusSupportedByVersionOne(stimulus)) {
+        return QJsonObject{
+            {QStringLiteral("available"), false},
+            {QStringLiteral("configured"), false},
+            {QStringLiteral("switches"), QJsonArray{}},
+            {QStringLiteral("appliedMask"), 0.0},
+            {QStringLiteral("revision"), 0.0},
+            {QStringLiteral("lastWriteTimestampUs"), 0.0},
+            {QStringLiteral("settlingMs"), stimulus.settlingMs},
+            {QStringLiteral("errorCode"), QStringLiteral("CapabilityUnsupported")},
+            {QStringLiteral("message"),
+             QStringLiteral("WebSocket v1 supports digital stimulus bits 0..15 only")},
+        };
+    }
     QJsonArray switches;
     for (const DigitalSwitchDescriptor& descriptor : stimulus.switches) {
         switches.push_back(QJsonObject{
@@ -136,6 +150,22 @@ QJsonObject digitalStimulusObject(const DigitalStimulusSnapshot& stimulus)
         {QStringLiteral("errorCode"), stimulus.errorCode},
         {QStringLiteral("message"), stimulus.message},
     };
+}
+
+bool digitalStimulusSupportedByVersionOne(const DigitalStimulusSnapshot& stimulus)
+{
+    constexpr quint64 mask16 = 0xFFFFu;
+    constexpr quint64 maxSafeInteger = 9007199254740991ULL;
+    if (stimulus.switches.size() > 16 || (stimulus.appliedMask & ~mask16) != 0 ||
+        stimulus.revision > maxSafeInteger) {
+        return false;
+    }
+    for (const DigitalSwitchDescriptor& descriptor : stimulus.switches) {
+        if (descriptor.dutBit < 0 || descriptor.dutBit > 15) {
+            return false;
+        }
+    }
+    return true;
 }
 
 ProtocolParseResult parseRequest(const QString& text)

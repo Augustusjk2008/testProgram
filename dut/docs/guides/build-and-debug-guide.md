@@ -314,6 +314,8 @@ Demo。使用：
 
 - `MB_DDF_v2_Tests`：DDS 单元/集成测试。
 - `MB_DDF_v2_HardwareTests`：目标板 POSIX、IPC、压力和性能测试。
+- `MB_DDF_HW_Tests`：硬件层、产品协议和硬件测试服务单元测试。
+- `MB_DDF_HW_Smoke`：默认只读的真实 XDMA smoke。
 
 这里的 `MB_DDF_v2_HardwareTests` 是“在目标板运行的 DDS 实机测试”，不等同于
 访问 XDMA IP 核的 `MB_DDF_HW_Smoke`。

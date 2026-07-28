@@ -183,13 +183,13 @@ export function RunControlBar() {
         {options.mode !== 'single' ? (
           <label className="run-save-option">
             <input
-              aria-label="保存连续测试完整数据"
+              aria-label="保存连续测试全部测量列"
               checked={options.saveData}
               disabled={active}
               onChange={(event) => saveOptions({ ...options, saveData: event.target.checked })}
               type="checkbox"
             />
-            <span>保存完整数据</span>
+            <span>保存全部测量列</span>
           </label>
         ) : null}
       </div>
@@ -242,7 +242,7 @@ export function RunControlBar() {
         {snapshot.dataSaveEnabled && !snapshot.dataSaveError && (
           <span
             className="data-save-state"
-            title={snapshot.dataFilePath || '后端正在保存完整数据'}
+            title={snapshot.dataFilePath || '后端正在保存全部测量列'}
           >
             {active ? '数据写入中' : '数据已保存'}
           </span>

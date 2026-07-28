@@ -274,6 +274,31 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
               QStringLiteral("ok"));
 }
 
+TEST(WebProtocolTest, HidesDigitalStimulusOutsideVersionOneBitRange)
+{
+    DigitalStimulusSnapshot stimulus;
+    stimulus.available = true;
+    stimulus.configured = true;
+    stimulus.switches = {
+        DigitalSwitchDescriptor{QStringLiteral("di63"),
+                                63,
+                                QStringLiteral("DI63"),
+                                QStringLiteral("High")},
+    };
+    stimulus.appliedMask = quint64{1} << 63;
+    stimulus.revision = 9;
+
+    const QJsonObject json = digitalStimulusObject(stimulus);
+
+    EXPECT_FALSE(json.value(QStringLiteral("available")).toBool());
+    EXPECT_FALSE(json.value(QStringLiteral("configured")).toBool());
+    EXPECT_TRUE(json.value(QStringLiteral("switches")).toArray().isEmpty());
+    EXPECT_EQ(json.value(QStringLiteral("appliedMask")).toDouble(), 0.0);
+    EXPECT_EQ(json.value(QStringLiteral("revision")).toDouble(), 0.0);
+    EXPECT_EQ(json.value(QStringLiteral("errorCode")).toString(),
+              QStringLiteral("CapabilityUnsupported"));
+}
+
 TEST(WebProtocolTest, ProjectsApplicationSampleAsVersionedEvent)
 {
     ApplicationSample sample;

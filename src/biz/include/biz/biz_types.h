@@ -208,6 +208,8 @@ struct HWTEST_BIZ_EXPORT HardwareRequirement {
 struct HWTEST_BIZ_EXPORT SafetyPolicy {
     QVariantMap outputLimits;
     QVariantMap safeState;
+    // Compatibility fields only. The current runtime preserves and serializes
+    // them but does not branch stop/error safety behavior on their values.
     bool enterSafeStateOnStop = true;
     bool enterSafeStateOnError = true;
     double daMinVoltage = 0.0;

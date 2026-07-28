@@ -99,8 +99,8 @@ ssh root@192.168.1.29 "rm -f /dev/shm/MB_DDF_V2_SHM /dev/shm/sem.MB_DDF_V2_SHM_s
 
 - 运行 DDS-only 静态检查。
 - 设置 `ENABLE_TESTS=ON`。
-- 交叉编译 `MB_DDF_v2_Tests` 和 `MB_DDF_v2_HardwareTests`。
-- 确认两个 AArch64 测试二进制存在。
+- 交叉编译 `MB_DDF_v2_Tests`、`MB_DDF_v2_HardwareTests`、`MB_DDF_HW_Tests` 和 `MB_DDF_HW_Smoke`。
+- 确认四个 AArch64 测试二进制存在。
 
 ### 全量构建、部署、实机执行
 
@@ -110,8 +110,7 @@ ssh root@192.168.1.29 "rm -f /dev/shm/MB_DDF_V2_SHM /dev/shm/sem.MB_DDF_V2_SHM_s
 
 用途：
 
-- 先运行普通 DDS 测试二进制。
-- 再运行实机测试二进制。
+- 依次运行两个 DDS 测试二进制、硬件层单元测试和默认只读 XDMA smoke。
 - 保存输出到 `tests/results/<timestamp>`。
 
 ### 只运行普通 DDS 测试
@@ -160,6 +159,8 @@ ssh root@192.168.1.29 "rm -f /dev/shm/MB_DDF_V2_SHM /dev/shm/sem.MB_DDF_V2_SHM_s
 - `[INFO] Static checks passed`
 - `Built target MB_DDF_v2_Tests`
 - `Built target MB_DDF_v2_HardwareTests`
+- `Built target MB_DDF_HW_Tests`
+- `Built target MB_DDF_HW_Smoke`
 - `[INFO] Build-only mode, skipping deploy`
 - `[INFO] All requested test binaries completed successfully`
 
@@ -167,13 +168,13 @@ ssh root@192.168.1.29 "rm -f /dev/shm/MB_DDF_V2_SHM /dev/shm/sem.MB_DDF_V2_SHM_s
 
 ```powershell
 Get-ChildItem -Path .\build\aarch64 -Recurse -File |
-    Where-Object { $_.Name -in @("MB_DDF_v2_Tests", "MB_DDF_v2_HardwareTests") } |
+    Where-Object { $_.Name -in @("MB_DDF_v2_Tests", "MB_DDF_v2_HardwareTests", "MB_DDF_HW_Tests", "MB_DDF_HW_Smoke") } |
     Select-Object FullName
 ```
 
 ### 目标板执行预期
 
-普通测试和实机测试都成功时：
+四个测试二进制都成功时：
 
 - gtest 输出所有用例 `PASSED`。
 - `test-deploy.ps1` 输出 `[INFO] All tests PASSED`。

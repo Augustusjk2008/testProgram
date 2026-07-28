@@ -255,6 +255,7 @@ Status ImuStreamAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
             transportOptions.insert(it.key(), it.value());
         }
     }
+    m_transport->setRequestId(context.requestId);
     if (!m_transport->configure(transportOptions, &error)) {
         return status(ErrorCode::ConfigSchemaError,
                       QStringLiteral("Invalid MB_DDF transport settings: %1").arg(error),

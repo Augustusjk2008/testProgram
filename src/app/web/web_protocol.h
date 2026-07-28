@@ -26,6 +26,7 @@ QJsonObject makeHello();
 QJsonObject makeReply(const QString& id,
                       const ActionResult& result,
                       const QJsonObject& data = {});
+bool digitalStimulusSupportedByVersionOne(const DigitalStimulusSnapshot& stimulus);
 QJsonObject digitalStimulusObject(const DigitalStimulusSnapshot& stimulus);
 QJsonObject makeSnapshot(quint64 sequence,
                          const ApplicationSnapshot& snapshot);

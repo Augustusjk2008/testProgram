@@ -1,5 +1,5 @@
 import { ChartLine } from '@phosphor-icons/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { ChartConfigurator } from '../features/telemetry/ChartConfigurator'
 import { TelemetryChart } from '../features/telemetry/TelemetryChart'
@@ -9,12 +9,11 @@ import {
   createAssignments,
   type SeriesAssignment,
 } from '../features/telemetry/series-config'
+import { chartWorkspaceStorageKey } from '../features/telemetry/chart-workspace-storage'
 import { useSession } from '../features/session/SessionProvider'
 import { DEFAULT_TIME_WINDOW_SECONDS } from '../shared/config'
 import { fieldLabel } from '../shared/format'
 import { setLocalStorageValue } from '../shared/storage'
-
-const STORAGE_KEY = 'hwtest.chart-workspace.v2'
 
 interface StoredConfig {
   layout: ChartLayout
@@ -22,9 +21,9 @@ interface StoredConfig {
   assignments: SeriesAssignment[]
 }
 
-function loadConfig(): StoredConfig {
+function loadConfig(storageKey: string): StoredConfig {
   try {
-    const value = window.localStorage.getItem(STORAGE_KEY)
+    const value = window.localStorage.getItem(storageKey)
     if (value) return JSON.parse(value) as StoredConfig
   } catch {
     // Fall back to the initial workspace when storage is unavailable.
@@ -35,10 +34,23 @@ function loadConfig(): StoredConfig {
 export function ChartsPage() {
   const { clearTelemetry, dataVersion, fields, snapshot, telemetry } = useSession()
   const descriptor = snapshot.descriptor
-  const initial = useMemo(loadConfig, [])
+  const storageKey = useMemo(
+    () => chartWorkspaceStorageKey(descriptor.configId, descriptor.algorithmId),
+    [descriptor.algorithmId, descriptor.configId],
+  )
+  const initial = useMemo(() => loadConfig(storageKey), [])
   const [layout, setLayout] = useState<ChartLayout>(initial.layout)
   const [windowSeconds, setWindowSeconds] = useState(initial.windowSeconds)
   const [assignments, setAssignments] = useState<SeriesAssignment[]>(initial.assignments)
+  const skipNextSave = useRef(false)
+
+  useEffect(() => {
+    const stored = loadConfig(storageKey)
+    skipNextSave.current = true
+    setLayout(stored.layout)
+    setWindowSeconds(stored.windowSeconds)
+    setAssignments(stored.assignments)
+  }, [storageKey])
 
   useEffect(() => {
     const descriptorFields = descriptor.measurements.map(({ id }) => id)
@@ -53,12 +65,16 @@ export function ChartsPage() {
   }, [descriptor.measurements, fields])
 
   useEffect(() => {
-    setLocalStorageValue(STORAGE_KEY, JSON.stringify({
+    if (skipNextSave.current) {
+      skipNextSave.current = false
+      return
+    }
+    setLocalStorageValue(storageKey, JSON.stringify({
       layout,
       windowSeconds,
       assignments,
     }))
-  }, [assignments, layout, windowSeconds])
+  }, [assignments, layout, storageKey, windowSeconds])
 
   const groups = useMemo(
     () => buildChartGroups(assignments, layout),

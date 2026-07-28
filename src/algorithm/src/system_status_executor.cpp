@@ -2,6 +2,7 @@
 
 #include <logging/log_types.h>
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QFileInfo>
 
@@ -103,6 +104,28 @@ bool isStaleReceiveBankError(const ProtocolCatalog& catalog,
         values.value(QStringLiteral("orig_seq")).toUInt() != sequence &&
         values.value(QStringLiteral("err_code")).toUInt() == 0x0102U &&
         values.value(QStringLiteral("detail")).toUInt() == 0U;
+}
+
+void insertFrameLogContext(QVariantMap* context,
+                           const QString& role,
+                           const QByteArray& frame,
+                           bool includeFullFrame)
+{
+    if (context == nullptr) {
+        return;
+    }
+    constexpr int previewBytes = 16;
+    context->insert(role + QStringLiteral("FrameLength"), frame.size());
+    context->insert(
+        role + QStringLiteral("FrameSha256"),
+        QString::fromLatin1(
+            QCryptographicHash::hash(frame, QCryptographicHash::Sha256).toHex()));
+    context->insert(role + QStringLiteral("FrameHexPreview"),
+                    QString::fromLatin1(frame.left(previewBytes).toHex()));
+    if (includeFullFrame) {
+        context->insert(role + QStringLiteral("FrameHex"),
+                        QString::fromLatin1(frame.toHex()));
+    }
 }
 
 } // namespace
@@ -283,6 +306,7 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
     }
 
     QString transportConfigError;
+    m_transport->setRequestId(context.requestId);
     if (!m_transport->configure(transportOptions, &transportConfigError)) {
         return makeStatus(ErrorCode::ConfigSchemaError,
                           QStringLiteral("Invalid MB_DDF transport settings: %1")
@@ -614,8 +638,16 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
         ? QStringLiteral("%1 completed").arg(m_commandName)
         : result.message;
     event.requestId = m_context.requestId;
-    event.context.insert(QStringLiteral("requestFrameHex"), result.rawData.value(QStringLiteral("requestFrameHex")));
-    event.context.insert(QStringLiteral("responseFrameHex"), result.rawData.value(QStringLiteral("responseFrameHex")));
+    const bool includeFullFrames =
+        m_context.tags.value(QStringLiteral("logFullFrames")).toBool();
+    insertFrameLogContext(&event.context,
+                          QStringLiteral("request"),
+                          frame,
+                          includeFullFrames);
+    insertFrameLogContext(&event.context,
+                          QStringLiteral("response"),
+                          transportResult.frame,
+                          includeFullFrames);
     observer.onLog(event);
 
     return Result<TestResult>{Status{}, result};

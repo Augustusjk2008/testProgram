@@ -2,7 +2,7 @@
 
 > 适用项目：多产品通用硬件测试软件（Qt 5.15 兼容、Qt 6 Core/Network/SerialPort/Widgets/WebSockets fallback / C++17 / Windows）。
 >
-> 本文是仓库全局唯一的测试规则、测试准入、运行方式和当前测试清单。[HAL 测试设计报告](hal-test-design-report.md) 仅保留历史快照；其他设计文档不得复制或替代本文的公共规则。
+> 本文是仓库全局唯一的测试规则、测试准入、运行方式和当前测试清单。旧 HAL 测试报告已移入 `../history/`，现行设计文档不得复制或替代本文的公共规则。
 >
 > 当前实现事实以公共 API、CMake 目标和测试注册为准。本文的“源级定义数”不是已执行、已通过或已验证的 CTest 结果。
 
@@ -15,12 +15,12 @@
 | tests/hal/ | hwtest_hal_tests | 10 | 51 | HAL 接口、资源、安全、Mock、多 Adapter 路由、真实 C ABI 调用、宿主串口枚举、Qt 控制 Provider、版本化设备投影与可选任务 ABI |
 | tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
 | tests/biz/ | hwtest_biz_tests | 6 | 41 | 配置、计划、单次/PC 周期/设备流调度、Qt 工作线程、样本、报告和架构边界 |
-| tests/algorithm/ | hwtest_algorithm_tests | 4 | 38 | MB_DDF CSV、流式控制传输、任务范围控制连接与同 worker 停止收尾、陈旧 RX bank 错误的精确重发、固定命令、配置驱动单步交换、惯测一次 START/主动反馈/一次 STOP、异常 STOP 不重发、DI stimulus 和定时器清理 |
-| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 99 | 共享启动/控制器、TUI/GUI/WebSocket、DI 安全态、三种运行能力边界、两类连续运行后端 TXT 保存、单次禁止保存、惯测 Qt UDP START/两帧反馈/STOP 与固定列、异步停止、跨前端等价性和配置目录发现 |
+| tests/algorithm/ | hwtest_algorithm_tests | 4 | 39 | MB_DDF CSV、流式控制传输、任务范围控制连接与同 worker 停止收尾、BIZ requestId 到 HAL 操作传播、默认帧日志脱敏与显式完整帧调试、陈旧 RX bank 错误的精确重发、固定命令、配置驱动单步交换、惯测一次 START/主动反馈/一次 STOP、异常 STOP 不重发、DI stimulus 和定时器清理 |
+| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 100 | 共享启动/控制器、TUI/GUI/WebSocket、Web v1 低 16 位 DI 投影、DI 安全态、三种运行能力边界、两类连续运行后端 TXT 保存、单次禁止保存、惯测 Qt UDP START/两帧反馈/STOP 与固定列、异步停止、跨前端等价性和配置目录发现 |
 | src/adapters/ni_daqmx/tests/ | hwtest_ni_daqmx_adapter_fake_tests | 1 | 0 | 原生 NI-DAQmx Adapter 与 Fake NIDAQmx API 的自定义 main/CTest |
-| 合计 | 7 个 GoogleTest + 1 个 Fake CTest | 32 | 236 | 当前源级 GoogleTest 清单及一个非 GoogleTest 测试源 |
+| 合计 | 7 个 GoogleTest + 1 个 Fake CTest | 32 | 238 | 当前源级 GoogleTest 清单及一个非 GoogleTest 测试源 |
 
-236 是当前测试源码中的 GoogleTest 定义数。Windows 完整构建后的 CTest 清单为 247 条：236 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试和 1 条 `NiDaqmxAdapterFakeTest`。清单数量不表示已经执行或通过，只有实际运行 CTest 并报告零失败才能作通过结论。
+238 是当前测试源码中的 GoogleTest 定义数。Windows 完整构建并完成测试发现后的当前 CTest 清单为 249 条：238 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试和 1 条 `NiDaqmxAdapterFakeTest`。清单数量本身不表示通过，执行证据见下述按时间记录。
 
 2026-07-27 在 Windows/Visual Studio 2022 x64 构建树中设置已批准的 `MB_DDF_PROTOCOL_CSV_DIR` 后，Debug 与 Release 完整构建均成功，两个配置的 CTest 均为 232/232 通过。该结果包含仓库 Fake NIDAQmx、动态 Adapter fixture 和自退出的应用进程测试；证据等级仍按下文分类。
 
@@ -30,9 +30,11 @@
 
 2026-07-28 新增 IMU 设备持续流后，外部来源和 `dut/` 的协议生成器测试均为 19/19，通过 37 份 CSV 严格校验；两套 DUT `hw_tests` 均完成 AArch64 Debug 交叉构建，但未部署或运行目标板。宿主使用外部 37 份 CSV 顺序完成 Debug 与 Release 全量构建，两个配置均为 247/247 CTest 通过、无失败、无跳过；覆盖一次 START、完整主动反馈、至少一帧通过、零帧失败、异常 STOP 不重发和固定 23 列 TXT。浏览器前端仍为 8 个文件、37/37 Vitest 通过，TypeScript/Vite 单文件构建成功。Release 仅保留 Qt 5 `QVector<QString>` 与当前 MSVC/GoogleTest 组合产生的既有 `C4996/STL4043` 弃用警告。该自动化证明协议、宿主和交叉构建软件路径，不证明 COM4、921600、400 Hz 吞吐或真机停止收尾。
 
-31 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 236。
+2026-07-28 完成设计—代码一致性收敛后，新增 requestId 全操作传播、默认帧日志脱敏/显式完整帧调试、WebSocket v1 高位 DI 隐藏和按配置隔离图表工作区回归。使用外部 37 份 CSV 完成 Debug 与 Release 全量构建，两个配置均为 249/249 CTest 通过、无失败、无跳过；浏览器前端为 9 个文件、39/39 Vitest 通过，TypeScript/Vite 单文件生产构建成功；`dut/` 的 37 份协议 CSV 校验通过。两个宿主配置仍只出现既有 Qt 5/MSVC `C4996/STL4043` 弃用警告。本轮未执行 DUT AArch64 交叉构建或目标板测试，不能据此增加板端证据等级。
 
-浏览器前端当前有 8 个 `*.test.ts` 文件、37 条 Vitest，用于协议解析/请求、两类连续模式的 `saveData` 透传、设备持续模式清除 PC 周期参数与单次强制关闭保存、配置 descriptor 与测试配置白名单目录校验、默认配置选择、配置测量标签/单位、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组，以及 DI WebSocket payload 严格解析、命令队列合并、revision、失败回滚、复位串行、active-low、回读位和 settling。它们由 `npm test` 独立运行，不计入上述 247 条 CTest。
+31 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 238。
+
+浏览器前端当前有 9 个 `*.test.ts` 文件、39 条 Vitest，用于协议解析/请求、两类连续模式的 `saveData` 透传、设备持续模式清除 PC 周期参数与单次强制关闭保存、配置 descriptor 与测试配置白名单目录校验、默认配置选择、配置测量标签/单位、按配置隔离的曲线工作区 key、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组，以及 DI WebSocket payload 严格解析、命令队列合并、revision、失败回滚、复位串行、active-low、回读位和 settling。它们由 `npm test` 独立运行，不计入上述 249 条 CTest。
 
 ## 2. 当前覆盖与条件资产
 
@@ -48,9 +50,9 @@
 
 下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
 
-- 5 个 MB_DDF 协议测试和 39 个 MB_DDF 跨层/集成测试依赖 `MB_DDF_PROTOCOL_CSV_DIR` 指向的外部 CSV 资产目录；后者包含应用/TUI/GUI/Web UDP 运行、连续采样/TXT 保存、停止、关闭或等价性测试。
+- 6 个 MB_DDF 协议测试和 41 个 MB_DDF 算法/跨层/集成测试依赖 `MB_DDF_PROTOCOL_CSV_DIR` 指向的外部 CSV 资产目录；后者包含算法帧日志、应用/TUI/GUI/Web UDP 运行、连续采样/TXT 保存、停止、关闭或等价性测试。
 - BIZ 的导入附件样例测试依赖 tmp/hwtest_BIZ/configs/sample_product.testcfg；tmp 不是仓库实现事实。
-- 算法测试中有 13 个自包含的帧、传输、DI stimulus、能力判定或临时 CSV 用例；其余 25 个依赖外部 MB_DDF CSV。
+- 算法测试中有 13 个自包含的帧、传输、DI stimulus、能力判定或临时 CSV 用例；其余 26 个依赖外部 MB_DDF CSV。
 
 协议 CSV 是运行期资产。用户已批准 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容作为 MB_DDF 基线，当前为 37 个 CSV；其中新增 5 份 `imu_stream_start_request/response`、`imu_stream_feedback_response`、`imu_stream_stop_request/response`。协议测试按一文件一定义及当前实际字段校验；`dut/` 保存同步副本，但宿主测试未把它接成默认 fixture，仍可能因外部目录缺失而跳过。基线已批准和文件已复制都不等于 manifest/hash 自动机制已经实现。
 
@@ -200,4 +202,4 @@ NI-DAQmx 的默认自动化是 Fake，不要求安装真实 SDK 或连接设备�
     if (-not (Test-Path $env:MB_DDF_PROTOCOL_CSV_DIR)) { throw "MB_DDF CSV assets are required" }
     ctest --test-dir build_vs -C Debug -R "^(ImuStreamExecutorTest|MbddfProtocolTest|SystemStatusExecutorTest|HalControlTransportTest|SystemStatusUdpIntegrationTest|TestApplicationControllerTest|TuiShellTest|GuiMainWindowTest|WebProtocolTest|WebSocket|FrontendEquivalenceTest)\." --output-on-failure
 
-HAL 专属覆盖快照和缺口见 [HAL 测试设计报告](hal-test-design-report.md)。本文以外的历史计划不是现行测试规则或通过证据。
+HAL 当前覆盖和缺口以第 2 节表格为准。`../history/` 和本文以外的历史计划不是现行测试规则或通过证据。
