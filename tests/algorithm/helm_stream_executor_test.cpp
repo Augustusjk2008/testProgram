@@ -6,6 +6,7 @@
 
 #include <biz/i_algorithm_executor.h>
 
+#include <QDateTime>
 #include <QFileInfo>
 
 #include <atomic>
@@ -83,6 +84,11 @@ public:
             for (const QByteArray& item : m_feedback) m_reads.push_back(item);
         } else if (m_writes.size() == 2 && !m_stopAck.isEmpty()) {
             m_reads.push_back(m_stopAck);
+        } else if (m_writes.size() == 3) {
+            m_reads.push_back(m_retryStartAck);
+            for (const QByteArray& item : m_retryFeedback) m_reads.push_back(item);
+        } else if (m_writes.size() == 4 && !m_retryStopAck.isEmpty()) {
+            m_reads.push_back(m_retryStopAck);
         }
         TransportResult result;
         result.ok = true;
@@ -123,6 +129,16 @@ public:
         m_emptyCallback = std::move(callback);
     }
 
+    void setRetryAttempt(QByteArray startAck,
+                         std::vector<QByteArray> feedback,
+                         QByteArray stopAck)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_retryStartAck = std::move(startAck);
+        m_retryFeedback = std::move(feedback);
+        m_retryStopAck = std::move(stopAck);
+    }
+
     std::vector<QByteArray> writes() const
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -149,6 +165,9 @@ private:
     QByteArray m_startAck;
     std::vector<QByteArray> m_feedback;
     QByteArray m_stopAck;
+    QByteArray m_retryStartAck;
+    std::vector<QByteArray> m_retryFeedback;
+    QByteArray m_retryStopAck;
     std::deque<QByteArray> m_reads;
     std::vector<QByteArray> m_writes;
     std::function<void()> m_emptyCallback;
@@ -302,6 +321,20 @@ QVariantMap twoSampleFeedback()
     return values;
 }
 
+QVariantMap oneSampleFeedback(quint64 timestamp, quint16 serialA, quint16 serialB)
+{
+    QVariantMap values = twoSampleFeedback();
+    values.insert(QStringLiteral("sample_count"), 1);
+    values.insert(QStringLiteral("first_timestamp_us_low"),
+                  static_cast<quint32>(timestamp & 0xFFFFFFFFu));
+    values.insert(QStringLiteral("first_timestamp_us_high"),
+                  static_cast<quint32>(timestamp >> 32));
+    values.insert(QStringLiteral("sample[0].delta_us"), 0);
+    values.insert(QStringLiteral("sample[0].serial_a"), serialA);
+    values.insert(QStringLiteral("sample[0].serial_b"), serialB);
+    return values;
+}
+
 TEST(HelmStreamExecutorTest, SendsParametersSplitsBatchIntoCompleteSamplesAndStops)
 {
     const QString assets = catalogDirectory();
@@ -329,15 +362,24 @@ TEST(HelmStreamExecutorTest, SendsParametersSplitsBatchIntoCompleteSamplesAndSto
         if (executor.sampleCount() >= 2) EXPECT_TRUE(executor.requestStop(100).ok());
     });
 
+    const qint64 earliestAnchorUs = QDateTime::currentMSecsSinceEpoch() * 1000;
     const auto outcome = executor.executeStep(streamStep(), control, observer);
+    const qint64 latestAnchorUs = QDateTime::currentMSecsSinceEpoch() * 1000;
 
     ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
     EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Pass);
     EXPECT_EQ(outcome.value.rawData.value(QStringLiteral("sampleCount")).toULongLong(), 2u);
     ASSERT_EQ(observer.samples.size(), 2);
-    constexpr qint64 firstTimestamp = (qint64{2} << 32) + 0x10;
-    EXPECT_EQ(observer.samples.at(0).timestampUs, firstTimestamp);
-    EXPECT_EQ(observer.samples.at(1).timestampUs, firstTimestamp + 1000);
+    EXPECT_GE(observer.samples.at(0).timestampUs, earliestAnchorUs);
+    EXPECT_LE(observer.samples.at(0).timestampUs, latestAnchorUs);
+    EXPECT_EQ(observer.samples.at(1).timestampUs - observer.samples.at(0).timestampUs,
+              1000);
+    EXPECT_EQ(observer.samples.at(0).streamElapsedUs, 0);
+    EXPECT_EQ(observer.samples.at(1).streamElapsedUs, 1000);
+    constexpr quint64 firstDdsTimestampUs = (quint64{2} << 32) + 0x10;
+    EXPECT_EQ(observer.samples.at(0).values.value(
+                  QStringLiteral("dds_timestamp_us")).toULongLong(),
+              firstDdsTimestampUs);
     EXPECT_EQ(observer.samples.at(0).values.value(QStringLiteral("serial_a")).toUInt(), 90u);
     EXPECT_EQ(observer.samples.at(1).values.value(QStringLiteral("serial_b")).toUInt(), 101u);
     EXPECT_NEAR(observer.samples.at(1).values.value(QStringLiteral("fdb[3]")).toDouble(),
@@ -383,6 +425,270 @@ TEST(HelmStreamExecutorTest, SendsParametersSplitsBatchIntoCompleteSamplesAndSto
                          QStringLiteral("sweep_duration_s")).toDouble(),
                      25.0);
     EXPECT_EQ(startValues.value(QStringLiteral("enable")).toUInt(), 15u);
+    EXPECT_TRUE(executor.finishRun().ok());
+}
+
+TEST(HelmStreamExecutorTest, ReanchorsUtcTimeWhenExecuteStepRunsAgain)
+{
+    const QString assets = catalogDirectory();
+    ASSERT_TRUE(QFileInfo(assets).isDir());
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+
+    constexpr quint64 firstDdsTimestampUs = (quint64{2} << 32) + 0x10;
+    auto transport = std::make_unique<StreamingTransport>(
+        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2345,
+                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0x9000,
+                     oneSampleFeedback(firstDdsTimestampUs, 100, 200)),
+            QByteArray::fromHex("55AA")},
+        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2346,
+                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}));
+    StreamingTransport* transportPtr = transport.get();
+    transportPtr->setRetryAttempt(
+        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2347,
+                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{frameFor(
+            catalog, QStringLiteral("helm_feedback_response"), 0x9001,
+            oneSampleFeedback(firstDdsTimestampUs + 1000, 101, 201))},
+        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2348,
+                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}));
+    HelmStreamAlgorithmExecutor executor(std::move(transport));
+    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
+                                 executionConfig(assets)).ok());
+    RunControl control;
+    Observer firstObserver;
+
+    const auto first = executor.executeStep(streamStep(), control, firstObserver);
+
+    EXPECT_FALSE(first.ok());
+    ASSERT_EQ(firstObserver.samples.size(), 1);
+    EXPECT_GT(firstObserver.samples.first().timestampUs, 0);
+
+    Observer retryObserver([&executor] {
+        EXPECT_TRUE(executor.requestStop(100).ok());
+    });
+    const qint64 earliestRetryAnchorUs =
+        QDateTime::currentMSecsSinceEpoch() * 1000;
+    const auto retry = executor.executeStep(streamStep(), control, retryObserver);
+    const qint64 latestRetryAnchorUs =
+        QDateTime::currentMSecsSinceEpoch() * 1000;
+
+    ASSERT_TRUE(retry.ok()) << retry.status.error.message.toStdString();
+    ASSERT_EQ(retryObserver.samples.size(), 1);
+    EXPECT_EQ(retryObserver.samples.first().streamElapsedUs, 0);
+    EXPECT_GE(retryObserver.samples.first().timestampUs, earliestRetryAnchorUs);
+    EXPECT_LE(retryObserver.samples.first().timestampUs, latestRetryAnchorUs);
+    EXPECT_TRUE(executor.finishRun().ok());
+}
+
+TEST(HelmStreamExecutorTest, NonForwardSequencesDoNotBecomeHugeLossCounts)
+{
+    const QString assets = catalogDirectory();
+    ASSERT_TRUE(QFileInfo(assets).isDir());
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+
+    constexpr quint64 firstDdsTimestampUs = (quint64{2} << 32) + 0x10;
+    auto transport = std::make_unique<StreamingTransport>(
+        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2345,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0x9000,
+                     oneSampleFeedback(firstDdsTimestampUs, 100, 200)),
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0x9000,
+                     oneSampleFeedback(firstDdsTimestampUs + 1000, 100, 200)),
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0x8FFF,
+                     oneSampleFeedback(firstDdsTimestampUs + 2000, 99, 199)),
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0x0FFF,
+                     oneSampleFeedback(firstDdsTimestampUs + 3000,
+                                       static_cast<quint16>(99u + 0x8000u),
+                                       static_cast<quint16>(199u + 0x8000u)))},
+        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2346,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}));
+    HelmStreamAlgorithmExecutor executor(std::move(transport));
+    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
+                                 executionConfig(assets)).ok());
+    RunControl control;
+    Observer observer([&executor] {
+        if (executor.sampleCount() >= 4) EXPECT_TRUE(executor.requestStop(100).ok());
+    });
+
+    const auto outcome = executor.executeStep(streamStep(), control, observer);
+
+    ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
+    ASSERT_EQ(observer.samples.size(), 4);
+    for (int index = 1; index < observer.samples.size(); ++index) {
+        const QVariantMap& values = observer.samples.at(index).values;
+        EXPECT_EQ(values.value(QStringLiteral("missing_product_frames")).toUInt(), 0u);
+        EXPECT_EQ(values.value(QStringLiteral("missing_serial_a")).toUInt(), 0u);
+        EXPECT_EQ(values.value(QStringLiteral("missing_serial_b")).toUInt(), 0u);
+        EXPECT_FALSE(values.value(QStringLiteral("product_frame_discontinuity")).toBool());
+        EXPECT_FALSE(values.value(QStringLiteral("serial_a_discontinuity")).toBool());
+        EXPECT_FALSE(values.value(QStringLiteral("serial_b_discontinuity")).toBool());
+    }
+    EXPECT_TRUE(executor.finishRun().ok());
+}
+
+TEST(HelmStreamExecutorTest, SequenceContinuityAcceptsUint16Wraparound)
+{
+    const QString assets = catalogDirectory();
+    ASSERT_TRUE(QFileInfo(assets).isDir());
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+
+    constexpr quint64 firstDdsTimestampUs = (quint64{2} << 32) + 0x10;
+    auto transport = std::make_unique<StreamingTransport>(
+        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2345,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0xFFFF,
+                     oneSampleFeedback(firstDdsTimestampUs, 0xFFFF, 0xFFFF)),
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0,
+                     oneSampleFeedback(firstDdsTimestampUs + 1000, 0, 0))},
+        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2346,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}));
+    HelmStreamAlgorithmExecutor executor(std::move(transport));
+    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
+                                 executionConfig(assets)).ok());
+    RunControl control;
+    Observer observer([&executor] {
+        if (executor.sampleCount() >= 2) EXPECT_TRUE(executor.requestStop(100).ok());
+    });
+
+    const auto outcome = executor.executeStep(streamStep(), control, observer);
+
+    ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
+    ASSERT_EQ(observer.samples.size(), 2);
+    const QVariantMap& values = observer.samples.at(1).values;
+    EXPECT_EQ(values.value(QStringLiteral("missing_product_frames")).toUInt(), 0u);
+    EXPECT_EQ(values.value(QStringLiteral("missing_serial_a")).toUInt(), 0u);
+    EXPECT_EQ(values.value(QStringLiteral("missing_serial_b")).toUInt(), 0u);
+    EXPECT_TRUE(executor.finishRun().ok());
+}
+
+TEST(HelmStreamExecutorTest, ForwardSequenceGapsReportOnlyMissingFrames)
+{
+    const QString assets = catalogDirectory();
+    ASSERT_TRUE(QFileInfo(assets).isDir());
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+
+    constexpr quint64 firstDdsTimestampUs = (quint64{2} << 32) + 0x10;
+    auto transport = std::make_unique<StreamingTransport>(
+        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2345,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 100,
+                     oneSampleFeedback(firstDdsTimestampUs, 200, 300)),
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 103,
+                     oneSampleFeedback(firstDdsTimestampUs + 1000, 203, 303))},
+        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2346,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}));
+    HelmStreamAlgorithmExecutor executor(std::move(transport));
+    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
+                                 executionConfig(assets)).ok());
+    RunControl control;
+    Observer observer([&executor] {
+        if (executor.sampleCount() >= 2) EXPECT_TRUE(executor.requestStop(100).ok());
+    });
+
+    const auto outcome = executor.executeStep(streamStep(), control, observer);
+
+    ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
+    ASSERT_EQ(observer.samples.size(), 2);
+    const QVariantMap& values = observer.samples.at(1).values;
+    EXPECT_EQ(values.value(QStringLiteral("missing_product_frames")).toUInt(), 2u);
+    EXPECT_EQ(values.value(QStringLiteral("missing_serial_a")).toUInt(), 2u);
+    EXPECT_EQ(values.value(QStringLiteral("missing_serial_b")).toUInt(), 2u);
+    EXPECT_TRUE(values.value(QStringLiteral("product_frame_discontinuity")).toBool());
+    EXPECT_TRUE(values.value(QStringLiteral("serial_a_discontinuity")).toBool());
+    EXPECT_TRUE(values.value(QStringLiteral("serial_b_discontinuity")).toBool());
+    EXPECT_TRUE(executor.finishRun().ok());
+}
+
+TEST(HelmStreamExecutorTest, RejectsDdsTimestampThatMovesBackwards)
+{
+    const QString assets = catalogDirectory();
+    ASSERT_TRUE(QFileInfo(assets).isDir());
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+
+    constexpr quint64 firstDdsTimestampUs = (quint64{2} << 32) + 0x10;
+    auto transport = std::make_unique<StreamingTransport>(
+        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2345,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 100,
+                     oneSampleFeedback(firstDdsTimestampUs, 200, 300)),
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 101,
+                     oneSampleFeedback(firstDdsTimestampUs - 1, 201, 301))},
+        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2346,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}));
+    HelmStreamAlgorithmExecutor executor(std::move(transport));
+    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
+                                 executionConfig(assets)).ok());
+    RunControl control;
+    Observer observer;
+
+    const auto outcome = executor.executeStep(streamStep(), control, observer);
+
+    EXPECT_FALSE(outcome.ok());
+    EXPECT_EQ(outcome.status.code, hwtest::biz::ErrorCode::ProtocolParseError);
+    EXPECT_NE(outcome.status.error.message.indexOf(QStringLiteral("moved backwards")),
+              -1);
+    ASSERT_EQ(observer.samples.size(), 1);
+    EXPECT_TRUE(executor.finishRun().ok());
+}
+
+TEST(HelmStreamExecutorTest, RejectsDdsTimestampOutsideJsonSafeIntegerRange)
+{
+    const QString assets = catalogDirectory();
+    ASSERT_TRUE(QFileInfo(assets).isDir());
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+
+    constexpr quint64 firstUnsafeDdsTimestampUs = (quint64{1} << 53);
+    auto transport = std::make_unique<StreamingTransport>(
+        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2345,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 100,
+                     oneSampleFeedback(firstUnsafeDdsTimestampUs, 200, 300))},
+        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2346,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}));
+    HelmStreamAlgorithmExecutor executor(std::move(transport));
+    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
+                                 executionConfig(assets)).ok());
+    RunControl control;
+    Observer observer([&executor] {
+        if (executor.sampleCount() >= 1) EXPECT_TRUE(executor.requestStop(100).ok());
+    });
+
+    const auto outcome = executor.executeStep(streamStep(), control, observer);
+
+    EXPECT_FALSE(outcome.ok());
+    EXPECT_EQ(outcome.status.code, hwtest::biz::ErrorCode::ProtocolParseError);
+    EXPECT_NE(outcome.status.error.message.indexOf(QStringLiteral("safe integer")),
+              -1);
+    EXPECT_TRUE(observer.samples.isEmpty());
     EXPECT_TRUE(executor.finishRun().ok());
 }
 

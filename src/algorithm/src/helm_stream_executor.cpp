@@ -9,7 +9,6 @@
 #include <QFileInfo>
 
 #include <algorithm>
-#include <limits>
 
 namespace hwtest::algorithm::mbddf {
 namespace {
@@ -121,9 +120,14 @@ TestResult errorResult(const TestStep& step,
 
 quint16 missingBefore(quint16 previous, quint16 current)
 {
-    const quint16 expected = static_cast<quint16>(previous + 1u);
-    return current == expected ? 0u : static_cast<quint16>(current - expected);
+    const quint16 advance = static_cast<quint16>(current - previous);
+    if (advance <= 1u || advance >= 0x8000u) {
+        return 0u;
+    }
+    return static_cast<quint16>(advance - 1u);
 }
+
+constexpr quint64 kMaxJsonSafeInteger = (quint64{1} << 53) - 1;
 
 } // namespace
 
@@ -270,11 +274,15 @@ Status HelmStreamAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
     m_context = context;
     m_effectiveParameters = normalized.value;
     m_sampleCount = 0;
+    m_timestampAnchorUtcUs = 0;
+    m_firstDdsTimestampUs = 0;
+    m_lastDdsTimestampUs = 0;
     m_lastValues.clear();
     m_lastFeedbackFrame.clear();
     m_hasProductSequence = false;
     m_hasSerialA = false;
     m_hasSerialB = false;
+    m_hasDdsTimestamp = false;
     m_stopRequested.store(false);
     m_prepared = true;
     return {};
@@ -350,9 +358,9 @@ Status HelmStreamAlgorithmExecutor::publishFeedback(
         (static_cast<quint64>(values.value(
              QStringLiteral("first_timestamp_us_high")).toUInt()) << 32) |
         values.value(QStringLiteral("first_timestamp_us_low")).toUInt();
-    if (baseTimestamp > static_cast<quint64>(std::numeric_limits<qint64>::max())) {
+    if (baseTimestamp > kMaxJsonSafeInteger) {
         return status(ErrorCode::ProtocolParseError,
-                      QStringLiteral("Helm feedback timestamp exceeds signed 64-bit range"),
+                      QStringLiteral("Helm feedback timestamp exceeds JSON safe integer range"),
                       QStringLiteral("mbddf.helm_stream.feedback"));
     }
 
@@ -374,15 +382,41 @@ Status HelmStreamAlgorithmExecutor::publishFeedback(
         const quint16 missingB = m_hasSerialB ? missingBefore(m_lastSerialB, serialB) : 0;
         const quint64 timestamp = baseTimestamp +
             values.value(source + QStringLiteral("delta_us")).toUInt();
-        if (timestamp > static_cast<quint64>(std::numeric_limits<qint64>::max())) {
+        if (timestamp > kMaxJsonSafeInteger) {
             return status(ErrorCode::ProtocolParseError,
-                          QStringLiteral("Helm feedback sample timestamp overflow"),
+                          QStringLiteral("Helm feedback sample timestamp exceeds JSON safe integer range"),
+                          QStringLiteral("mbddf.helm_stream.feedback"));
+        }
+        if (m_hasDdsTimestamp && timestamp < m_lastDdsTimestampUs) {
+            return status(ErrorCode::ProtocolParseError,
+                          QStringLiteral("Helm feedback DDS timestamp moved backwards"),
+                          QStringLiteral("mbddf.helm_stream.feedback"));
+        }
+        if (!m_hasDdsTimestamp) {
+            m_timestampAnchorUtcUs = nowUs();
+            m_firstDdsTimestampUs = timestamp;
+            m_lastDdsTimestampUs = timestamp;
+            m_hasDdsTimestamp = true;
+        }
+        const quint64 elapsed = timestamp - m_firstDdsTimestampUs;
+        if (elapsed > kMaxJsonSafeInteger) {
+            return status(ErrorCode::ProtocolParseError,
+                          QStringLiteral("Helm feedback elapsed timestamp overflow"),
+                          QStringLiteral("mbddf.helm_stream.feedback"));
+        }
+        const qint64 streamElapsedUs = static_cast<qint64>(elapsed);
+        if (m_timestampAnchorUtcUs < 0 ||
+            m_timestampAnchorUtcUs > kMaxJsonSafeInteger ||
+            m_timestampAnchorUtcUs > kMaxJsonSafeInteger - streamElapsedUs) {
+            return status(ErrorCode::ProtocolParseError,
+                          QStringLiteral("Helm feedback UTC timestamp overflow"),
                           QStringLiteral("mbddf.helm_stream.feedback"));
         }
 
         hwtest::biz::RawSample sample;
-        sample.timestampUs = static_cast<qint64>(timestamp);
+        sample.timestampUs = m_timestampAnchorUtcUs + streamElapsedUs;
         sample.channelId = QStringLiteral("HELM_STREAM");
+        sample.streamElapsedUs = streamElapsedUs;
         sample.values.insert(QStringLiteral("seq"), productSequence);
         sample.values.insert(QStringLiteral("status"),
                              values.value(QStringLiteral("status")));
@@ -466,6 +500,7 @@ Status HelmStreamAlgorithmExecutor::publishFeedback(
         m_lastSerialB = serialB;
         m_hasSerialA = true;
         m_hasSerialB = true;
+        m_lastDdsTimestampUs = timestamp;
         ++m_sampleCount;
         m_lastValues = sample.values;
         observer.onSample(step.stepId, sample);
@@ -578,11 +613,15 @@ Result<TestResult> HelmStreamAlgorithmExecutor::executeStep(
     }
 
     m_sampleCount = 0;
+    m_timestampAnchorUtcUs = 0;
+    m_firstDdsTimestampUs = 0;
+    m_lastDdsTimestampUs = 0;
     m_lastValues.clear();
     m_lastFeedbackFrame.clear();
     m_hasProductSequence = false;
     m_hasSerialA = false;
     m_hasSerialB = false;
+    m_hasDdsTimestamp = false;
     m_streamMayBeActive = false;
     m_stopConfirmed = false;
     m_stopAttempted = false;
@@ -780,8 +819,12 @@ Status HelmStreamAlgorithmExecutor::reset()
     m_streamMayBeActive = false;
     m_stopConfirmed = false;
     m_sampleCount = 0;
+    m_timestampAnchorUtcUs = 0;
+    m_firstDdsTimestampUs = 0;
+    m_lastDdsTimestampUs = 0;
     m_lastValues.clear();
     m_lastFeedbackFrame.clear();
+    m_hasDdsTimestamp = false;
     return {};
 }
 

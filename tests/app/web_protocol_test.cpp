@@ -348,6 +348,7 @@ TEST(WebProtocolTest, ProjectsApplicationSampleAsVersionedEvent)
     sample.stepId = QStringLiteral("SYSTEM_STATUS");
     sample.channelId = QStringLiteral("SYSTEM_STATUS");
     sample.timestampUs = 1785000000123456LL;
+    sample.streamElapsedUs = 15000;
     sample.cycleIndex = 7;
     sample.values.insert(QStringLiteral("cpu_usage"), 12.5);
     sample.values.insert(QStringLiteral("power_on_sec"), 99u);
@@ -365,6 +366,8 @@ TEST(WebProtocolTest, ProjectsApplicationSampleAsVersionedEvent)
     EXPECT_EQ(json.value(QStringLiteral("channelId")).toString(), sample.channelId);
     EXPECT_EQ(json.value(QStringLiteral("timestampUs")).toDouble(),
               static_cast<double>(sample.timestampUs));
+    EXPECT_EQ(json.value(QStringLiteral("streamElapsedUs")).toDouble(),
+              static_cast<double>(sample.streamElapsedUs));
     EXPECT_EQ(json.value(QStringLiteral("cycleIndex")).toInt(), 7);
     EXPECT_DOUBLE_EQ(json.value(QStringLiteral("values"))
                          .toObject()
@@ -376,6 +379,44 @@ TEST(WebProtocolTest, ProjectsApplicationSampleAsVersionedEvent)
                   .value(QStringLiteral("requestFrameHex"))
                   .toString(),
               QStringLiteral("55aa"));
+}
+
+TEST(WebProtocolTest, OmitsUnavailableStreamTimeButPreservesZeroOrigin)
+{
+    ApplicationSample sample;
+    sample.timestampUs = 1785000000123456LL;
+    sample.streamElapsedUs = -2;
+
+    QJsonObject json = makeSample(1, sample)
+                           .value(QStringLiteral("sample"))
+                           .toObject();
+    EXPECT_FALSE(json.contains(QStringLiteral("streamElapsedUs")));
+
+    sample.streamElapsedUs = 0;
+    json = makeSample(2, sample)
+               .value(QStringLiteral("sample"))
+               .toObject();
+    ASSERT_TRUE(json.contains(QStringLiteral("streamElapsedUs")));
+    EXPECT_DOUBLE_EQ(json.value(QStringLiteral("streamElapsedUs")).toDouble(), 0.0);
+
+    constexpr qint64 maxJsonSafeInteger = 9007199254740991LL;
+    sample.timestampUs = maxJsonSafeInteger;
+    sample.streamElapsedUs = maxJsonSafeInteger;
+    json = makeSample(3, sample)
+               .value(QStringLiteral("sample"))
+               .toObject();
+    EXPECT_DOUBLE_EQ(json.value(QStringLiteral("timestampUs")).toDouble(),
+                     static_cast<double>(maxJsonSafeInteger));
+    EXPECT_DOUBLE_EQ(json.value(QStringLiteral("streamElapsedUs")).toDouble(),
+                     static_cast<double>(maxJsonSafeInteger));
+
+    sample.timestampUs = -1;
+    EXPECT_TRUE(makeSample(4, sample).isEmpty());
+    sample.timestampUs = maxJsonSafeInteger + 1;
+    EXPECT_TRUE(makeSample(5, sample).isEmpty());
+    sample.timestampUs = maxJsonSafeInteger;
+    sample.streamElapsedUs = maxJsonSafeInteger + 1;
+    EXPECT_TRUE(makeSample(6, sample).isEmpty());
 }
 
 TEST(WebProtocolTest, SerializesCompactJson)

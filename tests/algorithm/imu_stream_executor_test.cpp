@@ -6,6 +6,7 @@
 
 #include <biz/i_algorithm_executor.h>
 
+#include <QDateTime>
 #include <QFileInfo>
 
 #include <atomic>
@@ -99,6 +100,13 @@ public:
             if (!m_stopAck.isEmpty()) {
                 m_reads.push_back(m_stopAck);
             }
+        } else if (m_writes.size() == 3) {
+            m_reads.push_back(m_retryStartAck);
+            for (const QByteArray& feedback : m_retryFeedback) {
+                m_reads.push_back(feedback);
+            }
+        } else if (m_writes.size() == 4 && !m_retryStopAck.isEmpty()) {
+            m_reads.push_back(m_retryStopAck);
         }
         TransportResult result;
         result.ok = true;
@@ -149,6 +157,16 @@ public:
         m_failStopWrite = fail;
     }
 
+    void setRetryAttempt(QByteArray startAck,
+                         std::vector<QByteArray> feedback,
+                         QByteArray stopAck)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_retryStartAck = std::move(startAck);
+        m_retryFeedback = std::move(feedback);
+        m_retryStopAck = std::move(stopAck);
+    }
+
     std::vector<QByteArray> writes() const
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -174,6 +192,9 @@ private:
     QByteArray m_startAck;
     std::vector<QByteArray> m_feedback;
     QByteArray m_stopAck;
+    QByteArray m_retryStartAck;
+    std::vector<QByteArray> m_retryFeedback;
+    QByteArray m_retryStopAck;
     std::deque<QByteArray> m_reads;
     std::vector<QByteArray> m_writes;
     std::function<void()> m_emptyCallback;
@@ -308,12 +329,16 @@ TEST(ImuStreamExecutorTest, SendsOneStartStreamsCompleteSamplesAndSendsOneStop)
     feedbackValues.insert(QStringLiteral("work_status"), 0x78);
     feedbackValues.insert(QStringLiteral("software_version"), 0xABCD);
     feedbackValues.insert(QStringLiteral("source_reserved"), 0xEF01);
+    QVariantMap secondFeedbackValues = feedbackValues;
+    secondFeedbackValues.insert(QStringLiteral("source_seq"), 0x00F2);
     auto transport = std::make_unique<StreamingTransport>(
         frameFor(catalog, QStringLiteral("imu_stream_start_response"), 0x1234,
                  {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}),
-        std::vector<QByteArray>{frameFor(
-            catalog, QStringLiteral("imu_stream_feedback_response"), 0x9000,
-            feedbackValues)},
+        std::vector<QByteArray>{
+            frameFor(catalog, QStringLiteral("imu_stream_feedback_response"), 0x9000,
+                     feedbackValues),
+            frameFor(catalog, QStringLiteral("imu_stream_feedback_response"), 0x9001,
+                     secondFeedbackValues)},
         frameFor(catalog, QStringLiteral("imu_stream_stop_response"), 0x1235,
                  {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}));
     StreamingTransport* transportPtr = transport.get();
@@ -321,14 +346,23 @@ TEST(ImuStreamExecutorTest, SendsOneStartStreamsCompleteSamplesAndSendsOneStop)
     ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
                                  executionConfig(assets)).ok());
     RunControl control;
-    Observer observer([&executor] { EXPECT_TRUE(executor.requestStop(100).ok()); });
+    int observedSamples = 0;
+    Observer observer([&executor, &observedSamples] {
+        if (++observedSamples >= 2) {
+            EXPECT_TRUE(executor.requestStop(100).ok());
+        }
+    });
 
     const auto outcome = executor.executeStep(streamStep(), control, observer);
 
     ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
     EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Pass);
-    EXPECT_EQ(outcome.value.rawData.value(QStringLiteral("sampleCount")).toULongLong(), 1u);
-    ASSERT_EQ(observer.samples.size(), 1);
+    EXPECT_EQ(outcome.value.rawData.value(QStringLiteral("sampleCount")).toULongLong(), 2u);
+    ASSERT_EQ(observer.samples.size(), 2);
+    EXPECT_EQ(observer.samples.at(1).timestampUs - observer.samples.at(0).timestampUs,
+              2500);
+    EXPECT_EQ(observer.samples.at(0).streamElapsedUs, 0);
+    EXPECT_EQ(observer.samples.at(1).streamElapsedUs, 2500);
     const QVariantMap values = observer.samples.first().values;
     EXPECT_EQ(values.value(QStringLiteral("source_seq")).toUInt(), 0x00F1u);
     EXPECT_NEAR(values.value(QStringLiteral("delta_angle_x")).toDouble(), 1.25, 1e-6);
@@ -339,6 +373,71 @@ TEST(ImuStreamExecutorTest, SendsOneStartStreamsCompleteSamplesAndSendsOneStop)
     ASSERT_EQ(writes.size(), 2u);
     EXPECT_EQ(commandName(catalog, writes[0]), QStringLiteral("imu_stream_start_request"));
     EXPECT_EQ(commandName(catalog, writes[1]), QStringLiteral("imu_stream_stop_request"));
+    EXPECT_TRUE(executor.finishRun().ok());
+}
+
+TEST(ImuStreamExecutorTest, ReanchorsUtcTimeWhenExecuteStepRunsAgain)
+{
+    const QString assets = catalogDirectory();
+    ASSERT_TRUE(QFileInfo(assets).isDir());
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+
+    const QVariantMap firstValues{
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("err_code"), 0},
+        {QStringLiteral("source_seq"), 1},
+    };
+    const QVariantMap retryValues{
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("err_code"), 0},
+        {QStringLiteral("source_seq"), 2},
+    };
+    auto transport = std::make_unique<StreamingTransport>(
+        frameFor(catalog, QStringLiteral("imu_stream_start_response"), 0x1234,
+                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{
+            frameFor(catalog, QStringLiteral("imu_stream_feedback_response"), 0x9000,
+                     firstValues),
+            QByteArray::fromHex("55AA")},
+        frameFor(catalog, QStringLiteral("imu_stream_stop_response"), 0x1235,
+                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}));
+    StreamingTransport* transportPtr = transport.get();
+    transportPtr->setRetryAttempt(
+        frameFor(catalog, QStringLiteral("imu_stream_start_response"), 0x1236,
+                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{frameFor(
+            catalog, QStringLiteral("imu_stream_feedback_response"), 0x9001,
+            retryValues)},
+        frameFor(catalog, QStringLiteral("imu_stream_stop_response"), 0x1237,
+                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}));
+    ImuStreamAlgorithmExecutor executor(std::move(transport));
+    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
+                                 executionConfig(assets)).ok());
+    RunControl control;
+    Observer firstObserver;
+
+    const auto first = executor.executeStep(streamStep(), control, firstObserver);
+
+    EXPECT_FALSE(first.ok());
+    ASSERT_EQ(firstObserver.samples.size(), 1);
+    EXPECT_GT(firstObserver.samples.first().timestampUs, 0);
+
+    Observer retryObserver([&executor] {
+        EXPECT_TRUE(executor.requestStop(100).ok());
+    });
+    const qint64 earliestRetryAnchorUs =
+        QDateTime::currentMSecsSinceEpoch() * 1000;
+    const auto retry = executor.executeStep(streamStep(), control, retryObserver);
+    const qint64 latestRetryAnchorUs =
+        QDateTime::currentMSecsSinceEpoch() * 1000;
+
+    ASSERT_TRUE(retry.ok()) << retry.status.error.message.toStdString();
+    ASSERT_EQ(retryObserver.samples.size(), 1);
+    EXPECT_EQ(retryObserver.samples.first().streamElapsedUs, 0);
+    EXPECT_GE(retryObserver.samples.first().timestampUs, earliestRetryAnchorUs);
+    EXPECT_LE(retryObserver.samples.first().timestampUs, latestRetryAnchorUs);
     EXPECT_TRUE(executor.finishRun().ok());
 }
 

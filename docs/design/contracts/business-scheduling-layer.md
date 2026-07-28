@@ -38,7 +38,7 @@ BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作�
 | `ProtocolProfile`、`HardwareRequirement`、`SafetyPolicy` | 兼容和透传模型；BIZ 保存/校验结构，不解释协议或实施安全动作；`enterSafeStateOnStop/Error` 当前不驱动运行期分支 |
 | `RuntimeConfig`、`ReportOptions` | 业务调度与报告选项；文件 I/O 不属于生产硬件/通讯 I/O 边界 |
 
-`TestState`、`TestVerdict`、`SkipReason`、`RunControl`、`RunMode`、`CmpOp`、`Permission` 和 `ErrorCode` 的枚举值是公共兼容面。结构体应优先尾部扩展，不改变既有枚举数值或语义。`RawSample::cycleIndex` 和 `TestResult::cycleIndex` 是当前尾部扩展；轮次从 `1` 开始。
+`TestState`、`TestVerdict`、`SkipReason`、`RunControl`、`RunMode`、`CmpOp`、`Permission` 和 `ErrorCode` 的枚举值是公共兼容面。结构体应优先尾部扩展，不改变既有枚举数值或语义。`RawSample::cycleIndex`、`RawSample::streamElapsedUs` 和 `TestResult::cycleIndex` 是当前尾部扩展；轮次从 `1` 开始。`streamElapsedUs >= 0` 表示算法提供了从本次设备流首个有效样本起算的相对微秒；任意负值表示不可用，默认哨兵为 `-1`。算法一旦提供该相对轴，就必须同时提供由一次 UTC 锚点加相对时间生成的非零 `timestampUs`，不得要求 BIZ 逐样本重建锚点。
 
 配置规则：
 
@@ -148,8 +148,9 @@ void destroyReportGenerator(IReportGenerator* generator);
 | `DeviceStream` / `device_stream` | PC 只发起一次设备流启动；BIZ 只调用一轮、每个步骤只调用一次 `executeStep()`，算法可在该调用内多次 `onSample()`，直到 PC 停止或设备流结束；不得在外层重复发起请求 | 算法返回、错误或停止 |
 
 - 配置能力由应用层读取 `reportFields.supportedRunModes`。同一测试配置最多只能声明 `pc_periodic`、`device_stream` 中的一种：前者是 PC 多次单发单回，后者是设备主动连续回告，二者不是同一测试的可互换选项。字段缺失时只回退到 `single`；应用控制器在进入 BIZ 前以 `CapabilityUnsupported` 拒绝未声明模式。通用 BIZ 服务仍只实现运行语义，不读取展示字段。
+- `DeviceStream` 不允许步骤重试。BIZ 在启动 worker 和调用算法 `prepare()` 前检查经过默认值继承及步骤筛选后的计划；任一选中步骤 `retryCount > 0` 都以 `ParameterRangeError` 拒绝，避免重复 START/STOP 建立第二条设备流。`Single` 与 `PcPeriodic` 保持既有类型化重试语义。
 - `PcPeriodic` 只接受 `10..3600000` ms 的整数间隔，有限轮数不超过 `1000000000`。轮间等待可被暂停、恢复和停止唤醒。
-- 每轮开始先发出 `cycleStarted`；结果和样本均标记当前 `cycleIndex`。算法未给样本时间戳时，BIZ 使用当前 UTC epoch 微秒补齐，再发出 `sampleProduced`。当前服务不额外长期缓存样本，避免无限周期会话在 BIZ 内形成无界样本副本。
+- 每轮开始先发出 `cycleStarted`；结果和样本均标记当前 `cycleIndex`。算法未给 `timestampUs` 时，BIZ 使用当前 UTC epoch 微秒补齐，再发出 `sampleProduced`；这只服务于未提供相对轴的兼容样本，`streamElapsedUs >= 0` 的算法必须自行提供一次锚定后的非零 `timestampUs`。BIZ 不生成、重写或解释可选的 `streamElapsedUs`，只原样转发。当前服务不额外长期缓存样本，避免无限周期会话在 BIZ 内形成无界样本副本。
 - BIZ 把 `runMode`、`intervalMs` 和 `maxCycles` 写入 `TestContext::tags`，把 `RunOptions::parameters` 原样写入 `TestContext::runParameters`，但不据此解释产品命令。`intervalMs`/`maxCycles` 只对 `PcPeriodic` 有调度含义；应用层对 `Single`/`DeviceStream` 使用固定兼容值 `1000/1`，不会据此重复请求。设备是否支持 `DeviceStream` 由算法决定；当前 `mbddf.system_status` 没有设备流启动/停止命令，准备阶段返回 `CapabilityUnsupported`。
 - PC 周期会话中的硬件或协议执行错误结束整个会话；普通判定失败是否中止同轮后续步骤仍由 `RuntimeConfig::stopOnFirstFailure` 控制。
 - `[当前实现]` 每个任务在一个专用 `QThread` 中同步执行 `prepare()`、各轮 `executeStep()`、轮间等待和 `finishRun()`；该线程提供 Qt event dispatcher，测试锁定同一任务的准备、执行和运行收尾均位于同一非应用线程且能够注册 Qt 计时器。这里不承诺在同步算法调用期间持续泵送事件，也不改变 `requestStop()` 由调用线程发起的既有语义；不得据此宣称 HAL 连接已实现 actor 化或跨线程取消。

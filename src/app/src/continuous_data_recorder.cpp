@@ -12,7 +12,9 @@
 #include <QSaveFile>
 #include <QStringList>
 
+#include <charconv>
 #include <chrono>
+#include <limits>
 
 namespace hwtest::app {
 namespace {
@@ -44,6 +46,23 @@ QString metadataText(QString text)
     return text;
 }
 
+QString floatText(float value)
+{
+    char buffer[64];
+    const auto converted = std::to_chars(buffer,
+                                         buffer + sizeof(buffer),
+                                         value,
+                                         std::chars_format::general);
+    if (converted.ec == std::errc{}) {
+        return QString::fromLatin1(buffer,
+                                   static_cast<int>(converted.ptr - buffer));
+    }
+    return QLocale::c().toString(
+        static_cast<double>(value),
+        'g',
+        std::numeric_limits<float>::max_digits10);
+}
+
 QString scalarText(const QVariant& value)
 {
     if (!value.isValid() || value.isNull()) {
@@ -66,6 +85,7 @@ QString scalarText(const QVariant& value)
     case QMetaType::ULongLong:
         return QString::number(value.toULongLong());
     case QMetaType::Float:
+        return floatText(value.toFloat());
     case QMetaType::Double:
         return QLocale::c().toString(value.toDouble(), 'g', 15);
     case QMetaType::QString:
@@ -252,7 +272,9 @@ ActionResult ContinuousDataRecorder::append(const ApplicationSample& sample)
     const bool failed = responseStatus != 0 || errorCode != 0;
     const quint16 sequence = static_cast<quint16>(
         sample.values.value(QStringLiteral("seq")).toUInt());
-    const qint64 sampleTimeUs = qMax<qint64>(0, sample.timestampUs - m_startedAtUs);
+    const qint64 sampleTimeUs = sample.streamElapsedUs >= 0
+        ? sample.streamElapsedUs
+        : qMax<qint64>(0, sample.timestampUs - m_startedAtUs);
 
     QStringList row{
         QString::number(m_sampleCount),

@@ -19,6 +19,9 @@ using hwtest::biz::TestResult;
 using hwtest::biz::TestStep;
 using hwtest::biz::TestVerdict;
 
+constexpr qint64 kImuSamplePeriodUs = 2500;
+constexpr qint64 kMaxJsonSafeInteger = (qint64{1} << 53) - 1;
+
 Status status(ErrorCode code, const QString& message, const QString& operation)
 {
     Status result;
@@ -272,6 +275,8 @@ Status ImuStreamAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
 
     m_context = context;
     m_sampleCount = 0;
+    m_timestampAnchorUtcUs = 0;
+    m_hasTimestampAnchor = false;
     m_lastValues.clear();
     m_lastFeedbackFrame.clear();
     m_stopRequested.store(false);
@@ -340,12 +345,36 @@ Status ImuStreamAlgorithmExecutor::publishFeedback(
                                4, 16, QLatin1Char('0')),
                       QStringLiteral("mbddf.imu_stream.feedback"));
     }
+    if (m_sampleCount >
+        static_cast<quint64>(kMaxJsonSafeInteger / kImuSamplePeriodUs)) {
+        return status(ErrorCode::InternalError,
+                      QStringLiteral("IMU stream elapsed timestamp overflow"),
+                      QStringLiteral("mbddf.imu_stream.feedback"));
+    }
+    const qint64 streamElapsedUs =
+        static_cast<qint64>(m_sampleCount) * kImuSamplePeriodUs;
+    if (!m_hasTimestampAnchor) {
+        m_timestampAnchorUtcUs = nowUs();
+        m_hasTimestampAnchor = true;
+    }
+    if (m_timestampAnchorUtcUs < 0 ||
+        m_timestampAnchorUtcUs > kMaxJsonSafeInteger) {
+        return status(ErrorCode::InternalError,
+                      QStringLiteral("IMU stream UTC timestamp is outside JSON safe integer range"),
+                      QStringLiteral("mbddf.imu_stream.feedback"));
+    }
+    if (m_timestampAnchorUtcUs > kMaxJsonSafeInteger - streamElapsedUs) {
+        return status(ErrorCode::InternalError,
+                      QStringLiteral("IMU stream UTC timestamp overflow"),
+                      QStringLiteral("mbddf.imu_stream.feedback"));
+    }
     hwtest::biz::RawSample sample;
-    sample.timestampUs = nowUs();
+    sample.timestampUs = m_timestampAnchorUtcUs + streamElapsedUs;
     sample.channelId = QStringLiteral("IMU_STREAM");
     sample.values = values;
     sample.tags.insert(QStringLiteral("responseFrameHex"),
                        QString::fromLatin1(frame.toHex()));
+    sample.streamElapsedUs = streamElapsedUs;
     observer.onSample(step.stepId, sample);
     ++m_sampleCount;
     m_lastValues = values;
@@ -475,6 +504,8 @@ Result<TestResult> ImuStreamAlgorithmExecutor::executeStep(
     }
 
     m_sampleCount = 0;
+    m_timestampAnchorUtcUs = 0;
+    m_hasTimestampAnchor = false;
     m_lastValues.clear();
     m_lastFeedbackFrame.clear();
     m_streamMayBeActive = false;
@@ -673,6 +704,8 @@ Status ImuStreamAlgorithmExecutor::reset()
     m_streamMayBeActive = false;
     m_stopConfirmed = false;
     m_sampleCount = 0;
+    m_timestampAnchorUtcUs = 0;
+    m_hasTimestampAnchor = false;
     m_lastValues.clear();
     m_lastFeedbackFrame.clear();
     return {};
@@ -692,6 +725,8 @@ Status ImuStreamAlgorithmExecutor::shutdown(int timeoutMs)
     }
     m_prepared = false;
     m_streamMayBeActive = false;
+    m_timestampAnchorUtcUs = 0;
+    m_hasTimestampAnchor = false;
     return {};
 }
 
@@ -707,6 +742,8 @@ Status ImuStreamAlgorithmExecutor::finishRun()
     }
     m_prepared = false;
     m_streamMayBeActive = false;
+    m_timestampAnchorUtcUs = 0;
+    m_hasTimestampAnchor = false;
     return result;
 }
 

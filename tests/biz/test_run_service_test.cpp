@@ -868,6 +868,37 @@ TEST(TestRunServiceTest, DeviceStreamModeInvokesTheAlgorithmOnlyOnce)
     EXPECT_TRUE(service->shutdown().ok());
 }
 
+TEST(TestRunServiceTest, RejectsRetriesForDeviceStreamBeforePreparingTheExecutor)
+{
+    test::ensureQtApplication();
+    QTemporaryDir temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.isValid());
+
+    TestConfig config = test::makeCompleteConfig();
+    config.steps = {config.steps.at(0)};
+    config.steps[0].retryCount = 1;
+    TestConfigManager manager;
+    const ConfigPath path = saveConfiguration(manager,
+                                               temporaryDirectory,
+                                               config,
+                                               QStringLiteral("device-stream-retry.testcfg"));
+    test::FakeAlgorithmExecutor executor;
+    ServiceHandle service = makeService(executor);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+    ASSERT_TRUE(service->loadConfiguration(path).ok());
+    RunOptions options;
+    options.mode = RunMode::DeviceStream;
+
+    const Result<TaskId> started = service->startTestWithOptions(options);
+
+    EXPECT_FALSE(started.ok());
+    EXPECT_EQ(started.status.code, ErrorCode::ParameterRangeError);
+    EXPECT_EQ(executor.prepareCalls(), 0);
+    EXPECT_EQ(executor.executeCallCount(), 0);
+    EXPECT_TRUE(service->shutdown().ok());
+}
+
 TEST(TestRunServiceTest, RejectsInvalidPcPeriodicOptionsBeforePreparingTheExecutor)
 {
     test::ensureQtApplication();

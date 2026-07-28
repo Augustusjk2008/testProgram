@@ -2,6 +2,7 @@
 
 #include "web_protocol.h"
 
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QFileInfo>
@@ -171,9 +172,16 @@ public:
                                          QAbstractSocket::ConnectedState) {
                                      return;
                                  }
+                                 const QJsonObject event =
+                                     makeSample(sampleSequence + 1, sample);
+                                 if (event.isEmpty()) {
+                                     qWarning().noquote()
+                                         << "Dropping sample with a timestamp outside "
+                                            "the WebSocket v1 safe-integer range";
+                                     return;
+                                 }
                                  ++sampleSequence;
-                                 send(activeClient,
-                                      makeSample(sampleSequence, sample));
+                                 send(activeClient, event);
                              });
         }
 

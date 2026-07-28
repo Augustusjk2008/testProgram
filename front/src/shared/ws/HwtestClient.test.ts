@@ -74,15 +74,65 @@ describe('HwtestClient protocol boundary', () => {
         stepId: 'SYSTEM_STATUS',
         channelId: 'SYSTEM_STATUS',
         timestampUs: 1_785_000_000_123_456,
+        streamElapsedUs: 2_500,
         cycleIndex: 2,
         values: { cpu_usage: 12.5 },
         tags: {},
       },
     }))
     expect(sample.type).toBe('sample')
+    if (sample.type === 'sample') {
+      expect(Object.hasOwn(sample.sample, 'streamElapsedUs')).toBe(true)
+      expect(sample.sample.streamElapsedUs).toBe(2_500)
+    }
 
     expect(() => parseServerMessage('{"v":2,"type":"hello"}'))
       .toThrow(/protocol/i)
+  })
+
+  it('keeps legacy samples compatible and validates stream time integers', () => {
+    const samplePayload = {
+      taskId: 'task-1',
+      stepId: 'IMU_STREAM',
+      channelId: 'IMU_STREAM',
+      timestampUs: 1_785_000_000_123_456,
+      cycleIndex: 1,
+      values: {},
+      tags: {},
+    }
+    const parseSample = (overrides: Record<string, unknown>) => parseServerMessage(JSON.stringify({
+      v: 1,
+      type: 'sample',
+      seq: 8,
+      sample: { ...samplePayload, ...overrides },
+    }))
+
+    const legacy = parseSample({})
+    expect(legacy.type).toBe('sample')
+    if (legacy.type === 'sample') {
+      expect(Object.hasOwn(legacy.sample, 'streamElapsedUs')).toBe(false)
+    }
+
+    const atOrigin = parseSample({ streamElapsedUs: 0 })
+    expect(atOrigin.type).toBe('sample')
+    if (atOrigin.type === 'sample') {
+      expect(atOrigin.sample.streamElapsedUs).toBe(0)
+    }
+
+    const atSafeLimit = parseSample({
+      timestampUs: Number.MAX_SAFE_INTEGER,
+      streamElapsedUs: Number.MAX_SAFE_INTEGER,
+    })
+    expect(atSafeLimit.type).toBe('sample')
+    if (atSafeLimit.type === 'sample') {
+      expect(atSafeLimit.sample.timestampUs).toBe(Number.MAX_SAFE_INTEGER)
+      expect(atSafeLimit.sample.streamElapsedUs).toBe(Number.MAX_SAFE_INTEGER)
+    }
+
+    for (const invalid of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => parseSample({ streamElapsedUs: invalid })).toThrow(/streamElapsedUs/i)
+      expect(() => parseSample({ timestampUs: invalid })).toThrow(/timestampUs/i)
+    }
   })
 
   it('parses the configuration descriptor carried by snapshots', () => {

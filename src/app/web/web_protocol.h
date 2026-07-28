@@ -30,6 +30,8 @@ bool digitalStimulusSupportedByVersionOne(const DigitalStimulusSnapshot& stimulu
 QJsonObject digitalStimulusObject(const DigitalStimulusSnapshot& stimulus);
 QJsonObject makeSnapshot(quint64 sequence,
                          const ApplicationSnapshot& snapshot);
+// Returns an empty object when a timestamp cannot be represented losslessly
+// by the WebSocket v1 JSON number contract.
 QJsonObject makeSample(quint64 sequence,
                        const ApplicationSample& sample);
 QString compactJson(const QJsonObject& object);

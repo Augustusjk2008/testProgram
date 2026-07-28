@@ -56,6 +56,8 @@ private:
     int m_startTimeoutMs = 2000;
     int m_stopTimeoutMs = 2000;
     quint64 m_sampleCount = 0;
+    qint64 m_timestampAnchorUtcUs = 0;
+    bool m_hasTimestampAnchor = false;
     QVariantMap m_lastValues;
     QByteArray m_lastFeedbackFrame;
     std::atomic_bool m_stopRequested{false};

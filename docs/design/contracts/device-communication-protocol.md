@@ -235,13 +235,17 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 DUT 经 COM3 发送 128 字节 `imu_stream_feedback_response`：B9 为状态、B10-B11 为错误码、B12-B70 为上述完整字段、B71-B126 保留、B127-B128 为 CRC。反馈使用 DUT 自己递增的产品协议序号。400 Hz 不要求软件保证无损，但实现不得固定 sleep 或主动抽样；有有效帧即尝试发送。COM3 在 614400/8E1 下发送 128 B × 400 Hz 约占 91.7% 线速率。
 
-宿主的 `HalControlTransport` 为该模式提供分离的 `writeFrame()`/`readFrame()`。执行器发送 START 并校验 ACK 后持续读取 `09/01`，每帧完整解码并上报样本；`requestStop()` 只设置原子停止标志，worker 在最长 20 ms 读超时后发送 STOP 并等待 ACK。等待 STOP ACK 时到达的有效反馈仍会上报。同一会话 START/STOP 各最多发送一次；STOP 写失败、ACK 超时、解析失败、序号不匹配或远端错误只使本次结果失败，`finishRun()` 只关闭传输，不再补发 STOP。不允许 BIZ 以 `pc_periodic` 重复 START。停止时零有效帧判为 `SampleFail`，一帧及以上通过；传输、CRC、命令、ACK 序号或远端错误保持类型化失败。
+宿主的 `HalControlTransport` 为该模式提供分离的 `writeFrame()`/`readFrame()`。执行器发送 START 并校验 ACK 后持续读取 `09/01`，每帧完整解码并上报样本；本次流第一个已发布样本的 `streamElapsedUs` 为 0，之后按 400 Hz 标称周期固定递增 2500 微秒。该相对轴按“成功解码并已发布的样本序号”生成，不依据 `source_seq` 或产品 U16 `seq`，因此会压缩宿主未观察到的丢帧空洞，不能外推为设备绝对采样时钟。每次 `executeStep()` 的首样本只读取一次 PC UTC 作为新锚点，公开 `timestampUs = UTC 锚点 + streamElapsedUs`，不再逐帧读取 PC 到达时间；公开时间整数均不得超过 JavaScript 安全整数上限 `9007199254740991`。
+
+`requestStop()` 只设置原子停止标志，worker 在最长 20 ms 读超时后发送 STOP 并等待 ACK。等待 STOP ACK 时到达的有效反馈仍会上报。同一会话 START/STOP 各最多发送一次；STOP 写失败、ACK 超时、解析失败、序号不匹配或远端错误只使本次结果失败，`finishRun()` 只关闭传输，不再补发 STOP。不允许 BIZ 以 `pc_periodic` 重复 START。停止时零有效帧判为 `SampleFail`，一帧及以上通过；传输、CRC、命令、ACK 序号或远端错误保持类型化失败。
 
 ### 7.2 舵机设备流
 
 `HELM_STREAM` 的运行参数由 `mbddf.helm_stream` Schema 定义：`waveform`、`freq`、`ampl`、`offset`、`start`、`max_freq`、`sweep_duration_s` 和低四位 `enable`。波形为正弦、方波、三角、恒值或连续对数扫频；频率和扫频时长必须为有限正数，通道位图为 `0..15`。测试程序的 DUT 与 Web 界面不限制角度幅值或偏置；舵控程序自身现有的内部限幅保持独立。`max_freq` 与 `sweep_duration_s` 只按波形条件显示，但隐藏时仍执行协议语义校验。DH 的 `config_enable` 和 23 路 `pulse_width[]` 使用同一算法 Schema/运行覆盖机制；配置使能时，23 路回读判据以本次实际下发值为准，关闭配置使能时脉宽只读、不参与本次写入一致性判定。
 
 PC 经 COM3 发送一次 `HELM_START 07/10`，DUT `HelmDdsTestBridge` 建立 `local:://helm_command` writer 与 `local:://helm_feedback` reader。DUT 按 1 ms 周期生成一个共用波形，启用位对应的舵通道使用该值，未启用通道发送零；连续对数扫频从 `freq` 过渡到 `max_freq`，超过 `sweep_duration_s` 后指令归零，但反馈转发与测试会话保持活动，直到 PC 手动 STOP。每个 `HELM_FEEDBACK 07/01` 使用 232 字节 payload，包含首个 DDS 时间戳和 1..5 个完整 41 字节反馈样本；宿主拆成逐样本事件，并记录产品帧、`serial_a`、`serial_b` 的不连续与缺失计数、批内索引和全部生效参数。
+
+DDS 时间来自设备单调时钟而非 UTC。宿主保留每条原始值为 `dds_timestamp_us`，以本次 `executeStep()` 第一条有效 DDS 样本为 0 生成 `streamElapsedUs`，并用一次 PC UTC 锚点映射公开 `timestampUs`；后续样本使用协议携带的真实 DDS 增量，不强制重建为 1 ms 等间隔。DDS 原始值、相对值和 UTC 映射值当前统一限制在 `0..9007199254740991`，确保 WebSocket v1 的 JSON number 可无损表达，超限或跨样本倒退均视为协议错误。U16 连续性采用半环规则：前进距离 `2..0x7FFF` 才计缺失数，连续、自然回绕、重复、反向/重启候选和恰好半环均不制造巨额缺失计数。
 
 独立目标 `MB_DDF_v2_HelmControl` 使用与 `tmp/helm_control` 一致的 DDS 主题和 27/41 字节协议模型，用户可按任意顺序独立启动或停止。DUT 服务只启停本次 DDS bridge，不创建、终止、探测或占有舵控进程；`HELM_BOARD_TEST 07/02` 继续走直接板级硬件路径，与设备流没有生命周期、互斥、忙状态或其他形式的绑定。DDS 端点使用 create-or-get 语义，启动顺序不构成协议约束。
 
@@ -330,7 +334,8 @@ CAN/CANFD 的帧边界由总线提供，但 payload 内的 MB_DDF 字段、CRC�
 - `TIMER_JITTER_START/STOP`：START 统计响应、递增序号的 STOP 清理 ACK 和清理失败判定；
 - `DI_READ`：`0x04/0x01` 请求、响应字段 `di_state[0]`/`di_state[1]`、序号/CRC、单样本与 `status`/`err_code` 判定；
 - 运行参数 Schema：配置默认值与本次覆盖合并、未知字段、类型、非有限数、范围、条件显示及 BIZ 不透明透传；
-- `HELM_STREAM`：只允许 `device_stream`，START/1..5 样本反馈/STOP、完整 DDS 反馈字段、时间戳和三类序号连续性、生效参数记录、零样本失败与 STOP 单次收尾；DUT 侧还覆盖五类波形、可配扫频时长、超时后归零、四路使能、27/41 字节编解码和五样本打包；
+- `IMU_STREAM`：只允许 `device_stream`，START/反馈/STOP、固定 2500 微秒已发布样本相对轴、一次 UTC 锚定、零样本失败与 STOP 单次收尾；
+- `HELM_STREAM`：只允许 `device_stream`，START/1..5 样本反馈/STOP、完整 DDS 反馈字段、DDS 相对时间/一次 UTC 锚定、DDS 倒退拒绝、U16 重复/反向/回绕连续性、生效参数记录、零样本失败与 STOP 单次收尾；DUT 侧还覆盖五类波形、可配扫频时长、超时后归零、四路使能、27/41 字节编解码和五样本打包；
 - 数字刺激：配置白名单、重复/范围拒绝、active-low 映射、完整批量写、revision 冲突无写入、写失败状态保留和复位；这些用 `IHalDevice` Fake 或 Mock 验证，不是厂商 Adapter 或真机证据；
 - 纯协议单测可直连 Simulator；产品模拟和算法集成必须经过 HAL，并标明是 HAL Mock 或标准 Provider 隔离模拟目标；
 - 真实硬件协议测试单独标记，不进入默认 CI。

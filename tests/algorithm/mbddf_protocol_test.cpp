@@ -355,6 +355,8 @@ TEST(MbddfProtocolTest, LoadsConfirmedImuStreamProfilesAndScaledTemperature)
     ASSERT_TRUE(decodePayload(*feedback, payload, &decoded, &error))
         << error.toStdString();
     EXPECT_EQ(decoded.value(QStringLiteral("source_seq")).toUInt(), 0x1234u);
+    EXPECT_EQ(decoded.value(QStringLiteral("delta_angle_x")).userType(),
+              QMetaType::Float);
     EXPECT_NEAR(decoded.value(QStringLiteral("delta_angle_x")).toDouble(), 1.25, 1e-6);
     EXPECT_NEAR(decoded.value(QStringLiteral("temperature")).toDouble(), -12.3, 1e-9);
     EXPECT_EQ(decoded.value(QStringLiteral("software_version")).toUInt(), 0xABCDu);

@@ -1040,7 +1040,9 @@ bool decodeField(const ProtocolField& field,
         if (!std::isfinite(decoded)) {
             return fail(error, QStringLiteral("field %1 F32 must be finite").arg(field.nameEn));
         }
-        *value = QVariant(decoded);
+        *value = field.lsb == 1.0
+            ? QVariant::fromValue(stored)
+            : QVariant(decoded);
         return true;
     }
     if (field.type == FieldType::Const) {

@@ -282,6 +282,9 @@ struct HWTEST_BIZ_EXPORT RawSample {
     QVariantMap values;
     QVariantMap tags;
     quint64 cycleIndex = 1;
+    // Non-negative elapsed stream time in microseconds. Any negative value is
+    // unavailable; -1 is the default sentinel.
+    qint64 streamElapsedUs = -1;
 };
 
 struct HWTEST_BIZ_EXPORT SystemResource {

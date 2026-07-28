@@ -818,6 +818,7 @@ ActionResult TestApplicationController::prepare()
                          sample.cycleIndex = rawSample.cycleIndex;
                          sample.values = rawSample.values;
                          sample.tags = rawSample.tags;
+                         sample.streamElapsedUs = rawSample.streamElapsedUs;
                          if (m_impl->dataRecorder.active()) {
                              const ActionResult recorded =
                                  m_impl->dataRecorder.append(sample);
@@ -1472,7 +1473,6 @@ ActionResult TestApplicationController::shutdown()
     m_impl->dutSessionId.clear();
     m_impl->stimulusSessionId.clear();
     m_impl->device = nullptr;
-    m_impl->stimulusDevice = nullptr;
 
     m_impl->snapshot = {};
     if (configured) {

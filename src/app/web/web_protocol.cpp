@@ -10,6 +10,13 @@ namespace hwtest::app::web {
 
 namespace {
 
+constexpr qint64 kMaxJsonSafeInteger = 9007199254740991LL;
+
+bool isJsonSafeNonNegativeInteger(qint64 value)
+{
+    return value >= 0 && value <= kMaxJsonSafeInteger;
+}
+
 ProtocolParseResult failure(const QString& code, const QString& message)
 {
     ProtocolParseResult result;
@@ -345,7 +352,11 @@ QJsonObject makeSnapshot(quint64 sequence,
 QJsonObject makeSample(quint64 sequence,
                        const ApplicationSample& sample)
 {
-    const QJsonObject sampleObject{
+    if (!isJsonSafeNonNegativeInteger(sample.timestampUs) ||
+        sample.streamElapsedUs > kMaxJsonSafeInteger) {
+        return {};
+    }
+    QJsonObject sampleObject{
         {QStringLiteral("taskId"), sample.taskId},
         {QStringLiteral("stepId"), sample.stepId},
         {QStringLiteral("channelId"), sample.channelId},
@@ -354,6 +365,10 @@ QJsonObject makeSample(quint64 sequence,
         {QStringLiteral("values"), QJsonObject::fromVariantMap(sample.values)},
         {QStringLiteral("tags"), QJsonObject::fromVariantMap(sample.tags)},
     };
+    if (sample.streamElapsedUs >= 0) {
+        sampleObject.insert(QStringLiteral("streamElapsedUs"),
+                            static_cast<double>(sample.streamElapsedUs));
+    }
     return QJsonObject{
         {QStringLiteral("v"), 1},
         {QStringLiteral("type"), QStringLiteral("sample")},

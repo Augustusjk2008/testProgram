@@ -261,6 +261,18 @@ public:
         if (!selected.ok()) {
             return failure<TaskId>(selected.status.code, selected.status.error.message);
         }
+        if (runOptions.mode == RunMode::DeviceStream) {
+            for (const TestStep& step : selected.value.steps) {
+                if (step.retryCount > 0) {
+                    return failure<TaskId>(
+                        ErrorCode::ParameterRangeError,
+                        QStringLiteral("device_stream does not support retries; step '%1' "
+                                       "has retryCount=%2")
+                            .arg(step.stepId)
+                            .arg(step.retryCount));
+                }
+            }
+        }
 
         reapFinishedWorker();
 
@@ -300,7 +312,6 @@ public:
             m_workerDone = false;
             m_workerCanRun = false;
             m_workerTerminalState = TestState::Finished;
-            m_priority = effectivePriority;
             m_state = TestState::Running;
             m_worker.reset(QThread::create(
                 [this,
@@ -964,7 +975,6 @@ private:
     TestState m_workerTerminalState = TestState::Finished;
     RunControl m_control = RunControl::Run;
     quint64 m_controlVersion = 0;
-    int m_priority = 0;
     bool m_initialized = false;
     bool m_configLoaded = false;
     bool m_shuttingDown = false;

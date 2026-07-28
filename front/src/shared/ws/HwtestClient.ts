@@ -46,6 +46,11 @@ function requiredNumber(parent: JsonObject, key: string): number {
   return value
 }
 
+function optionalSafeNonNegativeInteger(parent: JsonObject, key: string): number | undefined {
+  if (!Object.prototype.hasOwnProperty.call(parent, key)) return undefined
+  return requiredSafeInteger(parent, key)
+}
+
 function requiredSafeInteger(
   parent: JsonObject,
   key: string,
@@ -304,14 +309,16 @@ function parseSnapshot(value: JsonObject): ApplicationSnapshot {
 }
 
 function parseSample(value: JsonObject): ApplicationSample {
+  const streamElapsedUs = optionalSafeNonNegativeInteger(value, 'streamElapsedUs')
   return {
     taskId: requiredString(value, 'taskId'),
     stepId: requiredString(value, 'stepId'),
     channelId: requiredString(value, 'channelId'),
-    timestampUs: requiredNumber(value, 'timestampUs'),
+    timestampUs: requiredSafeInteger(value, 'timestampUs'),
     cycleIndex: requiredNumber(value, 'cycleIndex'),
     values: requiredObject(value, 'values'),
     tags: requiredObject(value, 'tags'),
+    ...(streamElapsedUs === undefined ? {} : { streamElapsedUs }),
   }
 }
 

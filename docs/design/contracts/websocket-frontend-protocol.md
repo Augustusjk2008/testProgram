@@ -125,10 +125,10 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 ### 4.5 样本事件
 
 ```json
-{"v":1,"type":"sample","seq":42,"sample":{"taskId":"...","stepId":"SYSTEM_STATUS","channelId":"SYSTEM_STATUS","timestampUs":1785000000123456,"cycleIndex":7,"values":{"cpu_usage":12.5,"cpu_temp":44.2},"tags":{}}}
+{"v":1,"type":"sample","seq":42,"sample":{"taskId":"...","stepId":"IMU_STREAM","channelId":"IMU_STREAM","timestampUs":1785000000123456,"streamElapsedUs":2500,"cycleIndex":1,"values":{"delta_angle_x":0.1},"tags":{}}}
 ```
 
-`sample.seq` 所在的顶层 `seq` 是样本事件在服务器进程生命周期内的独立单调递增序号；它不与快照 `seq` 共用计数器。`timestampUs` 是 UTC epoch 微秒，当前数值范围可由 JavaScript `Number` 精确表达。`values` 和 `tags` 使用与 `rawData` 相同的 JSON-compatible QVariant 转换规则。服务器不缓存或重放历史样本；新客户端从连接后产生的样本开始接收。
+`sample.seq` 所在的顶层 `seq` 是样本事件在服务器进程生命周期内的独立单调递增序号；它不与快照 `seq` 共用计数器。`timestampUs` 继续是 UTC epoch 微秒，必须是 `0..9007199254740991` 范围内的整数。算法提供非负流内相对时间时，服务追加同一范围内的可选整数 `streamElapsedUs`；其原点是本次设备流第一条有效样本，任意负值均按不可用处理并省略字段，字段缺失保持旧客户端兼容。前端拒绝负数、小数和非 JavaScript 安全整数；服务端也在最终 Web 投影处防御，遇到负或超限 `timestampUs`、超限 `streamElapsedUs` 时丢弃该 Web 事件并记录警告，不发送舍入或不合约 JSON。当前 IMU 使用 `0, 2500, 5000, ...` 的已发布样本理想轴，HELM 使用原始 DDS 时间相对首样本的实际差值；二者的 `timestampUs` 都只用一次 PC UTC 锚点加相对时间生成。HELM 的 `values.dds_timestamp_us` 也受同一安全整数上限约束。`values` 和 `tags` 的其他字段使用与 `rawData` 相同的 JSON-compatible QVariant 转换规则。服务器不缓存或重放历史样本；新客户端从连接后产生的样本开始接收。
 
 ## 5. 协议层错误码
 
@@ -186,7 +186,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 
 绝对目录直接使用；相对目录按 HAL 配置文件所在目录解析。字段缺失时同样回退 `../data`。客户端无权覆盖目录。目录或初始文件不能创建时，`start` 返回控制器错误 `data_storage`；运行中写入或终态提交失败时，完整快照的 `dataSaveError` 返回诊断。
 
-最终文件固定为带 UTF-8 BOM 的 `.txt`：顶部是一行标题和 `# key=value` 元数据，至少包含 `started_at`、`finished_at`、`final_status`、`final_detail`、`sample_count`、`run_mode`、`repeat_delay_ms`、`config_id`、`algorithm_id` 与 `max_cycles`；`device_stream` 的两个 PC 周期字段固定写 `NA`。空行之后是制表符分隔、换行符为 LF 的固定表头和数据行。文件名使用后端开始时间；电气健康保持 PyQt 参考名 `ElectricalHealth_data_YYYYMMDD_HHMMSS_ffffff.txt`。
+最终文件固定为带 UTF-8 BOM 的 `.txt`：顶部是一行标题和 `# key=value` 元数据，至少包含 `started_at`、`finished_at`、`final_status`、`final_detail`、`sample_count`、`run_mode`、`repeat_delay_ms`、`config_id`、`algorithm_id` 与 `max_cycles`；`device_stream` 的两个 PC 周期字段固定写 `NA`。空行之后是制表符分隔、换行符为 LF 的固定表头和数据行。文件名使用后端开始时间；电气健康保持 PyQt 参考名 `ElectricalHealth_data_YYYYMMDD_HHMMSS_ffffff.txt`。样本提供非负 `streamElapsedUs` 时，`sample_time_us` 直接使用该相对值；任意负值或字段不可用时保持 `timestampUs - started_at` 的兼容计算并钳制为非负值。
 
 电气健康表头保持参考实现的固定顺序：
 
@@ -194,7 +194,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V  external_vol_V  core_vol_V  assist_vol_V  v28_5_V  js_5V_V  dyt_5V_V  power_24V_V  value_YX_V  activate_bits  bc_activate_good
 ```
 
-实际分隔符是 TAB。其他连续模式配置使用同样的前五列，后续列由已验证 descriptor 的全部 `measurements` 固定投影，并排除已在前缀中的 `status`/`err_code`；单位非空时写入列名后缀。前端图表的显示/隐藏、组合、时间窗和降采样均不改变该列集合。响应 `status != 0` 或 `err_code != 0` 时仍保存状态和错误码，测量列写 `NA`。
+实际分隔符是 TAB。其他连续模式配置使用同样的前五列，后续列由已验证 descriptor 的全部 `measurements` 固定投影，并排除已在前缀中的 `status`/`err_code`；单位非空时写入列名后缀。前端图表的显示/隐藏、组合、时间窗和降采样均不改变该列集合。响应 `status != 0` 或 `err_code != 0` 时仍保存状态和错误码，测量列写 `NA`。协议 F32 在内部保留来源类型，TXT 使用能够往返为同一 F32 的最短十进制表示；真实 Double 继续使用既有双精度格式，不统一截断为 F32 位数。
 
 运行期数据逐样本刷新到同目录的 `.partial` 文件，避免不限 PC 周期或设备持续回告在内存累积；正常完成、用户停止或错误终态时，后端使用 `QSaveFile` 把元数据和 TSV 原子提交为最终 TXT，再删除 `.partial`。提交失败时保留 `.partial` 供恢复。未勾选或 `single` 均不创建数据文件。
 

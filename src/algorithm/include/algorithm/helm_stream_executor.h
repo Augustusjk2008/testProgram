@@ -58,6 +58,9 @@ private:
     int m_startTimeoutMs = 2000;
     int m_stopTimeoutMs = 2000;
     quint64 m_sampleCount = 0;
+    qint64 m_timestampAnchorUtcUs = 0;
+    quint64 m_firstDdsTimestampUs = 0;
+    quint64 m_lastDdsTimestampUs = 0;
     QVariantMap m_lastValues;
     QByteArray m_lastFeedbackFrame;
     quint16 m_lastProductSequence = 0;
@@ -66,6 +69,7 @@ private:
     bool m_hasProductSequence = false;
     bool m_hasSerialA = false;
     bool m_hasSerialB = false;
+    bool m_hasDdsTimestamp = false;
     std::atomic_bool m_stopRequested{false};
     mutable std::mutex m_transportMutex;
     bool m_prepared = false;

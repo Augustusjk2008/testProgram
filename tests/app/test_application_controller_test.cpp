@@ -923,6 +923,11 @@ TEST(TestApplicationControllerTest, StoppedPcPeriodicSavesCompleteElectricalHeal
         }
     }
     ASSERT_EQ(dataLines.size(), 3);
+    bool firstSampleTimeOk = false;
+    const qint64 firstSampleTimeUs =
+        dataLines.at(1).section(QLatin1Char('\t'), 1, 1).toLongLong(&firstSampleTimeOk);
+    EXPECT_TRUE(firstSampleTimeOk);
+    EXPECT_GE(firstSampleTimeUs, 0);
     EXPECT_TRUE(dataLines.at(1).contains(QStringLiteral("\t4660\t0\t0x0000\t")));
     EXPECT_TRUE(dataLines.at(1).contains(QStringLiteral("\t11.1\t12.2\t")));
     EXPECT_TRUE(dataLines.at(2).contains(QStringLiteral("\t4661\t0\t0x0000\t")));
@@ -1123,9 +1128,16 @@ TEST(TestApplicationControllerTest, ImuDeviceStreamSendsStartAndStopAndSavesFixe
         }
     }
     ASSERT_EQ(dataLines.size(), 2);
-    for (const QString& line : dataLines) {
-        EXPECT_EQ(line.split(QLatin1Char('\t'), Qt::KeepEmptyParts).size(), 23);
-    }
+    const QStringList firstColumns =
+        dataLines.at(0).split(QLatin1Char('\t'), Qt::KeepEmptyParts);
+    const QStringList secondColumns =
+        dataLines.at(1).split(QLatin1Char('\t'), Qt::KeepEmptyParts);
+    ASSERT_EQ(firstColumns.size(), 23);
+    ASSERT_EQ(secondColumns.size(), 23);
+    EXPECT_EQ(firstColumns.at(1), QStringLiteral("0"));
+    EXPECT_EQ(secondColumns.at(1), QStringLiteral("2500"));
+    EXPECT_EQ(firstColumns.at(6), QStringLiteral("10.1"));
+    EXPECT_EQ(secondColumns.at(6), QStringLiteral("20.1"));
     EXPECT_TRUE(text.contains(QStringLiteral("\t100\t")));
     EXPECT_TRUE(text.contains(QStringLiteral("\t5\t")));
     EXPECT_TRUE(controller.shutdown().ok);

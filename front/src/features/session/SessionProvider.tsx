@@ -366,7 +366,6 @@ export function SessionProvider({ children }: PropsWithChildren) {
     clearTelemetry,
   }), [
     actionError,
-    applyDigitalStimulusReply,
     busyAction,
     clearTelemetry,
     connect,

@@ -71,6 +71,42 @@ int remainingMs(const QElapsedTimer& timer, int timeoutMs)
     return qMax(0, timeoutMs - static_cast<int>(timer.elapsed()));
 }
 
+bool takeBufferedFrame(QByteArray& receiveBuffer, QByteArray* frame)
+{
+    if (frame == nullptr) {
+        return false;
+    }
+
+    static const QByteArray sync = QByteArray::fromHex("55AA");
+    const int syncIndex = receiveBuffer.indexOf(sync);
+    if (syncIndex < 0) {
+        const bool keepPossibleSync = !receiveBuffer.isEmpty() &&
+            static_cast<quint8>(receiveBuffer.back()) == 0x55u;
+        const char trailing = keepPossibleSync ? receiveBuffer.back() : '\0';
+        receiveBuffer.clear();
+        if (keepPossibleSync) {
+            receiveBuffer.append(trailing);
+        }
+        return false;
+    }
+    if (syncIndex > 0) {
+        receiveBuffer.remove(0, syncIndex);
+    }
+    if (receiveBuffer.size() < 3) {
+        return false;
+    }
+
+    const int payloadBytes = static_cast<quint8>(receiveBuffer.at(2));
+    const int frameBytes = 2 + 1 + payloadBytes + 2;
+    if (receiveBuffer.size() < frameBytes) {
+        return false;
+    }
+
+    *frame = receiveBuffer.left(frameBytes);
+    receiveBuffer.remove(0, frameBytes);
+    return true;
+}
+
 } // namespace
 
 ScriptedByteTransport::ScriptedByteTransport(Handler handler)
@@ -322,42 +358,6 @@ bool HalControlTransport::open(QString* error)
     return true;
 }
 
-bool HalControlTransport::takeBufferedFrame(QByteArray* frame)
-{
-    if (frame == nullptr) {
-        return false;
-    }
-
-    static const QByteArray sync = QByteArray::fromHex("55AA");
-    const int syncIndex = m_receiveBuffer.indexOf(sync);
-    if (syncIndex < 0) {
-        const bool keepPossibleSync = !m_receiveBuffer.isEmpty() &&
-            static_cast<quint8>(m_receiveBuffer.back()) == 0x55u;
-        const char trailing = keepPossibleSync ? m_receiveBuffer.back() : '\0';
-        m_receiveBuffer.clear();
-        if (keepPossibleSync) {
-            m_receiveBuffer.append(trailing);
-        }
-        return false;
-    }
-    if (syncIndex > 0) {
-        m_receiveBuffer.remove(0, syncIndex);
-    }
-    if (m_receiveBuffer.size() < 3) {
-        return false;
-    }
-
-    const int payloadBytes = static_cast<quint8>(m_receiveBuffer.at(2));
-    const int frameBytes = 2 + 1 + payloadBytes + 2;
-    if (m_receiveBuffer.size() < frameBytes) {
-        return false;
-    }
-
-    *frame = m_receiveBuffer.left(frameBytes);
-    m_receiveBuffer.remove(0, frameBytes);
-    return true;
-}
-
 TransportResult HalControlTransport::transact(const QByteArray& frame, int timeoutMs)
 {
     if (timeoutMs <= 0) {
@@ -412,7 +412,7 @@ TransportResult HalControlTransport::readFrame(int timeoutMs)
     }
 
     QByteArray completeFrame;
-    if (takeBufferedFrame(&completeFrame)) {
+    if (takeBufferedFrame(m_receiveBuffer, &completeFrame)) {
         TransportResult result;
         result.ok = true;
         result.frame = completeFrame;
@@ -423,7 +423,7 @@ TransportResult HalControlTransport::readFrame(int timeoutMs)
     timer.start();
     hwtest::hal::OperationOptions options;
     options.requestId = m_requestId;
-    while (!takeBufferedFrame(&completeFrame)) {
+    while (!takeBufferedFrame(m_receiveBuffer, &completeFrame)) {
         const int remaining = remainingMs(timer, timeoutMs);
         if (remaining <= 0) {
             return failed(QStringLiteral("HAL control read timed out"),
@@ -542,39 +542,6 @@ TransportResult HalSerialTransport::transact(const QByteArray& frame, int timeou
     return transportResult;
 }
 
-bool HalSerialTransport::takeBufferedFrame(QByteArray* frame)
-{
-    if (frame == nullptr) {
-        return false;
-    }
-    static const QByteArray sync = QByteArray::fromHex("55AA");
-    const int syncIndex = m_receiveBuffer.indexOf(sync);
-    if (syncIndex < 0) {
-        const bool keepPossibleSync = !m_receiveBuffer.isEmpty() &&
-            static_cast<quint8>(m_receiveBuffer.back()) == 0x55u;
-        const char trailing = keepPossibleSync ? m_receiveBuffer.back() : '\0';
-        m_receiveBuffer.clear();
-        if (keepPossibleSync) {
-            m_receiveBuffer.append(trailing);
-        }
-        return false;
-    }
-    if (syncIndex > 0) {
-        m_receiveBuffer.remove(0, syncIndex);
-    }
-    if (m_receiveBuffer.size() < 3) {
-        return false;
-    }
-    const int payloadBytes = static_cast<quint8>(m_receiveBuffer.at(2));
-    const int frameBytes = 2 + 1 + payloadBytes + 2;
-    if (m_receiveBuffer.size() < frameBytes) {
-        return false;
-    }
-    *frame = m_receiveBuffer.left(frameBytes);
-    m_receiveBuffer.remove(0, frameBytes);
-    return true;
-}
-
 TransportResult HalSerialTransport::writeFrame(const QByteArray& frame, int timeoutMs)
 {
     if (!m_open || m_device == nullptr || m_device->serialBus() == nullptr) {
@@ -611,7 +578,7 @@ TransportResult HalSerialTransport::readFrame(int timeoutMs)
                       TransportResult::Error::Timeout);
     }
     QByteArray completeFrame;
-    if (takeBufferedFrame(&completeFrame)) {
+    if (takeBufferedFrame(m_receiveBuffer, &completeFrame)) {
         TransportResult result;
         result.ok = true;
         result.frame = completeFrame;
@@ -620,7 +587,7 @@ TransportResult HalSerialTransport::readFrame(int timeoutMs)
 
     QElapsedTimer timer;
     timer.start();
-    while (!takeBufferedFrame(&completeFrame)) {
+    while (!takeBufferedFrame(m_receiveBuffer, &completeFrame)) {
         const int remaining = remainingMs(timer, timeoutMs);
         if (remaining <= 0) {
             return failed(QStringLiteral("HAL serial read timed out"),

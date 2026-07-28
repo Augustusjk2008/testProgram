@@ -148,6 +148,7 @@ export interface ApplicationSample {
   cycleIndex: number
   values: Record<string, unknown>
   tags: Record<string, unknown>
+  streamElapsedUs?: number
 }
 
 export interface HelloMessage {

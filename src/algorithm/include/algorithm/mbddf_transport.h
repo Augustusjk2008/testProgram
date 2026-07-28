@@ -139,8 +139,6 @@ public:
     void close() override;
 
 private:
-    bool takeBufferedFrame(QByteArray* frame);
-
     hwtest::hal::IHalDevice* m_device = nullptr;
     hwtest::hal::ResourceId m_resourceId;
     hwtest::hal::RequestId m_requestId;
@@ -170,8 +168,6 @@ public:
     void close() override;
 
 private:
-    bool takeBufferedFrame(QByteArray* frame);
-
     hwtest::hal::IHalDevice* m_device = nullptr;
     hwtest::hal::ResourceId m_resourceId;
     hwtest::hal::RequestId m_requestId;

@@ -62,6 +62,13 @@ describe('algorithm-owned run parameters', () => {
       .map((parameter) => parameter.id)).toEqual(['waveform', 'ampl', 'max_freq'])
   })
 
+  it('rejects an empty visible required value', () => {
+    expect(validateRunParameterValues(descriptor, {
+      ...descriptor.runParameterDefaults,
+      ampl: '',
+    })).toBe('幅值为必填项')
+  })
+
   it('validates finite values and exclusive bounds while leaving unrestricted angles unrestricted', () => {
     expect(validateRunParameterValues(descriptor, {
       waveform: 4, ampl: -1000, max_freq: 80,
