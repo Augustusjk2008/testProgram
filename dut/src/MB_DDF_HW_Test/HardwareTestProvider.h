@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MB_DDF_HW_Test/HardwareTestService.h"
+#include "MB_DDF_HW_Test/HelmDdsTestBridge.h"
 #include "MB_DDF_HW_Test/SystemTestProvider.h"
 
 #include <memory>
@@ -27,6 +28,8 @@ public:
                                               size_t report_index) override;
     bool helm_feedback_active() const override;
     ProductErrorCode build_helm_feedback(ProductMessage& response) override;
+    std::optional<ProductErrorCode> poll_helm_feedback(
+        ProductMessage& response) override;
     bool imu_stream_active() const override;
     std::optional<ProductErrorCode> poll_imu_stream_feedback(
         ProductMessage& response) override;

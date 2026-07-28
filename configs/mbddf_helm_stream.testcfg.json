@@ -1,0 +1,152 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-helm-stream",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF servo stream",
+  "configVersion": "1.0.0",
+  "steps": [
+    {
+      "stepId": "HELM_STREAM",
+      "testItemId": "helm_stream",
+      "name": "舵机连续实测",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.helm_stream",
+      "parameters": {
+        "protocol": {
+          "requestValues": {
+            "waveform": 0,
+            "freq": 1.0,
+            "ampl": 1.8,
+            "offset": 0.0,
+            "start": 0.0,
+            "max_freq": 80.0,
+            "sweep_duration_s": 25.0,
+            "enable": 15
+          }
+        }
+      },
+      "timeoutMs": 2000,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": []
+    }
+  ],
+  "hardwareRequirements": [],
+  "protocolProfiles": [
+    {
+      "id": "helm_start_request",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"},
+      "timing": {"timeoutMs": 2000}
+    },
+    {
+      "id": "helm_start_response",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"},
+      "timing": {"timeoutMs": 2000}
+    },
+    {
+      "id": "helm_feedback_response",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"},
+      "timing": {"timeoutMs": 20}
+    },
+    {
+      "id": "helm_stop_request",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"},
+      "timing": {"timeoutMs": 2000}
+    },
+    {
+      "id": "helm_stop_response",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"},
+      "timing": {"timeoutMs": 2000}
+    }
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {
+      "startRequestProfileId": "helm_start_request",
+      "startResponseProfileId": "helm_start_response",
+      "feedbackResponseProfileId": "helm_feedback_response",
+      "stopRequestProfileId": "helm_stop_request",
+      "stopResponseProfileId": "helm_stop_response"
+    },
+    "stream": {
+      "readTimeoutMs": 20,
+      "startTimeoutMs": 2000,
+      "stopTimeoutMs": 2000
+    },
+    "transport": {"openTimeoutMs": 1000, "readChunkBytes": 260},
+    "serial": {"baudRate": 614400, "dataBits": 8, "parity": "Even", "stopBits": 1, "flowControl": "None"},
+    "initialSequence": 4660
+  },
+  "safetyPolicy": {
+    "enterSafeStateOnStop": true,
+    "enterSafeStateOnError": true
+  },
+  "runtimeConfig": {
+    "parallelEnabled": false,
+    "maxParallel": 1,
+    "defaultTimeoutMs": 2000,
+    "defaultRetryCount": 0,
+    "retryIntervalMs": 0,
+    "taskPriorityDefault": 2,
+    "stopOnFirstFailure": true,
+    "allowResume": false
+  },
+  "reportFields": {
+    "title": "舵机连续实测",
+    "description": "DUT 以 1 ms 周期生成舵角指令，经 DDS 与独立舵控程序交互；本测试不管理舵控程序的启停。",
+    "supportedRunModes": ["device_stream"],
+    "measurements": [
+      {"id": "dds_timestamp_us", "label": "DDS 时间戳", "unit": "us", "primary": false},
+      {"id": "product_frame_sequence", "label": "产品帧序号", "unit": "", "primary": false},
+      {"id": "product_frame_discontinuity", "label": "产品帧不连续", "unit": "", "primary": false},
+      {"id": "missing_product_frames", "label": "缺失产品帧数", "unit": "", "primary": false},
+      {"id": "batch_sample_index", "label": "批内样本索引", "unit": "", "primary": false},
+      {"id": "batch_sample_count", "label": "批内样本总数", "unit": "", "primary": false},
+      {"id": "serial_a", "label": "指令流水号 A", "unit": "", "primary": false},
+      {"id": "serial_b", "label": "反馈流水号 B", "unit": "", "primary": false},
+      {"id": "command_sequence", "label": "关联指令序号", "unit": "", "primary": false},
+      {"id": "serial_a_discontinuity", "label": "指令流水不连续", "unit": "", "primary": false},
+      {"id": "missing_serial_a", "label": "缺失指令流水数", "unit": "", "primary": false},
+      {"id": "serial_b_discontinuity", "label": "反馈流水不连续", "unit": "", "primary": false},
+      {"id": "missing_serial_b", "label": "缺失反馈流水数", "unit": "", "primary": false},
+      {"id": "version", "label": "舵控版本", "unit": "", "primary": false},
+      {"id": "ins[0]", "label": "舵1回显指令", "unit": "°", "primary": true},
+      {"id": "ins[1]", "label": "舵2回显指令", "unit": "°", "primary": true},
+      {"id": "ins[2]", "label": "舵3回显指令", "unit": "°", "primary": true},
+      {"id": "ins[3]", "label": "舵4回显指令", "unit": "°", "primary": true},
+      {"id": "fdb[0]", "label": "舵1角度反馈", "unit": "°", "primary": true},
+      {"id": "fdb[1]", "label": "舵2角度反馈", "unit": "°", "primary": true},
+      {"id": "fdb[2]", "label": "舵3角度反馈", "unit": "°", "primary": true},
+      {"id": "fdb[3]", "label": "舵4角度反馈", "unit": "°", "primary": true},
+      {"id": "self_check", "label": "电气自检", "unit": "", "primary": false},
+      {"id": "self_check_1", "label": "舵1自检", "unit": "", "primary": false},
+      {"id": "self_check_2", "label": "舵2自检", "unit": "", "primary": false},
+      {"id": "self_check_3", "label": "舵3自检", "unit": "", "primary": false},
+      {"id": "self_check_4", "label": "舵4自检", "unit": "", "primary": false},
+      {"id": "self_check_combined", "label": "舵自检合", "unit": "", "primary": false},
+      {"id": "self_check_reserved", "label": "舵自检保留位", "unit": "", "primary": false},
+      {"id": "timeout", "label": "超时标识", "unit": "", "primary": false},
+      {"id": "self_check_or", "label": "自检合并值", "unit": "", "primary": false},
+      {"id": "self_check_or_timeout", "label": "自检或超时异常", "unit": "", "primary": false},
+      {"id": "parameter.waveform", "label": "生效波形", "unit": "", "primary": false},
+      {"id": "parameter.freq", "label": "生效起始频率", "unit": "Hz", "primary": false},
+      {"id": "parameter.ampl", "label": "生效幅值", "unit": "°", "primary": false},
+      {"id": "parameter.offset", "label": "生效偏置", "unit": "°", "primary": false},
+      {"id": "parameter.start", "label": "生效起始相位", "unit": "rad", "primary": false},
+      {"id": "parameter.max_freq", "label": "生效终止频率", "unit": "Hz", "primary": false},
+      {"id": "parameter.sweep_duration_s", "label": "生效扫频时长", "unit": "s", "primary": false},
+      {"id": "parameter.enable", "label": "生效通道位图", "unit": "", "primary": false}
+    ]
+  }
+}

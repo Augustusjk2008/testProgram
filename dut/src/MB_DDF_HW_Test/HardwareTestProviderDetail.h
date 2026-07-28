@@ -99,6 +99,7 @@ ProductErrorCode run_safe_spi_loop(HW::ISpiTransport& transport,
 
 double helm_command(uint32_t waveform, double frequency, double amplitude,
                     double offset, double start_phase_radians,
-                    double maximum_frequency, double elapsed_seconds);
+                    double maximum_frequency, double sweep_duration_seconds,
+                    double elapsed_seconds);
 
 } // namespace MB_DDF::HWTest::Detail

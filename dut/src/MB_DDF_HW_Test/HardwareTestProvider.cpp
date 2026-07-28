@@ -328,73 +328,6 @@ ProductErrorCode run_bus(uint8_t link_id, uint32_t count,
     }
 }
 
-double helm_command_impl(uint32_t waveform, double frequency, double amplitude,
-                         double offset, double start_phase_radians,
-                         double maximum_frequency, double elapsed_seconds_value) {
-    constexpr double pi = 3.14159265358979323846;
-    const double time = std::max(0.0, elapsed_seconds_value);
-    const double phase = 2.0 * pi * frequency * time + start_phase_radians;
-    switch (waveform) {
-    case 0:
-        return offset + amplitude * std::sin(phase);
-    case 1:
-        return offset + amplitude * (std::sin(phase) >= 0.0 ? 1.0 : -1.0);
-    case 2: {
-        double normalized = std::fmod(phase / (2.0 * pi), 1.0);
-        if (normalized < 0.0) {
-            normalized += 1.0;
-        }
-        const double triangle = normalized < 0.25 ? normalized * 4.0
-                                : normalized < 0.75 ? 2.0 - normalized * 4.0
-                                                    : normalized * 4.0 - 4.0;
-        return offset + amplitude * triangle;
-    }
-    case 3:
-        return offset;
-    case 4: {
-        constexpr double duration = 25.0;
-        if (time > duration) {
-            return 0.0;
-        }
-        if (frequency <= 0.0 || maximum_frequency <= 0.0) {
-            return std::numeric_limits<double>::quiet_NaN();
-        }
-        double sweep_phase = 0.0;
-        if (std::abs(maximum_frequency - frequency) < 1.0e-12) {
-            sweep_phase = 2.0 * pi * frequency * time;
-        } else {
-            const double gap = maximum_frequency - frequency;
-            const double denominator = maximum_frequency * duration - time * gap;
-            if (denominator <= 0.0) {
-                return std::numeric_limits<double>::quiet_NaN();
-            }
-            sweep_phase = 2.0 * pi * frequency * maximum_frequency * duration /
-                          gap * std::log((maximum_frequency * duration) /
-                                         denominator);
-        }
-        return offset + amplitude * std::sin(sweep_phase + start_phase_radians);
-    }
-    default:
-        return std::numeric_limits<double>::quiet_NaN();
-    }
-}
-
-int16_t saturating_s16(double value) {
-    const auto rounded = std::llround(value);
-    return static_cast<int16_t>(std::clamp<int64_t>(
-        rounded, std::numeric_limits<int16_t>::min(),
-        std::numeric_limits<int16_t>::max()));
-}
-
-double convert_helm_feedback(int16_t raw) {
-    const auto unsigned_raw = static_cast<uint16_t>(raw);
-    double converted = static_cast<double>(unsigned_raw) * (-10.0 / 65536.0) + 12.048;
-    if (converted > 10.0) {
-        converted -= 10.0;
-    }
-    return converted;
-}
-
 volatile std::sig_atomic_t g_hardware_test_stop = 0;
 
 void request_hardware_test_stop(int) noexcept {
@@ -632,10 +565,18 @@ double Detail::helm_command(uint32_t waveform, double frequency,
                             double amplitude, double offset,
                             double start_phase_radians,
                             double maximum_frequency,
+                            double sweep_duration_seconds,
                             double elapsed_seconds) {
-    return helm_command_impl(waveform, frequency, amplitude, offset,
-                             start_phase_radians, maximum_frequency,
-                             elapsed_seconds);
+    HelmStreamParameters parameters{};
+    parameters.waveform = waveform;
+    parameters.frequency_hz = frequency;
+    parameters.amplitude_deg = amplitude;
+    parameters.offset_deg = offset;
+    parameters.start_phase_radians = start_phase_radians;
+    parameters.maximum_frequency_hz = maximum_frequency;
+    parameters.sweep_duration_seconds = sweep_duration_seconds;
+    parameters.enable_mask = 0x0F;
+    return helm_command_value(parameters, elapsed_seconds);
 }
 
 class XdmaTimerLoadExecutor final : public ITimerLoadExecutor {
@@ -759,15 +700,7 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
     HW::ComDevice imu_com{imu_transport};
     bool imu_active{false};
 
-    bool helm_active{false};
-    uint32_t waveform{0};
-    double frequency{0.3};
-    double amplitude{30.0};
-    double offset{0.0};
-    double start_phase_radians{0.0};
-    double maximum_frequency{0.0};
-    uint8_t enable_mask{1};
-    Clock::time_point helm_started{};
+    HelmDdsTestBridge helm;
 
     ProductErrorCode initialize() {
         const auto ready = ads1258.ensure_open();
@@ -1007,9 +940,6 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
 
     ProductErrorCode handle_helm_board(const ProductMessage& request,
                                        ProductMessage& response) {
-        if (helm_active) {
-            return ProductErrorCode::TaskBusy;
-        }
         auto ready = pwm.ensure_open();
         if (ready != ProductErrorCode::Ok) {
             return ready;
@@ -1224,144 +1154,30 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
         const auto offset_value = request.get_float("offset");
         const auto start_value = request.get_float("start");
         const auto maximum_value = request.get_float("max_freq");
+        const auto duration_value = request.get_float("sweep_duration_s");
         const auto enable_value = request.get_unsigned("enable");
         if (!waveform_value || !frequency_value || !amplitude_value || !offset_value ||
-            !start_value || !maximum_value || !enable_value || *waveform_value > 4 ||
-            *enable_value > 0x0Fu || !std::isfinite(*frequency_value) ||
-            !std::isfinite(*amplitude_value) || !std::isfinite(*offset_value) ||
-            !std::isfinite(*start_value) || !std::isfinite(*maximum_value) ||
-            *frequency_value <= 0.0F || *amplitude_value < 0.0F ||
-            std::abs(*offset_value) + *amplitude_value > 30.0F ||
-            *maximum_value < 0.0F ||
-            (*waveform_value == 4 && *maximum_value <= 0.0F)) {
+            !start_value || !maximum_value || !duration_value || !enable_value) {
             return ProductErrorCode::ParamOutOfRange;
         }
-        if (helm_active) {
-            return ProductErrorCode::TaskBusy;
-        }
-        auto ready = pwm.ensure_open();
-        if (ready != ProductErrorCode::Ok) {
-            return ready;
-        }
-        ready = ad7606.ensure_open();
-        if (ready != ProductErrorCode::Ok) {
-            return ready;
-        }
-        auto ad_operation = ad7606.device().set_acquisition_enabled(true);
-        if (!ad_operation) {
-            return status_error(ad_operation.status());
-        }
-        ad_operation = ad7606.device().set_filter_enabled(true);
-        if (!ad_operation) {
-            return status_error(ad_operation.status());
-        }
-        const auto state = pwm.device().read_state();
-        if (!state || state.value().config.peak_value == 0) {
-            return state ? ProductErrorCode::RegReadWriteFailed
-                         : status_error(state.status());
-        }
-        auto operation = pwm.device().set_update_enabled(false);
-        if (!operation) {
-            return status_error(operation.status());
-        }
-        operation = pwm.device().set_duty_mode_unsigned();
-        if (!operation) {
-            return status_error(operation.status());
-        }
-
-        waveform = static_cast<uint32_t>(*waveform_value);
-        frequency = *frequency_value;
-        amplitude = *amplitude_value;
-        offset = *offset_value;
-        start_phase_radians = *start_value;
-        maximum_frequency = *maximum_value;
-        enable_mask = static_cast<uint8_t>(*enable_value);
-        helm_started = Clock::now();
-        helm_active = true;
-        return ProductErrorCode::Ok;
+        HelmStreamParameters parameters{};
+        parameters.waveform = static_cast<uint32_t>(*waveform_value);
+        parameters.frequency_hz = *frequency_value;
+        parameters.amplitude_deg = *amplitude_value;
+        parameters.offset_deg = *offset_value;
+        parameters.start_phase_radians = *start_value;
+        parameters.maximum_frequency_hz = *maximum_value;
+        parameters.sweep_duration_seconds = *duration_value;
+        parameters.enable_mask = static_cast<uint8_t>(*enable_value);
+        return helm.start(parameters);
     }
 
     ProductErrorCode stop_helm() {
-        if (!helm_active) {
-            return ProductErrorCode::Ok;
-        }
-        const auto ready = pwm.ensure_open();
-        if (ready != ProductErrorCode::Ok) {
-            return ready;
-        }
-        HW::PwmNormalizedOutputs outputs{};
-        outputs.enable_mask = 0;
-        auto operation = pwm.device().apply_normalized_outputs(outputs);
-        if (!operation) {
-            return status_error(operation.status());
-        }
-        operation = pwm.device().set_update_enabled(true);
-        if (!operation) {
-            return status_error(operation.status());
-        }
-        const auto ad_ready = ad7606.ensure_open();
-        if (ad_ready != ProductErrorCode::Ok) {
-            return ad_ready;
-        }
-        operation = ad7606.device().set_acquisition_enabled(false);
-        if (!operation) {
-            return status_error(operation.status());
-        }
-        operation = ad7606.device().set_filter_enabled(false);
-        if (!operation) {
-            return status_error(operation.status());
-        }
-        helm_active = false;
-        return ProductErrorCode::Ok;
+        return helm.stop();
     }
 
-    ProductErrorCode build_helm_feedback(ProductMessage& response) {
-        if (!helm_active) {
-            return ProductErrorCode::TaskBusy;
-        }
-        for (size_t sample = 0; sample < 10; ++sample) {
-            const double elapsed = std::chrono::duration<double>(
-                Clock::now() - helm_started).count();
-            const double command = Detail::helm_command(
-                waveform, frequency, amplitude, offset, start_phase_radians,
-                maximum_frequency, elapsed);
-            if (!std::isfinite(command) || command < -30.0 || command > 30.0) {
-                return ProductErrorCode::ParamOutOfRange;
-            }
-
-            HW::PwmNormalizedOutputs outputs{};
-            outputs.enable_mask = enable_mask;
-            for (size_t channel = 0; channel < outputs.value.size(); ++channel) {
-                outputs.value[channel] =
-                    (enable_mask & (1u << channel)) != 0 ? command / 30.0 : 0.0;
-            }
-            auto operation = pwm.device().apply_normalized_outputs(outputs);
-            if (!operation) {
-                return status_error(operation.status());
-            }
-            operation = pwm.device().set_update_enabled(true);
-            if (!operation) {
-                return status_error(operation.status());
-            }
-
-            const auto snapshot = ad7606.device().read_snapshot();
-            if (!snapshot) {
-                return status_error(snapshot.status());
-            }
-            (void)response.set_signed("zl[" + std::to_string(sample) + "][0]",
-                                      saturating_s16(command));
-            (void)response.set_unsigned("self_code[" + std::to_string(sample) + "]", 0);
-            for (size_t channel = 0; channel < 4; ++channel) {
-                (void)response.set_signed(
-                    "fk[" + std::to_string(sample) + "][" +
-                        std::to_string(channel) + "]",
-                    saturating_s16(convert_helm_feedback(snapshot.value().raw[channel])));
-            }
-            if (sample + 1 < 10) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-        }
-        return ProductErrorCode::Ok;
+    std::optional<ProductErrorCode> poll_helm_feedback(ProductMessage& response) {
+        return helm.poll_feedback(response);
     }
 };
 
@@ -1525,11 +1341,16 @@ ProductErrorCode HardwareTestProvider::handle_dh_control_report(
 }
 
 bool HardwareTestProvider::helm_feedback_active() const {
-    return impl_->helm_active;
+    return impl_->helm.active();
 }
 
 ProductErrorCode HardwareTestProvider::build_helm_feedback(ProductMessage& response) {
-    return impl_->build_helm_feedback(response);
+    return impl_->poll_helm_feedback(response).value_or(ProductErrorCode::TaskBusy);
+}
+
+std::optional<ProductErrorCode> HardwareTestProvider::poll_helm_feedback(
+    ProductMessage& response) {
+    return impl_->poll_helm_feedback(response);
 }
 
 bool HardwareTestProvider::imu_stream_active() const {

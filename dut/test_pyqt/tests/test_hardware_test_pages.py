@@ -492,6 +492,17 @@ def test_helm_parameters_serialize_waveform_and_four_channel_enable_bits(
     assert outbound.values["enable"] == 0xD
 
 
+def test_legacy_helm_page_does_not_apply_a_product_angle_limit(qtbot, catalog) -> None:
+    page = make_page(qtbot, catalog, "helm")
+    page.amplitude_spin.setValue(250.0)
+    page.offset_spin.setValue(-100.0)
+
+    parameters = page.collect_parameters()
+
+    assert parameters["ampl"] == 250.0
+    assert parameters["offset"] == -100.0
+
+
 @pytest.mark.parametrize("mode", (0, 1))
 def test_timer_parameters_only_serialize_supported_modes(
     qtbot, catalog, mode

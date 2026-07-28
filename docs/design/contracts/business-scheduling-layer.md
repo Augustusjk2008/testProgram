@@ -18,7 +18,7 @@ BIZ 负责：
 - 配置读取、迁移、校验和新格式写出。
 - 计划生成、稳定依赖排序、重试、运行模式、任务状态和结果编排。
 - 报告编排，以及 `LogEvent` 的生产和转发。
-- 向算法端口传递 `TestPlan`、`TestContext` 和不透明的 `executionConfig`。
+- 向算法端口传递 `TestPlan`、`TestContext`、不透明的 `executionConfig` 和本次运行参数覆盖。
 
 BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作测试设备/DUT 的硬件、通讯、连接、deadline 或物理安全态。它的公开头、目标链接和运行期对象不得直接出现 HAL、Adapter、Socket、codec、测量工厂或安全输出执行接口。
 
@@ -32,8 +32,8 @@ BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作�
 | `TestConfig` | 根配置：身份、步骤、硬件需求、协议 profile、`executionConfig`、安全/运行时策略和报告字段 |
 | `TestStep` | 可调度步骤：标识、算法 ID、参数、超时、重试、启用状态、依赖和判据 |
 | `TestPlan` | 由已规范化配置生成的有序步骤和相关业务模型；不包含 `executionConfig` |
-| `TestContext` | 一次任务的 `runId`、`requestId`、产品、操作者、工位和 tags；不得扩展为设备句柄或通讯对象 |
-| `RunMode`、`RunOptions` | 单次、PC 周期和设备持续回告三种通用运行语义，以及轮间隔和最大轮数 |
+| `TestContext` | 一次任务的 `runId`、`requestId`、产品、操作者、工位、tags 和不透明 `runParameters`；不得扩展为设备句柄或通讯对象 |
+| `RunMode`、`RunOptions` | 单次、PC 周期和设备持续回告三种通用运行语义，以及轮间隔、最大轮数和不透明 `parameters` |
 | `TestResult`、`MeasurementRecord`、`RawSample` | 单步结果、测量记录和算法回传样本；BIZ 聚合结果、标记并转发样本，但不改变产品判定语义 |
 | `ProtocolProfile`、`HardwareRequirement`、`SafetyPolicy` | 兼容和透传模型；BIZ 保存/校验结构，不解释协议或实施安全动作；`enterSafeStateOnStop/Error` 当前不驱动运行期分支 |
 | `RuntimeConfig`、`ReportOptions` | 业务调度与报告选项；文件 I/O 不属于生产硬件/通讯 I/O 边界 |
@@ -44,6 +44,7 @@ BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作�
 
 - `TestConfigManager` 严格拒绝已建模对象中的未知字段，校验身份、步骤标识、超时、重试、依赖和枚举范围，并无损读写已建模字段。
 - `executionConfig` 是传给 `IAlgorithmExecutor::prepare()` 的不透明 `QVariantMap`。BIZ 不验证其协议、设备、通讯或安全内部字段。
+- `RunOptions::parameters` 是一次启动的运行参数覆盖；BIZ 原样复制到 `TestContext::runParameters`，不定义字段、不合并配置默认值，也不解释或限制其产品语义。Schema、默认值合并与校验属于算法层及应用组合边界。
 - 新写出的根配置只能使用 `executionConfig`。旧根字段 `halConfig` 只能在读取迁移时映射为 `executionConfig`；新配置不得再写出 `halConfig`。
 - `HardwareRequirement.adapterId` 是当前兼容的、不透明需求元数据。BIZ 不用它选择后端，它也不等同于 HAL 部署配置中的目标 `providerId`。
 - `dependsOn` 的新格式使用 `StepId`；读取迁移可接受唯一的 `testItemId`，计划生成时统一为 `StepId`。
@@ -149,7 +150,7 @@ void destroyReportGenerator(IReportGenerator* generator);
 - 配置能力由应用层读取 `reportFields.supportedRunModes`。同一测试配置最多只能声明 `pc_periodic`、`device_stream` 中的一种：前者是 PC 多次单发单回，后者是设备主动连续回告，二者不是同一测试的可互换选项。字段缺失时只回退到 `single`；应用控制器在进入 BIZ 前以 `CapabilityUnsupported` 拒绝未声明模式。通用 BIZ 服务仍只实现运行语义，不读取展示字段。
 - `PcPeriodic` 只接受 `10..3600000` ms 的整数间隔，有限轮数不超过 `1000000000`。轮间等待可被暂停、恢复和停止唤醒。
 - 每轮开始先发出 `cycleStarted`；结果和样本均标记当前 `cycleIndex`。算法未给样本时间戳时，BIZ 使用当前 UTC epoch 微秒补齐，再发出 `sampleProduced`。当前服务不额外长期缓存样本，避免无限周期会话在 BIZ 内形成无界样本副本。
-- BIZ 把 `runMode`、`intervalMs` 和 `maxCycles` 写入 `TestContext::tags`，但不据此解释产品命令。`intervalMs`/`maxCycles` 只对 `PcPeriodic` 有调度含义；应用层对 `Single`/`DeviceStream` 使用固定兼容值 `1000/1`，不会据此重复请求。设备是否支持 `DeviceStream` 由算法决定；当前 `mbddf.system_status` 没有设备流启动/停止命令，准备阶段返回 `CapabilityUnsupported`。
+- BIZ 把 `runMode`、`intervalMs` 和 `maxCycles` 写入 `TestContext::tags`，把 `RunOptions::parameters` 原样写入 `TestContext::runParameters`，但不据此解释产品命令。`intervalMs`/`maxCycles` 只对 `PcPeriodic` 有调度含义；应用层对 `Single`/`DeviceStream` 使用固定兼容值 `1000/1`，不会据此重复请求。设备是否支持 `DeviceStream` 由算法决定；当前 `mbddf.system_status` 没有设备流启动/停止命令，准备阶段返回 `CapabilityUnsupported`。
 - PC 周期会话中的硬件或协议执行错误结束整个会话；普通判定失败是否中止同轮后续步骤仍由 `RuntimeConfig::stopOnFirstFailure` 控制。
 - `[当前实现]` 每个任务在一个专用 `QThread` 中同步执行 `prepare()`、各轮 `executeStep()`、轮间等待和 `finishRun()`；该线程提供 Qt event dispatcher，测试锁定同一任务的准备、执行和运行收尾均位于同一非应用线程且能够注册 Qt 计时器。这里不承诺在同步算法调用期间持续泵送事件，也不改变 `requestStop()` 由调用线程发起的既有语义；不得据此宣称 HAL 连接已实现 actor 化或跨线程取消。
 

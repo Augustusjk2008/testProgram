@@ -175,7 +175,7 @@ function Resolve-ProtocolAssets {
         $path = $env:MB_DDF_PROTOCOL_CSV_DIR
     }
     if ([string]::IsNullOrWhiteSpace($path)) {
-        $path = 'H:\Resources\RTLinux\Demos\MB_DDF_v2\docs\design\product_protocol_csv'
+        $path = Join-Path $RepoRoot 'dut\docs\design\product_protocol_csv'
     }
     $resolved = Resolve-RepoPath $path
     Assert-Directory $resolved 'MB_DDF protocol CSV directory'

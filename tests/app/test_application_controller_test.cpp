@@ -608,6 +608,110 @@ TEST(TestApplicationControllerTest, ProjectsDescriptorFromElectricalHealthConfig
     EXPECT_TRUE(controller.shutdown().ok);
 }
 
+TEST(TestApplicationControllerTest, ProjectsAlgorithmOwnedDhRunParameters)
+{
+    ensureQtApplication();
+    const QString projectDirectory = QStringLiteral(HWTEST_PROJECT_SOURCE_DIR);
+    const QString dhConfig = QDir(projectDirectory).filePath(
+        QStringLiteral("configs/mbddf_dh_pulse_config.testcfg.json"));
+
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        dhConfig, QStringLiteral(HWTEST_APP_HAL_CONFIG));
+    ASSERT_TRUE(loaded.ok) << loaded.message.toStdString();
+
+    const TestDescriptor& descriptor = controller.snapshot().descriptor;
+    EXPECT_EQ(descriptor.algorithmId, QStringLiteral("mbddf.dh_pulse_config"));
+    EXPECT_EQ(descriptor.runParameterSchemaVersion, QStringLiteral("1"));
+    ASSERT_EQ(descriptor.runParameters.size(), 24);
+    EXPECT_EQ(descriptor.runParameters.first().id,
+              QStringLiteral("config_enable"));
+    EXPECT_EQ(descriptor.runParameters.at(1).id,
+              QStringLiteral("pulse_width[0]"));
+    EXPECT_EQ(descriptor.runParameters.at(1).unit, QStringLiteral("ms"));
+    EXPECT_EQ(descriptor.runParameterDefaults.value(
+                  QStringLiteral("pulse_width[0]")).toInt(),
+              80);
+    EXPECT_EQ(descriptor.runParameterDefaults.value(
+                  QStringLiteral("pulse_width[22]")).toInt(),
+              63);
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, RejectsUnknownRuntimeParameterBeforeStartingDh)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QTemporaryDir directory;
+    QString error;
+    QString halConfigPath;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+
+    const QString dhConfig = QDir(QStringLiteral(HWTEST_PROJECT_SOURCE_DIR))
+        .filePath(QStringLiteral("configs/mbddf_dh_pulse_config.testcfg.json"));
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(dhConfig, halConfigPath).ok);
+    ASSERT_TRUE(controller.selectControl(QStringLiteral("CONTROL_NETWORK")).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+
+    TestRunOptions options;
+    options.algorithmParameters.insert(QStringLiteral("mechanical_limit"), 20.5);
+    const ActionResult started = controller.start(options);
+    EXPECT_FALSE(started.ok);
+    EXPECT_EQ(started.code, QStringLiteral("ParameterRangeError"));
+    EXPECT_NE(started.message.indexOf(QStringLiteral("mechanical_limit")), -1);
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, ProjectsUnboundedHelmRuntimeParameters)
+{
+    ensureQtApplication();
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_HELM_STREAM_CONFIG),
+        QStringLiteral(HWTEST_APP_HAL_CONFIG));
+    ASSERT_TRUE(loaded.ok) << loaded.message.toStdString();
+
+    const TestDescriptor& descriptor = controller.snapshot().descriptor;
+    EXPECT_EQ(descriptor.algorithmId, QStringLiteral("mbddf.helm_stream"));
+    EXPECT_EQ(descriptor.supportedRunModes,
+              QVector<QString>{QStringLiteral("device_stream")});
+    EXPECT_EQ(descriptor.runParameterSchemaVersion, QStringLiteral("1"));
+    ASSERT_EQ(descriptor.runParameters.size(), 8);
+    const auto amplitude = std::find_if(
+        descriptor.runParameters.cbegin(), descriptor.runParameters.cend(),
+        [](const TestRunParameterDescriptor& parameter) {
+            return parameter.id == QStringLiteral("ampl");
+        });
+    ASSERT_NE(amplitude, descriptor.runParameters.cend());
+    EXPECT_FALSE(amplitude->minimum.isValid());
+    EXPECT_FALSE(amplitude->maximum.isValid());
+    const auto duration = std::find_if(
+        descriptor.runParameters.cbegin(), descriptor.runParameters.cend(),
+        [](const TestRunParameterDescriptor& parameter) {
+            return parameter.id == QStringLiteral("sweep_duration_s");
+        });
+    ASSERT_NE(duration, descriptor.runParameters.cend());
+    EXPECT_TRUE(duration->minimumExclusive);
+    EXPECT_EQ(duration->visibleWhenParameter, QStringLiteral("waveform"));
+    EXPECT_EQ(duration->visibleWhenEquals.toInt(), 4);
+    EXPECT_DOUBLE_EQ(descriptor.runParameterDefaults.value(
+                         QStringLiteral("sweep_duration_s")).toDouble(),
+                     25.0);
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
 TEST(TestApplicationControllerTest, RunsElectricalHealthThroughTheSelectedUdpControlResource)
 {
     ensureQtApplication();

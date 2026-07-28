@@ -460,6 +460,7 @@ public:
             QStringLiteral("intervalMs"),
             QStringLiteral("maxCycles"),
             QStringLiteral("saveData"),
+            QStringLiteral("algorithmParameters"),
         };
         for (auto iterator = request.params.constBegin();
              iterator != request.params.constEnd();
@@ -559,6 +560,20 @@ public:
                 return false;
             }
             parsed.saveData = saveData.toBool();
+        }
+
+        if (request.params.contains(QStringLiteral("algorithmParameters"))) {
+            const QJsonValue parameters =
+                request.params.value(QStringLiteral("algorithmParameters"));
+            if (!parameters.isObject()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'algorithmParameters' must be an object"));
+                }
+                return false;
+            }
+            parsed.algorithmParameters = parameters.toObject().toVariantMap();
         }
 
         if (options != nullptr) {

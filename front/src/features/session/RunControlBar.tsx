@@ -12,6 +12,13 @@ import type { RunMode, TestRunOptions } from '../../shared/protocol'
 import { phaseLabel } from '../../shared/format'
 import { setLocalStorageValue } from '../../shared/storage'
 import { normalizeRunOptionsForStart } from './run-options'
+import {
+  loadRunParameterValues,
+  runParameterStorageKey,
+  validateRunParameterValues,
+  type RunParameterValues,
+} from './run-parameters'
+import { RunParameterEditor } from './RunParameterEditor'
 import { useSession } from './SessionProvider'
 
 const RUN_OPTIONS_KEY = 'hwtest.run-options.v1'
@@ -26,12 +33,16 @@ function loadRunOptions(): TestRunOptions {
         intervalMs: parsed.intervalMs ?? 500,
         maxCycles: parsed.maxCycles ?? 0,
         saveData: parsed.saveData === true,
+        algorithmParameters: {},
       }
     }
   } catch {
     // Ignore browser storage restrictions and use safe defaults.
   }
-  return { mode: 'pc_periodic', intervalMs: 500, maxCycles: 0, saveData: false }
+  return {
+    mode: 'pc_periodic', intervalMs: 500, maxCycles: 0, saveData: false,
+    algorithmParameters: {},
+  }
 }
 
 const MODE_LABELS: Array<{ mode: RunMode; title: string }> = [
@@ -76,8 +87,28 @@ export function RunControlBar() {
     }
     return ''
   }, [options])
+  const parameterError = useMemo(
+    () => validateRunParameterValues(snapshot.descriptor, options.algorithmParameters),
+    [options.algorithmParameters, snapshot.descriptor],
+  )
   const unsupported = hasRunModeCapabilities && !supportedModes.includes(options.mode)
-  const controlError = periodicError || (unsupported ? `${testTitle}不支持当前运行模式` : '') || snapshot.dataSaveError || actionError
+  const controlError = periodicError || parameterError || (unsupported ? `${testTitle}不支持当前运行模式` : '') || snapshot.dataSaveError || actionError
+
+  useEffect(() => {
+    const descriptor = snapshot.descriptor
+    if (!descriptor.configId || !descriptor.runParameterSchemaVersion) {
+      setOptions((current) => ({ ...current, algorithmParameters: {} }))
+      return
+    }
+    let stored: string | null = null
+    try {
+      stored = window.localStorage.getItem(runParameterStorageKey(descriptor))
+    } catch {
+      // Browser privacy settings may disable file:// storage.
+    }
+    const algorithmParameters = loadRunParameterValues(descriptor, stored)
+    setOptions((current) => ({ ...current, algorithmParameters }))
+  }, [snapshot.descriptor.configId, snapshot.descriptor.runParameterSchemaVersion])
 
   useEffect(() => {
     if (!hasRunModeCapabilities) return
@@ -85,12 +116,30 @@ export function RunControlBar() {
     const mode = supportedModes[0] ?? 'single'
     const next = { ...options, mode }
     setOptions(next)
-    setLocalStorageValue(RUN_OPTIONS_KEY, JSON.stringify(next))
+    setLocalStorageValue(RUN_OPTIONS_KEY, JSON.stringify({
+      mode: next.mode,
+      intervalMs: next.intervalMs,
+      maxCycles: next.maxCycles,
+      saveData: next.saveData,
+    }))
   }, [hasRunModeCapabilities, options, supportedModes])
 
   function saveOptions(next: TestRunOptions) {
     setOptions(next)
-    setLocalStorageValue(RUN_OPTIONS_KEY, JSON.stringify(next))
+    setLocalStorageValue(RUN_OPTIONS_KEY, JSON.stringify({
+      mode: next.mode,
+      intervalMs: next.intervalMs,
+      maxCycles: next.maxCycles,
+      saveData: next.saveData,
+    }))
+  }
+
+  function saveRunParameters(values: RunParameterValues) {
+    setOptions((current) => ({ ...current, algorithmParameters: values }))
+    const descriptor = snapshot.descriptor
+    if (descriptor.configId && descriptor.runParameterSchemaVersion) {
+      setLocalStorageValue(runParameterStorageKey(descriptor), JSON.stringify(values))
+    }
   }
 
   function execute(action: Parameters<typeof invoke>[0], params?: Record<string, unknown>) {
@@ -98,7 +147,7 @@ export function RunControlBar() {
   }
 
   function beginRun() {
-    if (periodicError || unsupported) return
+    if (periodicError || parameterError || unsupported) return
     void start(normalizeRunOptionsForStart(options)).catch(() => undefined)
   }
 
@@ -215,7 +264,7 @@ export function RunControlBar() {
         ) : !active ? (
           <button
             className="button button--primary"
-            disabled={!canStart || Boolean(periodicError) || unsupported || busyAction !== null}
+            disabled={!canStart || Boolean(periodicError) || Boolean(parameterError) || unsupported || busyAction !== null}
             onClick={beginRun}
             type="button"
           >
@@ -248,6 +297,15 @@ export function RunControlBar() {
           </span>
         )}
       </div>
+
+      <RunParameterEditor
+        descriptor={snapshot.descriptor}
+        disabled={active}
+        effective={active && Object.keys(snapshot.effectiveRunParameters).length > 0}
+        onChange={saveRunParameters}
+        onReset={() => saveRunParameters({ ...snapshot.descriptor.runParameterDefaults })}
+        values={options.algorithmParameters}
+      />
 
       <div className="run-console__progress" aria-label={`测试进度 ${snapshot.progress}%`}>
         <i style={{ width: `${Math.max(0, Math.min(100, snapshot.progress))}%` }} />

@@ -97,6 +97,9 @@ struct HWTEST_BIZ_EXPORT RunOptions {
     RunMode mode = RunMode::Single;
     int intervalMs = 1000;
     quint64 maxCycles = 1;
+    // Opaque per-run values. BIZ forwards them without interpreting
+    // algorithm-specific keys or semantics.
+    QVariantMap parameters;
 };
 
 enum class TestVerdict {
@@ -270,6 +273,7 @@ struct HWTEST_BIZ_EXPORT TestContext {
     UserId operatorId;
     StationId stationId;
     QVariantMap tags;
+    QVariantMap runParameters;
 };
 
 struct HWTEST_BIZ_EXPORT RawSample {

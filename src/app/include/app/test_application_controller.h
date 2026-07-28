@@ -33,6 +33,7 @@ struct TestRunOptions {
     int intervalMs = 1000;
     quint64 maxCycles = 1;
     bool saveData = false;
+    QVariantMap algorithmParameters;
 };
 
 struct ApplicationSample {
@@ -52,6 +53,27 @@ struct TestMeasurementDescriptor {
     bool primary = false;
 };
 
+struct TestRunParameterChoice {
+    QVariant value;
+    QString label;
+};
+
+struct TestRunParameterDescriptor {
+    QString id;
+    QString label;
+    QString description;
+    QString kind;
+    QString unit;
+    bool required = true;
+    QVariant minimum;
+    QVariant maximum;
+    bool minimumExclusive = false;
+    bool maximumExclusive = false;
+    QVector<TestRunParameterChoice> choices;
+    QString visibleWhenParameter;
+    QVariant visibleWhenEquals;
+};
+
 struct TestDescriptor {
     QString configId;
     QString productModel;
@@ -64,6 +86,9 @@ struct TestDescriptor {
     QString description;
     QVector<QString> supportedRunModes;
     QVector<TestMeasurementDescriptor> measurements;
+    QString runParameterSchemaVersion;
+    QVector<TestRunParameterDescriptor> runParameters;
+    QVariantMap runParameterDefaults;
 };
 
 struct DigitalSwitchDescriptor {
@@ -103,6 +128,7 @@ struct ApplicationSnapshot {
     QString message;
     int attempts = 0;
     QVariantMap rawData;
+    QVariantMap effectiveRunParameters;
     QString runMode = QStringLiteral("single");
     int intervalMs = 1000;
     quint64 maxCycles = 1;
@@ -164,6 +190,8 @@ Q_DECLARE_METATYPE(hwtest::app::ApplicationSnapshot)
 Q_DECLARE_METATYPE(hwtest::app::SerialPortInfo)
 Q_DECLARE_METATYPE(hwtest::app::TestDescriptor)
 Q_DECLARE_METATYPE(hwtest::app::TestMeasurementDescriptor)
+Q_DECLARE_METATYPE(hwtest::app::TestRunParameterChoice)
+Q_DECLARE_METATYPE(hwtest::app::TestRunParameterDescriptor)
 Q_DECLARE_METATYPE(hwtest::app::TestRunOptions)
 Q_DECLARE_METATYPE(hwtest::app::DigitalSwitchDescriptor)
 Q_DECLARE_METATYPE(hwtest::app::DigitalStimulusSnapshot)

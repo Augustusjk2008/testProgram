@@ -5,6 +5,7 @@ export interface TestRunOptions {
   intervalMs: number
   maxCycles: number
   saveData: boolean
+  algorithmParameters: Record<string, unknown>
 }
 
 export interface TestMeasurementDescriptor {
@@ -12,6 +13,33 @@ export interface TestMeasurementDescriptor {
   label: string
   unit: string
   primary: boolean
+}
+
+export type RunParameterKind = 'integer' | 'number' | 'boolean' | 'choice'
+
+export interface TestRunParameterChoice {
+  value: string | number | boolean
+  label: string
+}
+
+export interface TestRunParameterVisibility {
+  parameter: string
+  equals: string | number | boolean
+}
+
+export interface TestRunParameterDescriptor {
+  id: string
+  label: string
+  description: string
+  kind: RunParameterKind
+  unit: string
+  required: boolean
+  minimum?: number
+  maximum?: number
+  minimumExclusive: boolean
+  maximumExclusive: boolean
+  choices: TestRunParameterChoice[]
+  visibleWhen?: TestRunParameterVisibility
 }
 
 export interface TestDescriptor {
@@ -26,6 +54,9 @@ export interface TestDescriptor {
   description: string
   supportedRunModes: RunMode[]
   measurements: TestMeasurementDescriptor[]
+  runParameterSchemaVersion: string
+  runParameters: TestRunParameterDescriptor[]
+  runParameterDefaults: Record<string, unknown>
 }
 
 export interface TestConfigOption {
@@ -96,6 +127,7 @@ export interface ApplicationSnapshot {
   message: string
   attempts: number
   rawData: Record<string, unknown>
+  effectiveRunParameters: Record<string, unknown>
   runMode: RunMode
   intervalMs: number
   maxCycles: number
@@ -180,6 +212,9 @@ export const EMPTY_TEST_DESCRIPTOR: TestDescriptor = {
   description: '',
   supportedRunModes: [],
   measurements: [],
+  runParameterSchemaVersion: '',
+  runParameters: [],
+  runParameterDefaults: {},
 }
 
 export const EMPTY_DIGITAL_STIMULUS: DigitalStimulusSnapshot = {
@@ -212,6 +247,7 @@ export const EMPTY_SNAPSHOT: ApplicationSnapshot = {
   message: '',
   attempts: 0,
   rawData: {},
+  effectiveRunParameters: {},
   runMode: 'single',
   intervalMs: 1000,
   maxCycles: 1,

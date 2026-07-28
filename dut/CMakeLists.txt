@@ -145,6 +145,7 @@ set(HW_TEST_SOURCES
     src/MB_DDF_HW_Test/HardwareTestService.cpp
     src/MB_DDF_HW_Test/SystemTestProvider.cpp
     src/MB_DDF_HW_Test/HardwareTestProvider.cpp
+    src/MB_DDF_HW_Test/HelmDdsTestBridge.cpp
 )
 
 if((NOT BUILD_LIBRARY AND MB_DDF_APP_MODE STREQUAL "HW_TEST") OR
@@ -221,7 +222,7 @@ else()
     if(MB_DDF_APP_MODE STREQUAL "ECHO")
         list(APPEND APP_SOURCES src/MB_DDF_HW_Test/ComEchoRunner.cpp)
     elseif(MB_DDF_APP_MODE STREQUAL "HW_TEST")
-        list(APPEND APP_SOURCES ${HW_TEST_SOURCES})
+        list(APPEND APP_SOURCES ${DDS_CORE_SOURCES} ${HW_TEST_SOURCES})
     elseif(MB_DDF_APP_MODE STREQUAL "DEMO")
         list(APPEND APP_SOURCES ${DDS_CORE_SOURCES} ${DDS_DEMO_SOURCES})
     endif()
@@ -238,12 +239,26 @@ else()
     endif()
 endif()
 
+set(HELM_CONTROL_TARGET "${PROJECT_NAME}_HelmControl")
+if(NOT BUILD_LIBRARY AND MB_DDF_APP_MODE STREQUAL "HW_TEST")
+    add_executable(${HELM_CONTROL_TARGET}
+        ${DDS_CORE_SOURCES}
+        src/MB_DDF/Timer/SystemTimer.cpp
+        src/MB_DDF/Timer/ChronoHelper.cpp
+        src/HelmControl/AppMain.cpp
+    )
+    configure_dds_target(${HELM_CONTROL_TARGET} PRIVATE)
+endif()
+
 if(BUILD_HARDWARE_LAYER)
     add_subdirectory(src/MB_DDF_HW)
 
     # 仅可执行程序需要运行硬件示例；库构建继续只导出 DDS 核心。
     if(NOT BUILD_LIBRARY)
         target_link_libraries(${TARGET_NAME} PRIVATE MB_DDF_HW)
+        if(TARGET ${HELM_CONTROL_TARGET})
+            target_link_libraries(${HELM_CONTROL_TARGET} PRIVATE MB_DDF_HW)
+        endif()
         if(MB_DDF_APP_MODE STREQUAL "DEMO")
             target_compile_definitions(${TARGET_NAME} PRIVATE MB_DDF_DEMO_WITH_HARDWARE=1)
         endif()

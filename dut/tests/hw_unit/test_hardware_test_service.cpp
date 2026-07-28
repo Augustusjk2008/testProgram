@@ -82,8 +82,23 @@ public:
 
     HWTest::ProductErrorCode build_helm_feedback(HWTest::ProductMessage& response) override {
         ++feedback_calls;
-        response.set_signed("zl[0][0]", 123);
+        response.set_unsigned("sample_count", 1);
+        response.set_unsigned("first_timestamp_us_low", 123);
+        response.set_unsigned("first_timestamp_us_high", 0);
+        response.set_unsigned("sample[0].serial_a", 7);
+        response.set_unsigned("sample[0].serial_b", 8);
+        response.set_float("sample[0].ins[0]", 12.5F);
+        response.set_float("sample[0].fdb[0]", 11.5F);
         return next_error;
+    }
+
+    std::optional<HWTest::ProductErrorCode> poll_helm_feedback(
+        HWTest::ProductMessage& response) override {
+        if (!feedback_ready) {
+            ++feedback_calls;
+            return std::nullopt;
+        }
+        return build_helm_feedback(response);
     }
 
     bool imu_stream_active() const override { return imu_active; }
@@ -101,6 +116,7 @@ public:
 
     HWTest::ProductErrorCode next_error{HWTest::ProductErrorCode::Ok};
     bool feedback_active{false};
+    bool feedback_ready{true};
     bool imu_active{false};
     bool imu_feedback_ready{false};
     int feedback_calls{0};
@@ -241,6 +257,54 @@ private:
     bool allow_handle_to_finish{false};
 };
 
+class HelmStopOrderingProvider final : public HWTest::IHardwareTestProvider {
+public:
+    HWTest::ProductErrorCode handle(const HWTest::ProductMessage& request,
+                                    HWTest::ProductMessage&) override {
+        if (request.name() != "helm_stop_request") {
+            return HWTest::ProductErrorCode::CmdUnknown;
+        }
+        active.store(false, std::memory_order_relaxed);
+        return HWTest::ProductErrorCode::Ok;
+    }
+
+    bool helm_feedback_active() const override {
+        return active.load(std::memory_order_relaxed);
+    }
+
+    HWTest::ProductErrorCode build_helm_feedback(
+        HWTest::ProductMessage& response) override {
+        response.set_unsigned("sample_count", 1);
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            feedback_entered = true;
+            condition.notify_all();
+        }
+        std::unique_lock<std::mutex> lock(mutex);
+        condition.wait(lock, [&]() { return allow_feedback_to_finish; });
+        return HWTest::ProductErrorCode::Ok;
+    }
+
+    void wait_until_feedback_entered() {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(1),
+                                       [&]() { return feedback_entered; }));
+    }
+
+    void release_feedback() {
+        std::lock_guard<std::mutex> lock(mutex);
+        allow_feedback_to_finish = true;
+        condition.notify_all();
+    }
+
+private:
+    mutable std::mutex mutex;
+    std::condition_variable condition;
+    std::atomic_bool active{true};
+    bool feedback_entered{false};
+    bool allow_feedback_to_finish{false};
+};
+
 std::vector<uint8_t> make_request(std::string_view name, uint16_t sequence = 0) {
     HWTest::ProductProtocol builder;
     auto request = builder.create_message(name, false);
@@ -373,7 +437,23 @@ TEST(HardwareTestServiceTest, EmitsHelmFeedbackThroughSameSender) {
     ASSERT_EQ(endpoint.sent.size(), 1u);
     auto feedback = decode_sent("helm_feedback_response", endpoint.sent[0]);
     EXPECT_EQ(feedback.get_unsigned("seq").value_or(0), 44u);
-    EXPECT_EQ(feedback.get_signed("zl[0][0]").value_or(0), 123);
+    EXPECT_EQ(feedback.get_unsigned("sample_count").value_or(0), 1u);
+    EXPECT_EQ(feedback.get_unsigned("sample[0].serial_a").value_or(0), 7u);
+    EXPECT_FLOAT_EQ(feedback.get_float("sample[0].fdb[0]").value_or(0.0F),
+                    11.5F);
+}
+
+TEST(HardwareTestServiceTest, ActiveHelmWithoutFeedbackDoesNotEmitEmptyFrame) {
+    RecordingEndpoint endpoint;
+    FakeProvider provider;
+    provider.feedback_active = true;
+    provider.feedback_ready = false;
+    HWTest::HardwareTestService service(endpoint, provider, 44);
+
+    ASSERT_TRUE(service.emit_helm_feedback_once());
+
+    EXPECT_EQ(provider.feedback_calls, 1);
+    EXPECT_TRUE(endpoint.sent.empty());
 }
 
 TEST(HardwareTestServiceTest, InactiveFeedbackDoesNotAffectOrdinaryEchoSequence) {
@@ -481,6 +561,35 @@ TEST(HardwareTestServiceTest, SendsHelmStartAckBeforeFeedbackWithIncreasingSeque
     EXPECT_EQ(decode_sent("helm_feedback_response", endpoint.sent[1])
                   .get_unsigned("seq").value_or(0),
               30u);
+}
+
+TEST(HardwareTestServiceTest, SendsPendingHelmFeedbackBeforeStopAck) {
+    RecordingEndpoint endpoint;
+    HelmStopOrderingProvider provider;
+    endpoint.received.push_back(make_request("helm_stop_request", 0x1234));
+    HWTest::HardwareTestService service(endpoint, provider, 40);
+
+    auto feedback = std::async(std::launch::async, [&]() {
+        return service.emit_helm_feedback_once();
+    });
+    provider.wait_until_feedback_entered();
+    auto stop = std::async(std::launch::async, [&]() {
+        return service.process_once(HW::Timeout::poll());
+    });
+
+    EXPECT_EQ(stop.wait_for(std::chrono::milliseconds(20)),
+              std::future_status::timeout);
+    provider.release_feedback();
+
+    ASSERT_TRUE(feedback.get());
+    ASSERT_TRUE(stop.get());
+    ASSERT_EQ(endpoint.sent.size(), 2u);
+    EXPECT_EQ(decode_sent("helm_feedback_response", endpoint.sent[0])
+                  .get_unsigned("seq").value_or(0),
+              40u);
+    EXPECT_EQ(decode_sent("helm_stop_response", endpoint.sent[1])
+                  .get_unsigned("seq").value_or(0),
+              0x1234u);
 }
 
 TEST(HardwareTestServiceTest, BusyFlowControlRetriesSameAssignedFrameThenSucceeds) {
@@ -676,7 +785,7 @@ TEST(HardwareTestServiceTest, ReceiveFailureStopsWorkerWithoutExternalSignal) {
     EXPECT_EQ(running.get(), 1);
 }
 
-TEST(HardwareTestServiceTest, SerializesProviderCallsAcrossReceiveAndFeedbackThreads) {
+TEST(HardwareTestServiceTest, HelmFeedbackDoesNotSerializeBoardRequestHandling) {
     RecordingEndpoint endpoint;
     ConcurrentCallDetectingProvider provider;
     endpoint.received.push_back(make_request("system_status_request"));
@@ -691,11 +800,12 @@ TEST(HardwareTestServiceTest, SerializesProviderCallsAcrossReceiveAndFeedbackThr
         return service.emit_helm_feedback_once();
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    EXPECT_FALSE(provider.feedback_has_started());
+    EXPECT_TRUE(provider.feedback_has_started());
+    EXPECT_TRUE(provider.feedback_overlapped());
 
     provider.allow_handle();
     EXPECT_TRUE(processing.get());
     EXPECT_TRUE(feedback.get());
     EXPECT_TRUE(provider.feedback_has_started());
-    EXPECT_FALSE(provider.feedback_overlapped());
+    EXPECT_TRUE(provider.feedback_overlapped());
 }

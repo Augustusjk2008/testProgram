@@ -121,7 +121,7 @@ $env:QT_QPA_PLATFORM = 'offscreen'
   .\docs\design\product_protocol_csv
 ```
 
-产品协议测试覆盖 48/123 字节数据段、小端字段、默认值、非零 RESERVED 拒绝、非有限
+产品协议测试覆盖 1..255 字节数据段（当前 48/123/232）、小端字段、默认值、非零 RESERVED 拒绝、非有限
 F32 拒绝、请求序号回显和回绕、无双重物理组帧、普通响应、错误响应、DH 多帧和舵反馈路由。
 当前 7 个 DUT 源级 IMU 用例还覆盖 `09/10`/`09/01`/`09/11` 命令号、COM4 event 3 与
 921600/8E1 配置、59 字节 payload 的 12 个 F32 全映射、所有 F32 位置的 NaN/Inf 拒绝、
@@ -137,16 +137,16 @@ START 阶段的抖动统计。界面只区分执行状态，不根据测量值�
 板端协议测试还覆盖请求序号回显、DH `请求序号+i`、采样后立即发送且串口耗时不额外叠加
 到回告间隔、发送锁下的 `Busy` 同帧有界流控、
 UDP 固定自环端点、SPI 仅 JEDEC LOOP/拒绝任意 ECHO、DH 三项使能和状态映射、舵控 rad
-相位与 25 秒扫频公式，以及
+相位与可配置时长扫频公式、通道位图、27/41 字节帧和最多 5 样本打包，以及
 SYSTEM_STATUS 的 CPU 计数解析和 XDMA PCI BDF 事实链。板端 `SYSTEM_STATUS` 当前直接读取
 `center_thermal` hwmon、`/proc/uptime` 和 XDMA PCI BDF；`net_init_time` 按当前实现固定为
 `0 s`，K7 温度直接读取 XADC 局部 `0x200`。串口、网口、SPI、DH 和舵控硬件仍需在已隔离
 目标板上联调，单元测试不会把缺失映射视作成功。
 
-上述 IMU 用例是 AArch64 源级/交叉构建证据，不等于 COM4 真机验收；当前 smoke 不注入
-惯测 payload。宿主 `device_stream` 的 START/反馈/STOP、至少一帧通过、单次 STOP 和
-UTF-8-SIG/TSV 固定列保存证据位于根仓算法/应用测试。`test_pyqt` 当前没有 IMU 会话，
-不得把旧工具测试写成该功能已覆盖。
+上述 IMU 与舵机 DDS bridge 用例是源级/交叉构建证据，不等于 COM4、DDS 或舵机真机验收；
+当前 smoke 不注入惯测 payload，也不运行舵控程序。宿主 `device_stream` 的
+START/反馈/STOP、至少一帧通过、单次 STOP 和 UTF-8-SIG/TSV 固定列保存证据位于根仓
+算法/应用测试。`test_pyqt` 当前没有 IMU/舵机设备流会话，不得把旧工具测试写成该功能已覆盖。
 
 运行工具使用 `test_pyqt\run.bat`（或 `run.ps1`）；该入口会拒绝 base/system
 Python，且不会改变 AArch64 C++ 的构建和部署路径。

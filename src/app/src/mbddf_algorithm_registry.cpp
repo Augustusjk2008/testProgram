@@ -2,6 +2,7 @@
 
 #include <algorithm/elec_health_status_executor.h>
 #include <algorithm/imu_stream_executor.h>
+#include <algorithm/helm_stream_executor.h>
 #include <algorithm/mbddf_exchange_executor.h>
 #include <algorithm/mbddf_transport.h>
 #include <algorithm/system_status_executor.h>
@@ -45,6 +46,10 @@ const QVector<MbdDfAlgorithmRegistration>& mbddfAlgorithmRegistry()
          QStringLiteral("imu_stream_start_request"),
          QStringLiteral("imu_stream_feedback_response"),
          QStringLiteral("IMU_STREAM")},
+        {QStringLiteral("mbddf.helm_stream"),
+         QStringLiteral("helm_start_request"),
+         QStringLiteral("helm_feedback_response"),
+         QStringLiteral("HELM_STREAM")},
     };
     return registry;
 }
@@ -77,6 +82,9 @@ std::unique_ptr<hwtest::biz::IAlgorithmExecutor> createMbdDfExecutor(
     }
     if (algorithmId == QStringLiteral("mbddf.imu_stream")) {
         return std::make_unique<ImuStreamAlgorithmExecutor>(std::move(transport));
+    }
+    if (algorithmId == QStringLiteral("mbddf.helm_stream")) {
+        return std::make_unique<HelmStreamAlgorithmExecutor>(std::move(transport));
     }
     const MbdDfAlgorithmRegistration* registration = findMbdDfAlgorithm(algorithmId);
     if (registration == nullptr) return {};

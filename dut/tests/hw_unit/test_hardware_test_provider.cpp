@@ -297,7 +297,7 @@ TEST(HardwareTestProviderTest, MapsBusLinksToComPortsAndReservesCom3) {
 TEST(HardwareTestProviderTest, HelmCommandUsesStartAsRadianPhase) {
     constexpr double pi = 3.14159265358979323846;
     EXPECT_NEAR(MB_DDF::HWTest::Detail::helm_command(
-                    0, 1.0, 10.0, 2.0, pi / 2.0, 0.0, 0.0),
+                    0, 1.0, 10.0, 2.0, pi / 2.0, 0.0, 25.0, 0.0),
                 12.0, 1.0e-9);
 }
 
@@ -315,13 +315,13 @@ TEST(HardwareTestProviderTest, HelmSweepUsesReferenceTwentyFiveSecondPhaseIntegr
                   time * (end_frequency - start_frequency)));
     EXPECT_NEAR(MB_DDF::HWTest::Detail::helm_command(
                     4, start_frequency, 1.0, 0.0, 0.0,
-                    end_frequency, time),
+                    end_frequency, duration, time),
                 std::sin(expected_phase), 1.0e-9);
     EXPECT_NEAR(MB_DDF::HWTest::Detail::helm_command(
-                    4, 2.0, 1.0, 0.0, 0.0, 2.0, 0.125),
+                    4, 2.0, 1.0, 0.0, 0.0, 2.0, duration, 0.125),
                 1.0, 1.0e-9);
     EXPECT_EQ(MB_DDF::HWTest::Detail::helm_command(
-                  4, 1.0, 1.0, 3.0, 0.0, 2.0, duration + 0.001),
+                  4, 1.0, 1.0, 3.0, 0.0, 2.0, duration, duration + 0.001),
               0.0);
 }
 
@@ -432,15 +432,18 @@ TEST(HardwareTestProviderTest, DhPulseConfigRejectsInvalidEnableBeforeHardwareAc
     EXPECT_EQ(provider.handle(request, response), ProductErrorCode::ParamOutOfRange);
 }
 
-TEST(HardwareTestProviderTest, RejectsHelmCommandOutsideThirtyDegreeNormalization) {
-    ProductProtocol protocol;
-    auto request = protocol.create_message("helm_start_request", false);
-    auto response = protocol.create_message("helm_start_response", false);
-    ASSERT_TRUE(request.set_float("ampl", 30.0F));
-    ASSERT_TRUE(request.set_float("offset", 1.0F));
+TEST(HardwareTestProviderTest, HelmParametersDoNotImposeAngleLimits) {
+    MB_DDF::HWTest::HelmStreamParameters parameters{};
+    parameters.waveform = 0;
+    parameters.frequency_hz = 1.0;
+    parameters.amplitude_deg = 250.0;
+    parameters.offset_deg = -100.0;
+    parameters.start_phase_radians = 0.0;
+    parameters.maximum_frequency_hz = 80.0;
+    parameters.sweep_duration_seconds = 25.0;
+    parameters.enable_mask = 0x0F;
 
-    HardwareTestProvider provider;
-    EXPECT_EQ(provider.handle(request, response), ProductErrorCode::ParamOutOfRange);
+    EXPECT_TRUE(MB_DDF::HWTest::validate_helm_stream_parameters(parameters));
 }
 
 TEST(HardwareTestProviderTest, Com3ImageUsesFixedWindowEventAnd614400EightEOneDefaults) {

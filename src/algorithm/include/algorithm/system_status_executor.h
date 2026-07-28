@@ -52,6 +52,7 @@ private:
         const QString& message) const;
     bool evaluateCriteria(const hwtest::biz::TestStep& step,
                           const QVariantMap& values,
+                          const QVariantMap& effectiveRequestValues,
                           QString* failureMessage) const;
     static bool compare(const QVariant& actual,
                         const hwtest::biz::Criterion& criterion);

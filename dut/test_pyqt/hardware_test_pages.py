@@ -1460,10 +1460,10 @@ class HelmTestPage(BaseHardwareTestPage):
             "helmFrequencySpin", 0.0, 10000.0, " Hz", 0.3
         )
         self.amplitude_spin = self._double_spin(
-            "helmAmplitudeSpin", 0.0, 30.0, " deg", 30.0
+            "helmAmplitudeSpin", -1.0e100, 1.0e100, " deg", 30.0
         )
         self.offset_spin = self._double_spin(
-            "helmOffsetSpin", -30.0, 30.0, " deg", 0.0
+            "helmOffsetSpin", -1.0e100, 1.0e100, " deg", 0.0
         )
         self.phase_spin = self._double_spin(
             "helmPhaseSpin", -1000000.0, 1000000.0, " rad", 0.0
@@ -1576,11 +1576,6 @@ class HelmTestPage(BaseHardwareTestPage):
         max_frequency = float(self.max_freq_spin.value())
         if frequency <= 0.0:
             raise ParameterValidationError("舵控频率必须大于 0 Hz", self.freq_spin)
-        if abs(offset) + amplitude > 30.0:
-            raise ParameterValidationError(
-                "舵控幅值与偏置绝对值之和不能超过 30 deg",
-                self.amplitude_spin,
-            )
         if waveform == 4 and max_frequency <= 0.0:
             raise ParameterValidationError(
                 "扫频波形的扫频上限必须大于 0 Hz", self.max_freq_spin

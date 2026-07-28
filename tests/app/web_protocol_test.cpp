@@ -176,6 +176,8 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     snapshot.dataSaveEnabled = true;
     snapshot.dataFilePath = QStringLiteral("C:/data/SystemStatus_data.txt");
     snapshot.dataSaveError.clear();
+    snapshot.effectiveRunParameters.insert(QStringLiteral("waveform"), 4);
+    snapshot.effectiveRunParameters.insert(QStringLiteral("ampl"), 250.0);
     snapshot.digitalStimulus.available = true;
     snapshot.digitalStimulus.configured = true;
     snapshot.digitalStimulus.appliedMask = 0x81u;
@@ -195,6 +197,19 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
                                   QStringLiteral("CPU 占用率"),
                                   QStringLiteral("%"),
                                   true}};
+    snapshot.descriptor.runParameterSchemaVersion = QStringLiteral("1");
+    TestRunParameterDescriptor frequency;
+    frequency.id = QStringLiteral("freq");
+    frequency.label = QStringLiteral("频率");
+    frequency.description = QStringLiteral("扫频起始频率");
+    frequency.kind = QStringLiteral("number");
+    frequency.unit = QStringLiteral("Hz");
+    frequency.minimum = 0.0;
+    frequency.minimumExclusive = true;
+    frequency.visibleWhenParameter = QStringLiteral("waveform");
+    frequency.visibleWhenEquals = 4;
+    snapshot.descriptor.runParameters = {frequency};
+    snapshot.descriptor.runParameterDefaults.insert(QStringLiteral("freq"), 1.0);
 
     const QJsonObject envelope = makeSnapshot(12, snapshot);
     EXPECT_EQ(envelope.value(QStringLiteral("v")).toInt(), 1);
@@ -203,7 +218,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(envelope.value(QStringLiteral("seq")).toInt(), 12);
 
     const QJsonObject json = envelope.value(QStringLiteral("snapshot")).toObject();
-    EXPECT_EQ(json.size(), 27);
+    EXPECT_EQ(json.size(), 28);
     EXPECT_EQ(json.value(QStringLiteral("phase")).toString(), snapshot.phase);
     EXPECT_EQ(json.value(QStringLiteral("testState")).toString(), snapshot.testState);
     EXPECT_EQ(json.value(QStringLiteral("controlResourceId")).toString(),
@@ -234,6 +249,11 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(json.value(QStringLiteral("dataFilePath")).toString(),
               snapshot.dataFilePath);
     EXPECT_TRUE(json.value(QStringLiteral("dataSaveError")).toString().isEmpty());
+    const QJsonObject effectiveRunParameters =
+        json.value(QStringLiteral("effectiveRunParameters")).toObject();
+    EXPECT_EQ(effectiveRunParameters.value(QStringLiteral("waveform")).toInt(), 4);
+    EXPECT_DOUBLE_EQ(effectiveRunParameters.value(QStringLiteral("ampl")).toDouble(),
+                     250.0);
     const QJsonObject stimulus = json.value(QStringLiteral("digitalStimulus")).toObject();
     EXPECT_TRUE(stimulus.value(QStringLiteral("available")).toBool());
     EXPECT_TRUE(stimulus.value(QStringLiteral("configured")).toBool());
@@ -266,6 +286,28 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
                   .value(QStringLiteral("unit"))
                   .toString(),
               QStringLiteral("%"));
+    EXPECT_EQ(descriptor.value(QStringLiteral("runParameterSchemaVersion")).toString(),
+              QStringLiteral("1"));
+    const QJsonArray runParameters =
+        descriptor.value(QStringLiteral("runParameters")).toArray();
+    ASSERT_EQ(runParameters.size(), 1);
+    const QJsonObject frequencyParameter = runParameters.first().toObject();
+    EXPECT_EQ(frequencyParameter.value(QStringLiteral("id")).toString(),
+              QStringLiteral("freq"));
+    EXPECT_EQ(frequencyParameter.value(QStringLiteral("kind")).toString(),
+              QStringLiteral("number"));
+    EXPECT_DOUBLE_EQ(frequencyParameter.value(QStringLiteral("minimum")).toDouble(), 0.0);
+    EXPECT_TRUE(frequencyParameter.value(QStringLiteral("minimumExclusive")).toBool());
+    const QJsonObject visibility =
+        frequencyParameter.value(QStringLiteral("visibleWhen")).toObject();
+    EXPECT_EQ(visibility.value(QStringLiteral("parameter")).toString(),
+              QStringLiteral("waveform"));
+    EXPECT_EQ(visibility.value(QStringLiteral("equals")).toInt(), 4);
+    EXPECT_DOUBLE_EQ(descriptor.value(QStringLiteral("runParameterDefaults"))
+                         .toObject()
+                         .value(QStringLiteral("freq"))
+                         .toDouble(),
+                     1.0);
     const QJsonObject rawData = json.value(QStringLiteral("rawData")).toObject();
     EXPECT_DOUBLE_EQ(rawData.value(QStringLiteral("cpu_usage")).toDouble(), 12.5);
     ASSERT_TRUE(rawData.value(QStringLiteral("flags")).isArray());

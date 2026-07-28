@@ -9,24 +9,25 @@
 - 公共 API、CMake 目标、测试注册和已核对源码共同描述当前实现；运行记录统一引用测试规范。
 - 代码与文档出现差异时，先按分层、安全和公共契约判断；实现合理时同步事实源，实现偏离契约时修正代码并补回归测试。
 - `docs/plan/` 与 `docs/superpowers/plans/` 保存历史执行记录。历史方案保留原文，并在顶部链接现行事实源。
-- 审查、搜索和统计聚焦源码与事实源，默认过滤 `tmp/`、`build*/`、`cmake-build*/`、`out/` 和 `.git/`。
+- 审查、搜索和统计聚焦源码与事实源，默认过滤一般 `tmp/` 内容、`build*/`、`cmake-build*/`、`out/` 和 `.git/`；`tmp/helm_control/` 是需保留使用的例外目录，相关任务中按需纳入，不得随其他 `tmp/` 内容清理。
 - DUT 快照来源与导入提交记录统一维护在 `docs/design/README.md`。
 
 ## 当前项目
 
+- 当前宿主开发与验证以 `hwtest_web` 和 `front/` 组成的 Web 链路为主基线。新增功能和行为变更默认优先在 Web 入口实现并完成验证；待 Web 基线开发验证完毕后，再按实际需求完善 TUI 和 Qt GUI，除非当前任务明确要求同步修改。
 - 根入口 `CMakeLists.txt` 使用 C++17，先探测 Qt 5.15 Core/Network/SerialPort/Widgets，再要求 Qt 5.15 WebSockets；基础 Qt 5 选择失败时进入同一组件集的 Qt 6 fallback。
 - HAL 位于 `src/hal/`，目标为 `hwtest_hal`。控制资源通过 `qt.serial` 或 `qt.udp` Provider 路由；其他设备通过 `AdapterRouter` 路由到 `MockAdapter` 或 C ABI v1 Adapter。HAL 以版本化 `AdapterDeviceOpenSpec` 向厂家 Adapter 投影单设备身份、资源、任务档案和安全态。
 - `src/adapters/ni_daqmx/` 在 `HWTEST_ENABLE_NI_DAQMX=ON` 时构建 PXI-6259 NI-DAQmx Adapter。核心 ABI v1 保持稳定，可选 task ABI v1 与 `ISampleTaskIo` 提供 AI/AO/DI/DO、有限/连续采样、时钟、start/reference/pause 触发、边沿计数和频率脉冲输出；Fake NI-DAQmx 覆盖软件路径。
 - 日志模块位于 `src/logging/`：`hwtest_log_types` 提供仅依赖 Qt Core 的值类型，`hwtest_log` 提供日志服务、文件 sink 和 HAL 日志桥接。
 - BIZ 位于 `src/biz/`，目标为 `hwtest_biz`，负责配置、拓扑排序、运行模式、重试、状态、结果和报告。工作任务运行于带 Qt event dispatcher 的 `QThread`。
-- 算法位于 `src/algorithm/`，目标为 `hwtest_algorithm_mbddf`，提供 MB_DDF CSV 编解码和八项已注册算法：`mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config`、`mbddf.timer_jitter`、`mbddf.di_read`、`mbddf.imu_stream`。
-- 八份 `configs/mbddf_*.testcfg.json` 中，前七项声明 `single`，系统状态、电气健康、内存、定时器和 DI 还声明 `pc_periodic`；惯测连续数据只声明 `device_stream`。BIZ 提供 `single`、`pc_periodic` 和 `device_stream` 三种通用运行语义，配置能力以各 JSON 的 `reportFields.supportedRunModes` 为准；同一配置不得同时声明 `pc_periodic` 与 `device_stream`，字段缺失时只安全回退到 `single`，应用控制器拒绝启动未声明的模式。
+- 算法位于 `src/algorithm/`，目标为 `hwtest_algorithm_mbddf`，提供 MB_DDF CSV 编解码和九项已注册算法：`mbddf.system_status`、`mbddf.elec_health_status`、`mbddf.memperf`、`mbddf.spi_flash`、`mbddf.dh_pulse_config`、`mbddf.timer_jitter`、`mbddf.di_read`、`mbddf.imu_stream`、`mbddf.helm_stream`。
+- 九份 `configs/mbddf_*.testcfg.json` 中，前七项声明 `single`，系统状态、电气健康、内存、定时器和 DI 还声明 `pc_periodic`；惯测与舵机连续实测只声明 `device_stream`。BIZ 提供 `single`、`pc_periodic` 和 `device_stream` 三种通用运行语义，配置能力以各 JSON 的 `reportFields.supportedRunModes` 为准；同一配置不得同时声明 `pc_periodic` 与 `device_stream`，字段缺失时只安全回退到 `single`，应用控制器拒绝启动未声明的模式。
 - 电气健康以设备 `status`/`err_code` 判定；SPI Flash 写入固定隔离测试区并保留写入结果；`TIMER_JITTER` 在结束阶段发送 STOP 清理。
 - `DiStimulusController` 通过 HAL 批量数字输出维护 16 路逻辑掩码、revision 和安全复位；PXI-6259 配置中的物理 safe state 与 DI descriptor 的 inactive level 保持一致。
 - 应用层位于 `src/app/`，共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support` 和 `hwtest_web_support`，产出 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web`。四个入口统一使用 `TestApplicationController` 和 MB_DDF 注册表；启动选项动态扫描 `configs/*.testcfg.json`，并校验配置结构、运行模式能力与已注册算法。`ContinuousDataRecorder` 可在显式启用的 `pc_periodic` 或 `device_stream` 任务中把完整应用样本增量保存为 UTF-8-SIG/TSV TXT，`single` 任务不保存。
-- `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置目录切换、运行控制、两种连续模式、配置定义的全部测量列保存开关、动态测量字段和 16 路 DI 刺激/回读状态。保存目录只由后端 `dataStorage.directory` 配置，曲线字段选择不改变保存列。
+- `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置目录切换、运行控制、两种连续模式、算法层声明的运行期参数编辑、配置定义的全部测量列保存开关、动态测量字段和 16 路 DI 刺激/回读状态。运行期覆盖只作用于本次启动，浏览器按 `configId + schemaVersion` 保存编辑值；保存目录只由后端 `dataStorage.directory` 配置，曲线字段选择不改变保存列。
 - `tests/` 按 HAL、日志、BIZ、算法和应用组织 GoogleTest 目标；NI Fake Adapter 使用独立 CTest 入口；`front/` 的 Vitest 独立运行。测试清单与统计以测试规范为准。
-- `dut/docs/design/product_protocol_csv/` 保存 MB_DDF 协议 CSV 快照；宿主协议测试通过 `MB_DDF_PROTOCOL_CSV_DIR` 使用外部源事实目录。
+- `dut/docs/design/product_protocol_csv/` 保存并作为默认使用的 MB_DDF 协议 CSV 快照；显式传入 `MB_DDF_PROTOCOL_CSV_DIR` 时可改用另一受控资产目录。
 
 ## 分层与 I/O 归属
 
@@ -42,7 +43,7 @@
 - `hwtest_app_core` 是组合根，统一管理配置、HAL 会话、算法执行器、BIZ 服务、DI 安全态和关闭顺序。
 - TUI、Qt GUI、WebSocket 后端和浏览器 UI 消费应用层 DTO、动作结果、快照和样本事件。控制器动作在其 QObject 亲和线程执行；GUI 与 WebSocket 通过异步事件、`stopAsync()` 和 `stopCompleted` 观察停止过程。
 - BIZ 保持硬件无关，仅依赖 Qt Core、`hwtest_log_types` 和自身公共模型，并通过 `biz::IAlgorithmExecutor` 调用算法。
-- 算法层负责产品协议 CSV、编解码、序列、流程和判定，并通过 HAL 请求设备生命周期与 I/O。
+- 算法层负责产品协议 CSV、编解码、序列、流程、判定及可编辑运行参数的 Schema/语义校验，并通过 HAL 请求设备生命周期与 I/O。应用层只投影 Schema、合并本次覆盖并传递规范化结果；BIZ 不解释参数。
 - HAL 持有具体连接，执行原始 I/O、deadline、错误归一化和物理 safe state。`module = "control"` 的资源按 `providerId` 使用 `qt.serial` 或 `qt.udp`；其他资源按设备 `adapterId` 使用 Adapter 路径。
 - 日志作为旁路基础模块；BIZ 使用 `hwtest::logging::LogEvent`，事件来源和 HAL/Adapter 映射由日志契约统一定义。
 - 配置、日志和报告文件沿各自服务边界访问。纯协议与 golden 测试可直接使用 Simulator；产品模拟和集成验证沿 HAL 路径使用 HAL Mock 或隔离模拟目标。
@@ -96,7 +97,7 @@ cmake --build build_vs --config Release --parallel
 ctest --test-dir build_vs -C Release --output-on-failure
 ```
 
-- 涉及源协议 CSV 的验证设置 `MB_DDF_PROTOCOL_CSV_DIR=H:\Resources\RTLinux\Demos\MB_DDF_v2\docs\design\product_protocol_csv`；`GTEST_SKIP` 记为待验证证据。
+- 涉及协议 CSV 的验证默认使用 `dut/docs/design/product_protocol_csv/`；需要核对其他受控来源时显式设置 `MB_DDF_PROTOCOL_CSV_DIR`。`GTEST_SKIP` 记为待验证证据。
 - 当前 NI 证据等级为 Fake NI-DAQmx 自动化。PXI-6259 真机验收记录共地、电平、隔离、接线映射、NI SDK 版本、MAX 设备身份、采样/触发参数、长时运行和安全收尾结果。
 - 修改 BIZ 时运行 BIZ 契约与架构测试；修改算法层时运行 `tests/algorithm/`；产品模拟与集成测试沿 HAL 路径执行。
 - 说明性文档改动至少运行链接/术语检查和 `git diff --check`。

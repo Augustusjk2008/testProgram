@@ -8,6 +8,7 @@
 #include <algorithm/di_stimulus_controller.h>
 #include <algorithm/mbddf_exchange_executor.h>
 #include <algorithm/mbddf_transport.h>
+#include <algorithm/run_parameter_schema.h>
 #include <algorithm/system_status_executor.h>
 
 #include <biz/biz_factory.h>
@@ -181,9 +182,29 @@ QString serialPortNameFor(const QVariantMap& halConfig, const QString& resourceI
         .value(QStringLiteral("portName")).toString().trimmed();
 }
 
+QString runParameterKindName(
+    hwtest::algorithm::mbddf::RunParameterKind kind)
+{
+    using Kind = hwtest::algorithm::mbddf::RunParameterKind;
+    switch (kind) {
+    case Kind::Integer: return QStringLiteral("integer");
+    case Kind::Number: return QStringLiteral("number");
+    case Kind::Boolean: return QStringLiteral("boolean");
+    case Kind::Choice: return QStringLiteral("choice");
+    }
+    return {};
+}
+
+QVariantMap configuredRunParameterDefaults(const hwtest::biz::TestStep& step)
+{
+    return step.parameters.value(QStringLiteral("protocol")).toMap()
+        .value(QStringLiteral("requestValues")).toMap();
+}
+
 TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
                                   const hwtest::biz::TestStep& step,
-                                  const QVector<QString>& supportedRunModes)
+                                  const QVector<QString>& supportedRunModes,
+                                  const QVariantMap& runParameterDefaults)
 {
     TestDescriptor descriptor;
     descriptor.configId = config.configId;
@@ -235,6 +256,33 @@ TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
                     TestMeasurementDescriptor{id, id, {}, true});
                 seenMeasurements.insert(id);
             }
+        }
+    }
+
+    const auto* schema =
+        hwtest::algorithm::mbddf::findRunParameterSchema(step.algorithmId);
+    if (schema != nullptr) {
+        descriptor.runParameterSchemaVersion = schema->version;
+        descriptor.runParameterDefaults = runParameterDefaults;
+        for (const auto& parameter : schema->parameters) {
+            TestRunParameterDescriptor projected;
+            projected.id = parameter.id;
+            projected.label = parameter.label;
+            projected.description = parameter.description;
+            projected.kind = runParameterKindName(parameter.kind);
+            projected.unit = parameter.unit;
+            projected.required = parameter.required;
+            projected.minimum = parameter.minimum;
+            projected.maximum = parameter.maximum;
+            projected.minimumExclusive = parameter.minimumExclusive;
+            projected.maximumExclusive = parameter.maximumExclusive;
+            projected.visibleWhenParameter = parameter.visibleWhenParameter;
+            projected.visibleWhenEquals = parameter.visibleWhenEquals;
+            for (const auto& choice : parameter.choices) {
+                projected.choices.push_back(
+                    TestRunParameterChoice{choice.value, choice.label});
+            }
+            descriptor.runParameters.push_back(std::move(projected));
         }
     }
     return descriptor;
@@ -308,6 +356,7 @@ public:
     QString dataStorageDirectory;
     QVariantMap halConfig;
     QVariantMap executionConfig;
+    QVariantMap runParameterDefaults;
     QVector<ControlResource> controls;
     ApplicationSnapshot snapshot;
     int runTimeoutMs = 5000;
@@ -342,6 +391,8 @@ TestApplicationController::TestApplicationController(QObject* parent)
     qRegisterMetaType<SerialPortInfo>();
     qRegisterMetaType<TestDescriptor>();
     qRegisterMetaType<TestMeasurementDescriptor>();
+    qRegisterMetaType<TestRunParameterChoice>();
+    qRegisterMetaType<TestRunParameterDescriptor>();
     qRegisterMetaType<TestRunOptions>();
     qRegisterMetaType<DigitalSwitchDescriptor>();
     qRegisterMetaType<DigitalStimulusSnapshot>();
@@ -406,6 +457,21 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
         return failure(QStringLiteral("test_config"), runModeError);
     }
 
+    QVariantMap runParameterDefaults;
+    if (hwtest::algorithm::mbddf::findRunParameterSchema(
+            selectedAlgorithmId) != nullptr) {
+        const auto normalized =
+            hwtest::algorithm::mbddf::normalizeRunParameters(
+                selectedAlgorithmId,
+                configuredRunParameterDefaults(*selectedStep),
+                {});
+        if (!normalized.ok()) {
+            return failure(QStringLiteral("test_config"),
+                           normalized.status.error.message);
+        }
+        runParameterDefaults = normalized.value;
+    }
+
     QVariantMap halConfig;
     const ActionResult loadedHal = loadJsonMap(absoluteHalPath, &halConfig);
     if (!loadedHal.ok) {
@@ -463,9 +529,11 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     m_impl->dataStorageDirectory = dataStorageDirectory;
     m_impl->selectedAlgorithmId = selectedAlgorithmId;
     m_impl->descriptor = makeTestDescriptor(
-        testConfig.value, *selectedStep, supportedRunModes);
+        testConfig.value, *selectedStep, supportedRunModes,
+        runParameterDefaults);
     m_impl->halConfig = halConfig;
     m_impl->executionConfig = testConfig.value.executionConfig;
+    m_impl->runParameterDefaults = runParameterDefaults;
     m_impl->controls = controls;
     m_impl->runTimeoutMs = timeoutMs;
     m_impl->snapshot = {};
@@ -969,6 +1037,17 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
                        QStringLiteral("PC periodic maxCycles must be 0 or at most 1000000000"));
     }
 
+    const auto normalizedParameters =
+        hwtest::algorithm::mbddf::normalizeRunParameters(
+            m_impl->selectedAlgorithmId,
+            m_impl->runParameterDefaults,
+            options.algorithmParameters);
+    if (!normalizedParameters.ok()) {
+        return bizFailure(normalizedParameters.status,
+                          QStringLiteral("Invalid run parameters"));
+    }
+    runOptions.parameters = normalizedParameters.value;
+
     m_impl->snapshot.progress = 0;
     m_impl->snapshot.progressStep.clear();
     m_impl->snapshot.hasResult = false;
@@ -988,6 +1067,7 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     m_impl->snapshot.dataSaveEnabled = false;
     m_impl->snapshot.dataFilePath.clear();
     m_impl->snapshot.dataSaveError.clear();
+    m_impl->snapshot.effectiveRunParameters = normalizedParameters.value;
     m_impl->suppressedResultTaskId.clear();
     m_impl->dataRecorder.cancel();
     const bool saveContinuousData = options.saveData &&

@@ -284,11 +284,11 @@ def test_decode_rejects_non_finite_f32(catalog, value) -> None:
         decode_payload(definition, bytes(payload))
 
 
-def test_decode_rejects_non_product_payload_lengths(catalog) -> None:
+def test_decode_rejects_too_short_product_payloads(catalog) -> None:
     protocol = ProductProtocol(catalog)
 
-    with pytest.raises(ProductProtocolError, match="48 或 123"):
-        protocol.decode_response(bytes(47))
+    with pytest.raises(ProductProtocolError, match="5..255"):
+        protocol.decode_response(bytes(4))
 
 
 def test_all_request_definitions_build_with_defaults(catalog) -> None:
@@ -316,4 +316,6 @@ def test_catalog_contains_every_product_command(catalog) -> None:
         (0x07, 0x11),
         (0x08, 0x01),
         (0x08, 0x02),
+        (0x09, 0x10),
+        (0x09, 0x11),
     }

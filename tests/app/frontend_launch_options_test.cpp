@@ -96,7 +96,7 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
         parser, QStringLiteral(HWTEST_PROJECT_SOURCE_DIR), defaults, &options);
 
     ASSERT_TRUE(result.ok) << result.message.toStdString();
-    ASSERT_EQ(options.testConfigs.size(), 8);
+    ASSERT_EQ(options.testConfigs.size(), 9);
     bool foundSystem = false;
     bool foundElectrical = false;
     bool foundMemory = false;
@@ -105,6 +105,7 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
     bool foundTimer = false;
     bool foundDiRead = false;
     bool foundImuStream = false;
+    bool foundHelmStream = false;
     for (const FrontendTestConfigOption& option : options.testConfigs) {
         foundSystem = foundSystem || option.configId == QStringLiteral("mbddf-system-status");
         foundElectrical = foundElectrical || option.configId == QStringLiteral("mbddf-elec-health");
@@ -115,6 +116,8 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
         foundDiRead = foundDiRead || option.configId == QStringLiteral("mbddf-di-read");
         foundImuStream = foundImuStream ||
             option.configId == QStringLiteral("mbddf-imu-stream");
+        foundHelmStream = foundHelmStream ||
+            option.configId == QStringLiteral("mbddf-helm-stream");
         EXPECT_FALSE(option.configPath.isEmpty());
         EXPECT_FALSE(option.title.isEmpty());
     }
@@ -126,6 +129,7 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
     EXPECT_TRUE(foundTimer);
     EXPECT_TRUE(foundDiRead);
     EXPECT_TRUE(foundImuStream);
+    EXPECT_TRUE(foundHelmStream);
 }
 
 TEST(FrontendLaunchOptionsTest, EveryDiscoveredConfigurationCanBeLoadedByController)

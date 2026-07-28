@@ -12,8 +12,9 @@ from test_pyqt.protocol_catalog import (
 def test_default_catalog_loads_all_product_protocol_csv_files() -> None:
     catalog = ProtocolCatalog.load_default()
 
-    assert len(catalog) == 32
-    assert {definition.payload_length for definition in catalog} == {48, 123}
+    assert len(catalog) == 37
+    assert {definition.payload_length for definition in catalog} == {48, 123, 232}
+    assert catalog.get("helm_feedback_response").payload_length == 232
     assert catalog.get("system_status_request").direction == "request"
     assert catalog.get("system_status_response").direction == "response"
 

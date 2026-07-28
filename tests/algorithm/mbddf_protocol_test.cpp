@@ -360,5 +360,72 @@ TEST(MbddfProtocolTest, LoadsConfirmedImuStreamProfilesAndScaledTemperature)
     EXPECT_EQ(decoded.value(QStringLiteral("software_version")).toUInt(), 0xABCDu);
 }
 
+TEST(MbddfProtocolTest, LoadsFiveSampleHelmFeedbackAndSweepDuration)
+{
+    const QString directory = currentCatalogDirectory();
+    if (!QFileInfo(directory).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present";
+    }
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(directory, &error)) << error.toStdString();
+    const MessageDefinition* start =
+        catalog.findByName(QStringLiteral("helm_start_request"));
+    const MessageDefinition* feedback =
+        catalog.findByName(QStringLiteral("helm_feedback_response"));
+    ASSERT_NE(start, nullptr);
+    ASSERT_NE(feedback, nullptr);
+    EXPECT_EQ(start->payloadLength, 48);
+    EXPECT_EQ(feedback->payloadLength, 232);
+
+    QVariantMap startValues{
+        {QStringLiteral("waveform"), 4},
+        {QStringLiteral("freq"), 0.5},
+        {QStringLiteral("ampl"), 250.0},
+        {QStringLiteral("offset"), -100.0},
+        {QStringLiteral("start"), 0.25},
+        {QStringLiteral("max_freq"), 80.0},
+        {QStringLiteral("sweep_duration_s"), 12.5},
+        {QStringLiteral("enable"), 15},
+    };
+    QByteArray startPayload;
+    ASSERT_TRUE(encodePayload(*start, startValues, 0x1234,
+                              &startPayload, &error)) << error.toStdString();
+    QVariantMap decodedStart;
+    ASSERT_TRUE(decodePayload(*start, startPayload, &decodedStart, &error))
+        << error.toStdString();
+    EXPECT_NEAR(decodedStart.value(QStringLiteral("sweep_duration_s")).toDouble(),
+                12.5, 1e-6);
+    EXPECT_NEAR(decodedStart.value(QStringLiteral("ampl")).toDouble(),
+                250.0, 1e-6);
+
+    QVariantMap feedbackValues{
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("err_code"), 0},
+        {QStringLiteral("sample_count"), 5},
+        {QStringLiteral("first_timestamp_us_low"), 0x10u},
+        {QStringLiteral("first_timestamp_us_high"), 0x02u},
+        {QStringLiteral("sample[4].delta_us"), 4000},
+        {QStringLiteral("sample[4].serial_b"), 104},
+        {QStringLiteral("sample[4].fdb[3]"), -12.5},
+        {QStringLiteral("sample[4].self_check"), 3},
+        {QStringLiteral("sample[4].timeout"), 1},
+        {QStringLiteral("sample[4].serial_a"), 94},
+        {QStringLiteral("sample[4].ins[0]"), 250.0},
+    };
+    QByteArray feedbackPayload;
+    ASSERT_TRUE(encodePayload(*feedback, feedbackValues, 0x9000,
+                              &feedbackPayload, &error)) << error.toStdString();
+    EXPECT_EQ(feedbackPayload.size(), 232);
+    QVariantMap decodedFeedback;
+    ASSERT_TRUE(decodePayload(*feedback, feedbackPayload,
+                              &decodedFeedback, &error)) << error.toStdString();
+    EXPECT_EQ(decodedFeedback.value(QStringLiteral("sample_count")).toUInt(), 5u);
+    EXPECT_EQ(decodedFeedback.value(QStringLiteral("sample[4].serial_a")).toUInt(),
+              94u);
+    EXPECT_NEAR(decodedFeedback.value(QStringLiteral("sample[4].fdb[3]")).toDouble(),
+                -12.5, 1e-6);
+}
+
 } // namespace
 } // namespace hwtest::algorithm::mbddf

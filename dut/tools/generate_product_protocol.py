@@ -408,9 +408,9 @@ def validate_message(path: Path) -> Message:
         raise ProtocolValidationError("{}: version 必须固定为 0x11".format(path.name))
 
     data_length = parse_int(length_field.default or "", path, 4, "len.default")
-    if data_length not in {48, 123}:
+    if data_length < 1 or data_length > 255:
         raise ProtocolValidationError(
-            "{}: len 只能是 48 或 123，实际为 {}".format(path.name, data_length)
+            "{}: len 必须在 1..255，实际为 {}".format(path.name, data_length)
         )
     expected_frame_length = data_length + 5
     if crc.end != expected_frame_length:
@@ -675,7 +675,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     print(
-        "协议校验通过: {} 份 CSV；len=48/123；帧长=53/128".format(len(messages))
+        "协议校验通过: {} 份 CSV；len=1..255；帧长=len+5".format(len(messages))
     )
     return 0
 

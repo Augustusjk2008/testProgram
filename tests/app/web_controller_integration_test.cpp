@@ -206,6 +206,18 @@ TEST(WebSocketControllerIntegrationTest, RejectsMistypedContinuousRunParametersA
     EXPECT_EQ(saveReply.value(QStringLiteral("code")).toString(),
               QStringLiteral("invalid_envelope"));
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+
+    const QJsonObject parametersReply = sendAndWait(
+        &client,
+        QStringLiteral("bad-algorithm-parameters"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("single")},
+                    {QStringLiteral("algorithmParameters"),
+                     QJsonArray{1, 2, 3}}});
+    EXPECT_FALSE(parametersReply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(parametersReply.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
 }
 
 TEST(WebSocketControllerIntegrationTest, RejectsClientSuppliedConfigurationPaths)

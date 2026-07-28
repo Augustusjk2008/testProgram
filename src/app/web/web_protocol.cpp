@@ -57,6 +57,45 @@ QJsonObject descriptorObject(const TestDescriptor& descriptor)
             {QStringLiteral("primary"), measurement.primary},
         });
     }
+    QJsonArray runParameters;
+    for (const TestRunParameterDescriptor& parameter : descriptor.runParameters) {
+        QJsonArray choices;
+        for (const TestRunParameterChoice& choice : parameter.choices) {
+            choices.push_back(QJsonObject{
+                {QStringLiteral("value"), QJsonValue::fromVariant(choice.value)},
+                {QStringLiteral("label"), choice.label},
+            });
+        }
+        QJsonObject projected{
+            {QStringLiteral("id"), parameter.id},
+            {QStringLiteral("label"), parameter.label},
+            {QStringLiteral("description"), parameter.description},
+            {QStringLiteral("kind"), parameter.kind},
+            {QStringLiteral("unit"), parameter.unit},
+            {QStringLiteral("required"), parameter.required},
+            {QStringLiteral("minimumExclusive"), parameter.minimumExclusive},
+            {QStringLiteral("maximumExclusive"), parameter.maximumExclusive},
+            {QStringLiteral("choices"), choices},
+        };
+        if (parameter.minimum.isValid()) {
+            projected.insert(QStringLiteral("minimum"),
+                             QJsonValue::fromVariant(parameter.minimum));
+        }
+        if (parameter.maximum.isValid()) {
+            projected.insert(QStringLiteral("maximum"),
+                             QJsonValue::fromVariant(parameter.maximum));
+        }
+        if (!parameter.visibleWhenParameter.isEmpty()) {
+            projected.insert(
+                QStringLiteral("visibleWhen"),
+                QJsonObject{
+                    {QStringLiteral("parameter"), parameter.visibleWhenParameter},
+                    {QStringLiteral("equals"),
+                     QJsonValue::fromVariant(parameter.visibleWhenEquals)},
+                });
+        }
+        runParameters.push_back(projected);
+    }
     return QJsonObject{
         {QStringLiteral("configId"), descriptor.configId},
         {QStringLiteral("productModel"), descriptor.productModel},
@@ -69,6 +108,11 @@ QJsonObject descriptorObject(const TestDescriptor& descriptor)
         {QStringLiteral("description"), descriptor.description},
         {QStringLiteral("supportedRunModes"), supportedRunModes},
         {QStringLiteral("measurements"), measurements},
+        {QStringLiteral("runParameterSchemaVersion"),
+         descriptor.runParameterSchemaVersion},
+        {QStringLiteral("runParameters"), runParameters},
+        {QStringLiteral("runParameterDefaults"),
+         QJsonObject::fromVariantMap(descriptor.runParameterDefaults)},
     };
 }
 
@@ -93,6 +137,8 @@ QJsonObject snapshotObject(const ApplicationSnapshot& snapshot)
     object.insert(QStringLiteral("attempts"), snapshot.attempts);
     object.insert(QStringLiteral("rawData"),
                   QJsonObject::fromVariantMap(snapshot.rawData));
+    object.insert(QStringLiteral("effectiveRunParameters"),
+                  QJsonObject::fromVariantMap(snapshot.effectiveRunParameters));
     object.insert(QStringLiteral("runMode"), snapshot.runMode);
     object.insert(QStringLiteral("intervalMs"), snapshot.intervalMs);
     object.insert(QStringLiteral("maxCycles"),

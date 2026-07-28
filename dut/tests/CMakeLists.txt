@@ -113,11 +113,14 @@ if(ENABLE_HW_UNIT_TESTS AND TARGET MB_DDF_HW)
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_hardware_test_service.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_system_test_provider.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_hardware_test_provider.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_helm_dds_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_HW_Test/ProductProtocol.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_HW_Test/HardwareTestService.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_HW_Test/SystemTestProvider.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_HW_Test/HardwareTestProvider.cpp
+        ${CMAKE_SOURCE_DIR}/src/MB_DDF_HW_Test/HelmDdsTestBridge.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_Demo/HardwareExamples.cpp
+        ${DDS_TESTED_SOURCES}
     )
     configure_mb_ddf_test_target(MB_DDF_HW_Tests)
     target_include_directories(MB_DDF_HW_Tests PRIVATE ${PRODUCT_PROTOCOL_GENERATED_DIR})

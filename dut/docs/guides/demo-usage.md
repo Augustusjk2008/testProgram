@@ -33,8 +33,8 @@ src/MB_DDF_Demo/HardwareExamples.cpp
 .\build.ps1 hw_test_release
 ```
 
-该画像只编入 COM3 产品协议服务、系统测试和硬件测试 provider，启用硬件层并关闭
-DDS Adapter。
+该画像编入 COM3 产品协议服务、系统测试、硬件测试 provider 和舵机 DDS bridge，启用
+硬件层并关闭 DDS Adapter；同一构建另产出用户独立启停的 `MB_DDF_v2_HelmControl`。
 
 `IMU_STREAM` 复用该 HW_TEST 的 COM3 产品协议服务，但不是 `test_pyqt` 的第 12 个页面，
 也不进入旧工具的“执行全部”或“连续”功能。宿主工程通过
@@ -43,6 +43,13 @@ DUT 从 COM4（偏移 `0x100000`、event 3、`921600/8E1`）读取 FPGA 已处�
 payload，经 COM3 主动上送完整 `09/01`，停止时最多发送一次 `09/11`。至少一帧有效反馈
 通过，0 帧失败；可选 UTF-8-SIG/TSV 固定列保存以宿主契约为准。流活动期间 COM4 被临时
 占用，BUS link 5 返回 `TASK_BUSY`。
+
+`HELM_STREAM` 由根仓 `configs/mbddf_helm_stream.testcfg.json` 以 `device_stream` 运行：
+PC 发送一次 `07/10`，DUT 以 1 ms 周期生成四路舵角指令，经
+`local:://helm_command`/`local:://helm_feedback` 与独立 `MB_DDF_v2_HelmControl`
+交互，并把 1..5 个完整 DDS 反馈样本组成 `07/01` 主动回告，停止时发送一次 `07/11`。
+扫频总时长可配，超时后命令归零而反馈继续到 STOP。测试服务不管理舵控程序，二者可由
+用户按任意顺序独立启停；连续实测与 `HELM_BOARD_TEST 07/02` 不互斥、不绑定。
 
 ### 2.3 DEMO
 
@@ -153,8 +160,8 @@ ssh root@192.168.1.29 `
 
 服务固定占用 COM3（`/dev/xdma0`、偏移 `0xC0000`、映射窗口 `0x40000`、event 2、
 Level 中断），串口配置固定为 `614400 / 8E1 / 无流控`，只处理产品协议，
-不初始化 DDS、Adapter 或 Demo。协议命令可能执行 DIDO、DH、舵控板级输出、
-保留的舵控扫频和 SPI Flash 写操作；本版不做安全确认、状态恢复、协议级自动重试或断链
+不初始化 Adapter 或 Demo；DDS Core 只在舵机 bridge 需要时使用。协议命令可能执行 DIDO、
+DH、舵控板级输出、DDS 舵机连续实测和 SPI Flash 写操作；本版不做安全确认、状态恢复、协议级自动重试或断链
 清理，只能在已隔离且允许写入硬件的目标板运行。COM TX `Busy` 时服务只会有界重交尚未
 被硬件接收的同一帧和同一序号。
 
@@ -170,13 +177,15 @@ Level 中断），串口配置固定为 `614400 / 8E1 / 无流控`，只处理�
 `HELM_BOARD_TEST (07/02)`：B9 低 4 位保留、高 4 位写四路方向，B10-B13 分别下发四路
 整数占空比 `0..100%`，读取四路 AD7606，并回读 `pwm_duty_match`、raw duty、peak、方向、
 使能及 PWM/AD 状态。板端按 `raw=(uint64_t(peak)*percent+50)/100` 换算占空比；命令结束后
-保持输出和 AD7606 状态，不自动恢复。旧舵控任务活动时 `07/02` 返回
-`TASK_BUSY (0x0204)`，peak 为 0 或写后回读不一致时返回
+保持输出和 AD7606 状态，不自动恢复。`07/02` 不查询连续 DDS 舵机实测的状态，也不会
+因其活动返回 `TASK_BUSY`；peak 为 0 或写后回读不一致时返回
 `REG_READ_WRITE_FAILED (0x0201)`。
 
-舵控功能扫频协议及板端实现继续保留，但不进入当前 PC 导航和“执行全部”：
-`HELM_START (07/10)` 的 `start` 参数单位为 rad，`HELM_FEEDBACK (07/01)` 以 10 组、组间
-1 ms 连续发送，`HELM_STOP (07/11)` 清零 PWM 并关闭 AD 采集/滤波。
+Web 主基线通过 `HELM_START (07/10)` 运行舵机连续实测：`start` 单位为 rad，
+`sweep_duration_s` 指定对数扫频总时长；DUT 每 1 ms 经 DDS 发布一条完整指令，
+`HELM_FEEDBACK (07/01)` 每帧批量携带 1..5 个完整 41 字节反馈样本，
+`HELM_STOP (07/11)` 只关闭本次 DDS bridge。`MB_DDF_v2_HelmControl` 由用户独立操作，
+测试服务不启动、停止或占有它，启动顺序不限。旧 PyQt 导航仍只显示 `07/02` 板级页。
 SYSTEM_STATUS 的 `net_init_time` 当前固定为 `0 s`；RK3588 温度来自 `center_thermal`
 hwmon，K7 温度来自 XADC 全局 `0x150000` 的局部 `0x200`，缺失实际温度源或其他未确认
 硬件映射均返回明确错误。完整合同见
@@ -218,11 +227,11 @@ CRC 错误不会被报告为有效回显。
 “SPI Flash”“总线”“DI”“DO”“电气健康”“DH 脉宽配置”“DH 控制”
 “舵控板级”和“定时器”。进入“串口回显”页会选择回显解析，进入任一硬件测试页会选择
 产品协议；“连接与日志”页不改变当前解析模式。切换标签不会取消在途测试或清空已显示
-结果。旧舵控扫频页面类和会话处理仍保留，但当前导航不创建该页。
+结果。舵机连续实测由根仓 Web 主基线操作，旧 PyQt 导航不创建该设备流页面。
 
 串口回显页联调前先运行 `debug.bat com3_echo`；任一硬件测试页联调前先运行
-`debug.bat hw_test_run`。串口回显支持 1..255 字节 payload；硬件测试页只发送协议规定的
-48/123 字节数据段，一次只保留一个普通待响应请求，并把 DH 突发和舵反馈单独路由。
+`debug.bat hw_test_run`。串口回显支持 1..255 字节 payload；旧 PyQt 可见硬件测试页只
+发送其协议规定的 48/123 字节数据段，一次只保留一个普通待响应请求，并把 DH 突发单独路由。
 每个硬件测试页的“执行”按钮旁提供“连续”按钮；连续是用户显式开启的重复执行，
 每轮请求收到终态后等待 200 ms 再发下一轮，不会与在途请求重叠。再次点击“连续”
 或点击顶部“停止”会取消后续轮次；涉及写入的页面仍只能在已隔离且允许写入的目标板上使用。

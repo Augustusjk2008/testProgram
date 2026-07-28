@@ -274,6 +274,7 @@ public:
         context.tags.insert(QStringLiteral("intervalMs"), runOptions.intervalMs);
         context.tags.insert(QStringLiteral("maxCycles"),
                             QVariant::fromValue<qulonglong>(runOptions.maxCycles));
+        context.runParameters = runOptions.parameters;
 
         {
             QMutexLocker locker(&m_mutex);

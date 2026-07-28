@@ -12,6 +12,7 @@ import type {
   TestConfigOption,
   TestDescriptor,
   TestMeasurementDescriptor,
+  TestRunParameterDescriptor,
 } from '../protocol'
 import { EMPTY_DIGITAL_STIMULUS, EMPTY_TEST_DESCRIPTOR } from '../protocol'
 
@@ -82,6 +83,21 @@ function requiredDigitalLevel(parent: JsonObject, key: string): DigitalSwitchDes
   return value
 }
 
+function parseRunParameterScalar(value: unknown, field: string): string | number | boolean {
+  if (typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  throw new Error(field)
+}
+
+function runParameterMap(value: unknown, field: string): Record<string, unknown> {
+  if (!isObject(value)) throw new Error(field)
+  const result: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) {
+    result[key] = parseRunParameterScalar(item, field)
+  }
+  return result
+}
+
 function parseDescriptor(value: JsonObject): TestDescriptor {
   try {
     const modeValue = value.supportedRunModes
@@ -101,6 +117,65 @@ function parseDescriptor(value: JsonObject): TestDescriptor {
         primary: requiredBoolean(item, 'primary'),
       }
     })
+    const schemaVersion = Object.prototype.hasOwnProperty.call(value, 'runParameterSchemaVersion')
+      ? requiredString(value, 'runParameterSchemaVersion')
+      : ''
+    const runParametersValue = value.runParameters ?? []
+    if (!Array.isArray(runParametersValue)) throw new Error('runParameters')
+    const parameterIds = new Set<string>()
+    const runParameters: TestRunParameterDescriptor[] = runParametersValue.map((item) => {
+      if (!isObject(item)) throw new Error('runParameter')
+      const id = requiredNonEmptyString(item, 'id')
+      if (parameterIds.has(id)) throw new Error('duplicate run parameter')
+      parameterIds.add(id)
+      const kind = requiredString(item, 'kind')
+      if (kind !== 'integer' && kind !== 'number' && kind !== 'boolean' && kind !== 'choice') {
+        throw new Error('run parameter kind')
+      }
+      const choicesValue = item.choices
+      if (!Array.isArray(choicesValue)) throw new Error('run parameter choices')
+      const choices = choicesValue.map((choice) => {
+        if (!isObject(choice)) throw new Error('run parameter choice')
+        return {
+          value: parseRunParameterScalar(choice.value, 'run parameter choice value'),
+          label: requiredString(choice, 'label'),
+        }
+      })
+      const minimum = item.minimum === undefined
+        ? undefined
+        : requiredNumber(item, 'minimum')
+      const maximum = item.maximum === undefined
+        ? undefined
+        : requiredNumber(item, 'maximum')
+      let visibleWhen
+      if (item.visibleWhen !== undefined) {
+        if (!isObject(item.visibleWhen)) throw new Error('run parameter visibility')
+        visibleWhen = {
+          parameter: requiredNonEmptyString(item.visibleWhen, 'parameter'),
+          equals: parseRunParameterScalar(item.visibleWhen.equals, 'run parameter visibility value'),
+        }
+      }
+      return {
+        id,
+        label: requiredString(item, 'label'),
+        description: requiredString(item, 'description'),
+        kind,
+        unit: requiredString(item, 'unit'),
+        required: requiredBoolean(item, 'required'),
+        minimum,
+        maximum,
+        minimumExclusive: requiredBoolean(item, 'minimumExclusive'),
+        maximumExclusive: requiredBoolean(item, 'maximumExclusive'),
+        choices,
+        visibleWhen,
+      }
+    })
+    const runParameterDefaults = Object.prototype.hasOwnProperty.call(value, 'runParameterDefaults')
+      ? runParameterMap(value.runParameterDefaults, 'runParameterDefaults')
+      : {}
+    for (const key of Object.keys(runParameterDefaults)) {
+      if (!parameterIds.has(key)) throw new Error('unknown run parameter default')
+    }
     return {
       configId: requiredString(value, 'configId'),
       productModel: requiredString(value, 'productModel'),
@@ -113,6 +188,9 @@ function parseDescriptor(value: JsonObject): TestDescriptor {
       description: requiredString(value, 'description'),
       supportedRunModes: modeValue as RunMode[],
       measurements,
+      runParameterSchemaVersion: schemaVersion,
+      runParameters,
+      runParameterDefaults,
     }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
@@ -209,11 +287,15 @@ function parseSnapshot(value: JsonObject): ApplicationSnapshot {
   const dataSaveError = Object.prototype.hasOwnProperty.call(value, 'dataSaveError')
     ? requiredString(value, 'dataSaveError')
     : ''
+  const effectiveRunParameters = Object.prototype.hasOwnProperty.call(value, 'effectiveRunParameters')
+    ? runParameterMap(value.effectiveRunParameters, 'effectiveRunParameters')
+    : {}
   return {
     ...(value as unknown as ApplicationSnapshot),
     dataSaveEnabled,
     dataFilePath,
     dataSaveError,
+    effectiveRunParameters,
     descriptor: descriptorValue === undefined
       ? EMPTY_TEST_DESCRIPTOR
       : parseDescriptor(requiredObject(value, 'descriptor')),

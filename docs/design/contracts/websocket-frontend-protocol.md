@@ -6,7 +6,7 @@
 
 `[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；前端既可使用开发服务器，也可使用构建后的单文件 HTML，二者都与 `hwtest_web` 分开运行，浏览器仍只连接回环 WebSocket。
 
-`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider 和 `DigitalStimulusPanel` 接入总览页。面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。此浏览器控制面实现不等价于 PXI-6259 真机已连接或已验收。
+`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider、`DigitalStimulusPanel` 和通用运行参数编辑器接入总览页。参数编辑器只消费后端 descriptor 中由算法层提供的 Schema，按 `configId + runParameterSchemaVersion` 在浏览器保存编辑值，并把覆盖值放入本次 `start.algorithmParameters`；它不写回测试配置。数字刺激面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。此浏览器控制面实现不等价于 PXI-6259 或舵机真机已连接或已验收。
 
 ## 2. 连接规则
 
@@ -85,6 +85,7 @@
 | `verdict`、`errorCode`、`message` | string |
 | `attempts` | integer |
 | `rawData` | object |
+| `effectiveRunParameters` | object；本次启动经算法 Schema 合并和校验后的完整运行参数，未启动或当前算法无 Schema 时为空 |
 | `runMode` | string；`single`、`pc_periodic` 或 `device_stream` |
 | `intervalMs` | integer |
 | `maxCycles`、`cycleIndex`、`sampleCount` | non-negative integer |
@@ -103,8 +104,11 @@
 | `title`、`description` | string | 当前测试的展示名称和说明 |
 | `supportedRunModes` | string[] | 当前配置声明的运行模式；元素只能是 `single`、`pc_periodic` 或 `device_stream`，且不得同时包含 `pc_periodic` 与 `device_stream`；字段缺失时后端只投影 `single` |
 | `measurements` | object[] | 待测量元数据；每项包含 `id`、`label`、`unit`、`primary` |
+| `runParameterSchemaVersion` | string | 算法层运行参数 Schema 版本；无可编辑参数时为空 |
+| `runParameters` | object[] | 参数定义；每项包含 `id`、`label`、`description`、`kind`、`unit`、`required`、独占边界标志和 `choices`，可选 `minimum`、`maximum`、`visibleWhen` |
+| `runParameterDefaults` | object | 当前配置值覆盖算法 Schema 默认值后得到的完整默认参数 |
 
-`measurements` 只描述展示标签、单位和首页主指标候选，不改变算法判定或硬件安全语义。首条样本可能包含 descriptor 未列出的数值字段，前端仍应自动发现并显示该字段；descriptor 缺失时，兼容客户端可以使用空 descriptor 和样本字段回退。
+`measurements` 只描述展示标签、单位和首页主指标候选，不改变算法判定或硬件安全语义。`runParameters` 由算法层定义语义，`kind` 只能是 `integer`、`number`、`boolean` 或 `choice`；`visibleWhen` 只控制界面显示，隐藏字段仍按 Schema 校验并随完整参数传递。首条样本可能包含 descriptor 未列出的数值字段，前端仍应自动发现并显示该字段；descriptor 缺失时，兼容客户端可以使用空 descriptor 和样本字段回退。
 
 `digitalStimulus` 是受 WebSocket v1 数值边界约束的应用 DTO 公开投影，不暴露 `resourceId`、设备 alias、`adapterId`、端口、厂家设置或 DLL 路径：
 
@@ -142,7 +146,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `invalid_run_mode` | `start.mode` 不是固定三种模式之一 | 是 |
 | `CapabilityUnsupported` | `start.mode` 未在当前配置的 `supportedRunModes` 中声明，或刺激快照超出 WebSocket v1 的 16 位投影 | 是 |
 | `capability_unsupported` | `setDigitalStimulus`/`resetDigitalStimulus` 面对超出 v1 范围的刺激配置 | 是 |
-| `ParameterRangeError` | `start.intervalMs` 或 `start.maxCycles` 超出范围 | 是 |
+| `ParameterRangeError` | `start.intervalMs`、`start.maxCycles` 或算法运行参数缺失、未知、非有限、类型/范围不合法 | 是 |
 
 能够安全读取请求 `id` 时，协议错误 reply 使用该 id；否则使用空字符串。错误输入不得触发控制器动作。
 
@@ -161,7 +165,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `selectControl` | `{"resourceId":"CONTROL_SERIAL"}` | 调用 `selectControl`；`resourceId` 必须是非空字符串 |
 | `selectSerialPort` | `{"portName":"COM7"}` | 调用 `selectSerialPort`；`portName` 必须是非空字符串 |
 | `prepare` | `{}` | 调用 `prepare` |
-| `start` | `{}` 或 `{"mode":"pc_periodic","intervalMs":500,"maxCycles":0,"saveData":true}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`，且必须由当前 descriptor 声明；`intervalMs` 为 `10..3600000` 的整数，`maxCycles` 为 `0..1000000000` 的整数且 `0` 表示 PC 周期不限轮数，两者只有 `pc_periodic` 具备调度含义，其他模式由控制器归一为 `1000/1`；`saveData` 只能是 boolean，`pc_periodic` 与 `device_stream` 均可启用保存，`single` 强制不保存 |
+| `start` | `{}` 或 `{"mode":"device_stream","saveData":true,"algorithmParameters":{"waveform":4,"ampl":3.5}}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`，且必须由当前 descriptor 声明；`intervalMs` 为 `10..3600000` 的整数，`maxCycles` 为 `0..1000000000` 的整数且 `0` 表示 PC 周期不限轮数，两者只有 `pc_periodic` 具备调度含义，其他模式由控制器归一为 `1000/1`；`saveData` 只能是 boolean，`pc_periodic` 与 `device_stream` 均可启用保存，`single` 强制不保存；`algorithmParameters` 必须是 object，键和值再由当前算法 Schema 校验 |
 | `pause` | `{}` | 调用 `pause` |
 | `resume` | `{}` | 调用 `resume` |
 | `setDigitalStimulus` | `{"switchId":"di0","active":true,"expectedRevision":0}` | 必须且只能包含这三个字段；`switchId` 为非空 string，`active` 为 boolean，`expectedRevision` 为 0..9007199254740991 的非负安全整数。未知字段（包括 `resourceId`、`adapterId`、端口或路径）一律 `invalid_envelope`；控制器再按已加载配置白名单验证 `switchId`。reply 的 `data.digitalStimulus` 返回当前状态 |
@@ -170,7 +174,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `disconnect` | `{}` | 必要时先异步停止，再调用 `shutdown`；最后回复并关闭当前连接，服务器继续监听 |
 | `quit` | `{}` | 执行与 `disconnect` 相同的安全收尾，随后关闭服务器并退出进程 |
 
-除 `start`、`selectTest`、`selectControl`、`selectSerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`start` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知字段按 `invalid_envelope` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
+除 `start`、`selectTest`、`selectControl`、`selectSerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`start` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知顶层字段按 `invalid_envelope` 拒绝；`algorithmParameters` 内的未知字段由应用/算法边界以 `ParameterRangeError` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
 
 ### 6.1 连续模式数据文件
 

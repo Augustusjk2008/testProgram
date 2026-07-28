@@ -269,8 +269,9 @@ SPI Transport 会持有 advisory `flock`，并在退出前恢复原 mode、位�
 
 ### 5.3 产品硬件测试服务
 
-测试服务使用独立的 `HW_TEST` 画像和同一个 COM3 控制口，不初始化 DDS、Adapter 或
-Demo。使用：
+测试服务使用独立的 `HW_TEST` 画像和同一个 COM3 控制口，不初始化 Adapter 或 Demo；
+DDS Core 仅供舵机连续实测 bridge 使用，同一构建另产出用户独立启停的
+`MB_DDF_v2_HelmControl`。使用：
 
 ```powershell
 .\debug.ps1 -Run -HardwareTest
@@ -283,6 +284,10 @@ Demo。使用：
 状态恢复、自动重试、夹具检测或报告导出；只能在已隔离且允许协议所含写操作的目标板运行。
 总线 link 2/3/4/5 分别对应 COM1/2/3/4；COM3 控制口占用 link 4，该 link 返回
 `CHANNEL_INVALID`，“执行全部”只包含 link 0/1/2/3/5/6。
+
+`debug.ps1 -Run -HardwareTest` 只部署并运行产品测试服务，不代替用户启动或停止
+`MB_DDF_v2_HelmControl`。两者可按任意顺序独立运行，`HELM_BOARD_TEST 07/02` 与
+`HELM_STREAM 07/10/01/11` 不互斥、不共享生命周期状态。
 
 ## 6. 测试
 

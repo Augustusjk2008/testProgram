@@ -1,8 +1,9 @@
 # 产品端-上位机通信协议 V1.1
 
-> 版本：V1.1（2026-07-27）
-> 适用范围：AArch64 Linux 产品端硬件测试服务与 Windows 上位机协议端。本轮
-> `IMU_STREAM` 主机实现位于宿主工程根 `hwtest_*`；`test_pyqt` 未提供 IMU 页面或设备流会话。
+> 版本：V1.1（2026-07-28）
+> 适用范围：AArch64 Linux 产品端硬件测试服务与 Windows 上位机协议端。`IMU_STREAM`
+> 与 `HELM_STREAM` 主机实现位于宿主工程根 `hwtest_*`，当前以 Web 入口为主基线；旧
+> `test_pyqt` 不作为这两项设备流的现行入口。
 > 字段布局唯一事实源：本目录 37 份 CSV。本文只定义传输、时序、测试映射和硬件边界。
 
 ## 1. 传输基线
@@ -11,10 +12,12 @@
   XDMA event 2。
 - 串口固定为 `614400 / 8E1 / 无流控`，中断使用 Level 模式。
 - FPGA 负责识别 `55 AA`、长度和 CRC。板端 C++ 只接收和发送从 B4 `version`
-  开始的 48 或 123 字节数据段，不重复解析物理帧，也不重复计算 CRC。
+  开始的 1..255 字节数据段，不重复解析物理帧，也不重复计算 CRC；当前定义使用
+  48、123 和舵反馈的 232 字节数据段。
 - 全部多字节整数和 IEEE-754 F32 字段均按小端线序编码。
-- 本协议不使用 DDS，也不依赖 `Upgrade_And_Test` 编译产物；文中标注的参考实现只作
-  已确认参数的来源记录。
+- COM3 产品帧不暴露 DDS 格式，也不依赖 `Upgrade_And_Test` 编译产物；舵机连续实测在
+  产品端内部经 DDS 连接独立 `MB_DDF_v2_HelmControl`，其 27/41 字节帧以
+  `src/HelmControl/ProtocolModel` 为代码事实源。
 
 ## 2. 公共帧
 
@@ -22,7 +25,7 @@
 |---|---|---|---|
 | B1 | `sync[0]` | CONST | `0x55` |
 | B2 | `sync[1]` | CONST | `0xAA` |
-| B3 | `len` | U8 | 从 B4 起的数据段长度，只能是 48 或 123 |
+| B3 | `len` | U8 | 从 B4 起的数据段长度，范围 1..255 |
 | B4 | `version` | CONST | `0x11` |
 | B5 | `type_group` | U8 | 类型组 |
 | B6 | `sub_type` | U8 | 子类型 |
@@ -36,6 +39,7 @@
 |---:|---:|---:|---:|
 | 48 | B4-B51 | 43 字节 | 53 字节 |
 | 123 | B4-B126 | 118 字节 | 128 字节 |
+| 232 | B4-B235 | 227 字节 | 237 字节 |
 
 完整帧长度必须严格等于 `len + 5`。CSV 的 `index`、`length` 和字段累计偏移必须同时
 成立；任何不一致都属于协议资产错误，不允许按行序容错。
@@ -123,9 +127,9 @@ BIT 位偏移、LSB 和默认值。输出不包含源目录或机器路径；构
 | `06/01` | DH_PULSE_CONFIG | 配置使能、23 路 U16 毫秒脉宽 | 23 路脉宽读回 | 128/128 |
 | `06/02` | DH_CONTROL | 电源/回线使能、23 位通道、次数、间隔和延时 | 使能读回、23 路 2-bit 状态及 23 路 `S32F` 遥测 | 53/128 |
 | `07/02` | HELM_BOARD_TEST | B9 低 4 位保留、高 4 位方向；B10-B13 四路 U8 百分比 | `pwm_duty_match`、方向、raw duty、peak、四路 AD7606 和使能状态 | 53/53 |
-| `07/10` | HELM_START | `waveform:U32`, 五个 F32 参数、`enable:U32` | `helm_version=0x01`、状态和错误码 | 53/53 |
+| `07/10` | HELM_START | `waveform:U32`、`freq/ampl/offset/start/max_freq/sweep_duration_s:F32`、`enable:U32` | `helm_version=0x01`、状态和错误码 | 53/53 |
 | `07/11` | HELM_STOP | 无 | 状态和错误码 | 53/53 |
-| `07/01` | HELM_FEEDBACK | 无请求 | 状态、错误码和 10 组舵反馈 | -/128 |
+| `07/01` | HELM_FEEDBACK | 无请求 | 状态、错误码、首样本 DDS 时间戳和 1..5 组完整 41 字节舵反馈 | -/237 |
 | `08/01` | TIMER_JITTER_START | `mode:U32` | `buckets[8]:U32`, 平均/最大抖动 F32 | 53/53 |
 | `08/02` | TIMER_JITTER_STOP | 无 | 状态和错误码 | 53/53 |
 | `09/10` | IMU_STREAM_START | 无 | 状态和错误码 | 53/53 |
@@ -181,24 +185,34 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
    原始码、PWM 使能位图、PWM update 状态以及 AD7606 采集/滤波状态。AD7606 字段按 CSV 的
    `10/65536 V/code` 由 PC 解码。
 4. PWM peak、duty、方向、四路使能、update 或 AD7606 采集/滤波任一回读不符合预期，
-   返回 `REG_RW_FAILED (0x0201)`；旧舵控功能任务活动时返回 `TASK_BUSY (0x0204)`。
+   返回 `REG_RW_FAILED (0x0201)`。该命令不查询连续舵机 DDS bridge 的活动状态，也不会
+   因其运行而返回 `TASK_BUSY`。
 5. 该命令不恢复测试前状态，成功或中途失败时已经完成的 PWM、方向和使能写入均可能
    保持。只能在已隔离且明确允许硬件写入的目标板运行。
 
-### 5.3 保留的舵控功能测试
+### 5.3 DDS 舵机连续实测
 
-1. 波形和使能位图是 U32；频率、幅值、偏置、起始相位和扫频上限保持 F32，其中
-   `start` 的单位是弧度（rad），不是角度。
-2. 正弦、方波和三角波共用 `phase = 2*pi*freq*t + start`；直流波只输出 offset。
-3. 扫频固定持续 `T=25 s`。当 `f0 != f1` 时相位为
-   `2*pi*f0*f1*T/(f1-f0)*ln(f1*T/(f1*T-t*(f1-f0))) + start`；`f0 == f1` 时退化为
-   定频相位，超过 25 秒输出零。
-4. HELM_START 打开 AD7606 采集/滤波并启动反馈线程。每个 HELM_FEEDBACK 帧固定包含
-   10 组样本，组间隔 1 ms；帧间再等待 1 ms，并从板端统一发送器取得序号。
-5. HELM_STOP 将 PWM 输出清零、恢复更新并关闭 AD7606 采集/滤波；全部成功后才清除
-   活动状态并返回 ACK。清理失败返回执行错误且保持可再次 STOP 的状态。
-6. `HELM_FEEDBACK 07/01`、`HELM_START 07/10` 和 `HELM_STOP 07/11` 的协议、板端实现
-   及 PC 内部实现继续保留，但当前 PC 导航和“执行全部”不显示或执行该功能测试。
+1. 波形和使能位图是 U32；频率、幅值、偏置、起始相位、扫频上限和扫频总时长是 F32，
+   其中 `start` 单位为 rad。波形取 0..4、使能只取低四位，频率/上限/时长为有限正数；
+   DUT 与 Web 不限制幅值或偏置，独立舵控程序保留自身内部限幅。
+2. 正弦、方波和三角波共用 `phase = 2*pi*freq*t + start`，恒值波只输出 offset。连续
+   对数扫频在 `f0 != f1` 时使用
+   `2*pi*f0*f1*T/(f1-f0)*ln(f1*T/(f1*T-t*(f1-f0))) + start`，`T` 取请求中的
+   `sweep_duration_s`；`f0 == f1` 时退化为定频。超过 T 后命令归零，但反馈保持到 STOP。
+3. START 只打开 `HelmDdsTestBridge`：create-or-get `local:://helm_command` writer 与
+   `local:://helm_feedback` reader，以 1 ms 周期发布四路共用波形，未启用通道为零。
+   writer 发送严格 27 字节 `Helm_ins_frame`；reader 只接受严格 41 字节
+   `Helm_fdb_frame`。
+4. 每个 `HELM_FEEDBACK` 使用 232 字节数据段，包含首个 DDS 微秒时间戳和 1..5 个完整
+   样本；每样本保留 U16 相对时间、`serial_a/serial_b`、版本、四路 `ins/fdb`、六项
+   2-bit 自检及 timeout。反馈使用产品端统一发送器取得产品帧序号。
+5. STOP 只停止本次 bridge、关闭 DDS 端点并清空反馈队列，不访问板级 PWM/AD7606。
+   同一流的 START ACK、主动反馈和 STOP ACK 保持线序：已开始发送的反馈先完成，STOP ACK
+   之后不得再发送该会话旧反馈。DDS 端点或发布失败返回 `HELM_DDS_FAILED (0x0301)`；同一
+   bridge 重复 START 可返回 `TASK_BUSY`，但 `HELM_BOARD_TEST 07/02` 与该状态无关。
+6. `MB_DDF_v2_HelmControl` 是用户独立启停的进程，测试服务不创建、终止、探测、等待或
+   占有它；DDS create-or-get 允许任意启动顺序。连续实测与 `07/02` 板级测试没有生命
+   周期、互斥、忙状态或其他绑定。
 
 ### 5.4 定时器
 
@@ -261,6 +275,10 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
 `IMU_STREAM` 不进入当前“执行全部”顺序，也不得由旧工具的“连续”功能模拟；它只能作为
 独立 `device_stream` 会话运行。
 
+`HELM_STREAM` 同样不进入旧 PyQt“执行全部”顺序；根仓 Web 主基线以独立
+`device_stream` 会话运行，用户另行控制 `MB_DDF_v2_HelmControl`。它与表中的
+`HELM_BOARD_TEST` 并列且没有互斥或生命周期绑定。
+
 内存类型：0-2 为 seed 图样写入/校验，3-6 分别为读、写、拷贝和 NT store 带宽测试。
 PC 默认超时为普通 2 秒、总线 60 秒、内存 120 秒、SPI Flash 180 秒；DH 首帧超时按
 `delay_us + 2 s`，收到首帧后按 `interval_us + 2 s` 的相邻回告进度重新计时，不再把串口
@@ -268,7 +286,7 @@ PC 默认超时为普通 2 秒、总线 60 秒、内存 120 秒、SPI Flash 180 
 UTF-8-SIG TSV 长表：用户指定目录，文件名固定为 `DH_data_YYYYMMDD_HHMMSS_ffffff.txt`，
 每帧输出 23 行；完成、失败和停止均保存已经收到的数据。文件中的 `sample_time_us` 是按
 `delay_us + (report_index-1)*interval_us` 计算的计划采样时刻，协议未携带实测时间戳。
-原舵控功能测试的协议和实现保留，但不属于当前 PC 导航或“执行全部”顺序。
+舵机连续实测由 Web 主基线进入，旧 PyQt 导航和“执行全部”仍只包含舵控板级测试。
 
 PC 页面“连续”是用户显式开启的重复执行，不属于协议层失败自动重试：每轮普通请求完成
 后等待 200 ms 才发送同一参数的下一轮，用户可再次点击“连续”或顶部“停止”取消后续轮次。
@@ -388,8 +406,8 @@ link 6 后端是 SPI Flash，不具备 MOSI/MISO 回显语义。BUS_LOOP 只发�
 | `0x0201` | REG_RW_FAILED | 寄存器访问或硬件回读异常 |
 | `0x0202` | MEM_ACCESS_FAILED | 存储器不可访问 |
 | `0x0203` | TASK_EXEC_FAILED | 任务流程、超时或数据编码失败 |
-| `0x0204` | TASK_BUSY | 舵控、定时器、DH 或 IMU 流任务忙；IMU 活动时 BUS link 5 返回该错误 |
-| `0x0301` | HELM_DDS_FAILED | 预留舵控 DDS 链路错误；当前实现未返回 |
+| `0x0204` | TASK_BUSY | 同一连续流重复 START、定时器/DH 任务忙；IMU 活动时 BUS link 5 返回该错误；舵机连续流不限制 `07/02` |
+| `0x0301` | HELM_DDS_FAILED | 舵机 DDS 端点建立或指令发布失败 |
 
 ## 9. CSV 资产
 

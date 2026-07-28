@@ -1,3 +1,5 @@
+import struct
+
 from PyQt5.QtCore import QObject, pyqtSignal
 import pytest
 
@@ -497,8 +499,10 @@ def test_malformed_helm_feedback_sends_stop_before_reporting_decode_failure() ->
     emit_active_response(session, channel, catalog, "helm_start_response")
     definition = catalog.get("helm_feedback_response")
     malformed = bytearray(response(catalog, "helm_feedback_response"))
-    reserved = definition.field("pad")
-    malformed[reserved.payload_offset] = 1
+    feedback = definition.field("sample[0].fdb[0]")
+    malformed[
+        feedback.payload_offset : feedback.payload_offset + feedback.byte_length
+    ] = struct.pack("<f", float("nan"))
 
     emit_response(channel, bytes(malformed))
 

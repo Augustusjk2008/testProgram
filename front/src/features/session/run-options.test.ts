@@ -9,11 +9,13 @@ describe('continuous data run options', () => {
       intervalMs: 250,
       maxCycles: 0,
       saveData: true,
+      algorithmParameters: { pulse_width: 123 },
     })).toEqual({
       mode: 'pc_periodic',
       intervalMs: 250,
       maxCycles: 0,
       saveData: true,
+      algorithmParameters: { pulse_width: 123 },
     })
   })
 
@@ -23,11 +25,13 @@ describe('continuous data run options', () => {
       intervalMs: 250,
       maxCycles: 8,
       saveData: true,
+      algorithmParameters: { config_enable: 1 },
     })).toEqual({
       mode: 'single',
       intervalMs: 1000,
       maxCycles: 1,
       saveData: false,
+      algorithmParameters: { config_enable: 1 },
     })
   })
 
@@ -37,11 +41,13 @@ describe('continuous data run options', () => {
       intervalMs: 250,
       maxCycles: 0,
       saveData: true,
+      algorithmParameters: { waveform: 4 },
     })).toEqual({
       mode: 'device_stream',
       intervalMs: 1000,
       maxCycles: 1,
       saveData: true,
+      algorithmParameters: { waveform: 4 },
     })
   })
 })

@@ -11,8 +11,8 @@ MB_DDF_v2 是面向 AArch64 Linux 的 C++20 工程，包含共享内存 DDS、XD
 
 - 共享内存发布/订阅、Topic 注册和跨域网关。
 - XDMA Transport、PWM、AD7606、ADS1258、XADC、DIDO、DH、COM 和 Flash Device。
-- 相互隔离的 COM3 回显、产品硬件测试和 DDS/硬件 Demo 三种应用画像。
-- CSV 驱动的产品协议描述、板端编解码和 PC 端异步串口收发，含舵控板级 AD/PWM/方向测试。
+- 相互隔离的 COM3 回显、产品硬件测试和 DDS/硬件 Demo 三种应用画像；HW_TEST 另构建用户独立启停的 `MB_DDF_v2_HelmControl`。
+- CSV 驱动的产品协议描述、板端编解码和 PC 端异步串口收发，含舵控板级 AD/PWM/方向测试与 DDS 舵机连续实测桥接。
 - ADS1258 分段定标、XADC 原始码上报、电气健康采样和 23 路 DH 电压遥测。
 - AArch64 单元测试、目标板硬件测试和默认只读 smoke test。
 
@@ -45,7 +45,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 help
 |---|---|---|---|
 | COM3 回显 | `.\build.ps1 debug` | `.\debug.ps1 -Run -Com3Echo` | 固定 COM3 链路回显 |
 | DDS/硬件 Demo | `.\build.ps1 hw_debug` | `.\debug.ps1 -Run -FullHardware` | 默认只读的 DDS 与硬件演示 |
-| 产品硬件测试 | `.\build.ps1 hw_test_debug` | `.\debug.ps1 -Run -HardwareTest` | 按产品协议执行硬件测试命令 |
+| 产品硬件测试 | `.\build.ps1 hw_test_debug` | `.\debug.ps1 -Run -HardwareTest` | 按产品协议执行硬件测试命令；同时产出独立 `MB_DDF_v2_HelmControl` |
 
 `build.bat` 和 `debug.bat` 是兼容包装；完整动作和参数见构建指南。
 
@@ -96,13 +96,17 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 ## 协议兼容与限制
 
 - 产品协议字段布局以 [`docs/design/product_protocol_csv`](docs/design/product_protocol_csv)
-  下的 32 份 CSV 为准。DH 脉宽配置使用 `0x06/0x01`，控制与多帧遥测使用
+  下的 37 份 CSV 为准。DH 脉宽配置使用 `0x06/0x01`，控制与多帧遥测使用
   `0x06/0x02`；旧 `dh_report_response` 不再使用。
-- PC 当前舵控页面及“执行全部”使用 `HELM_BOARD_TEST 0x07/0x02`：B9 低 4 位保留、
+- 旧 PyQt 舵控页面及“执行全部”使用 `HELM_BOARD_TEST 0x07/0x02`：B9 低 4 位保留、
   高 4 位设置四路方向，B10-B13 分别设置四路整数占空比 `0..100%`，并回读
-  `pwm_duty_match`、raw duty、peak、方向、使能状态及四路 AD7606。原
-  `HELM_FEEDBACK 0x07/0x01`、`HELM_START 0x07/0x10`、`HELM_STOP 0x07/0x11`
-  扫频协议与双端实现保留，但不显示在当前 PC 导航中。
+  `pwm_duty_match`、raw duty、peak、方向、使能状态及四路 AD7606。Web 主基线使用
+  `HELM_START 0x07/0x10`、`HELM_FEEDBACK 0x07/0x01`、`HELM_STOP 0x07/0x11`：DUT
+  以 1 ms 周期生成指令，经 DDS 与独立 `MB_DDF_v2_HelmControl` 交互，最多 5 个完整反馈
+  样本组成一帧回告。扫频总时长可配置，结束后指令归零、反馈继续到 STOP。
+- `MB_DDF_v2` 测试服务与 `MB_DDF_v2_HelmControl` 可由用户按任意顺序、独立启停；测试
+  服务不管理舵控进程。`HELM_BOARD_TEST` 与连续实测并列存在，不互斥、不返回对方导致的
+  `TASK_BUSY`，也不共享生命周期状态。
 - 板级寄存器以 `origin_v3` 为现行事实源。XADC 全局基址为 `0x150000`，PCIe SPI Flash
   为 `0x160000`；外部集成不得继续沿用旧映射。
 - `ELEC_HEALTH_STATUS` 在 B31-B32 传输 XADC `value_YX` 的 FPGA 原始 ADC code，PC

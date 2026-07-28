@@ -33,15 +33,15 @@ docs/design/
 | 范围 | 入口 | 说明 |
 | --- | --- | --- |
 | BIZ | `src/biz/` | `hwtest_biz`；公共头仅直接依赖 Qt Core 和 `hwtest_log_types` |
-| 算法 | `src/algorithm/` | `hwtest_algorithm_mbddf`，包含 MB_DDF 协议 CSV、编解码、两个固定命令执行器、配置驱动单步交换、惯测设备流执行器和 DI 刺激控制器 |
+| 算法 | `src/algorithm/` | `hwtest_algorithm_mbddf`，包含 MB_DDF 协议 CSV、编解码、固定命令执行器、配置驱动单步交换、惯测/舵机设备流执行器、运行参数 Schema 和 DI 刺激控制器 |
 | HAL | `src/hal/` | `hwtest_hal`；控制资源走 `qt.serial`/`qt.udp`，其他设备按 `adapterId` 惰性路由到 Mock 或 C ABI v1 后端；Vendor C ABI 初始化接收驱动级 Adapter 配置，打开代码使用版本化单设备投影；另有默认关闭的 PXI-6259 NI-DAQmx Adapter 与可选采样任务 ABI |
 | 日志 | `src/logging/` | `hwtest_log_types` 与 `hwtest_log` |
 | 应用 | `src/app/`、`front/` | `hwtest_app_core` 统一组合生命周期；`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与回环 `hwtest_web` 是独立 C++ 入口；`front/` 是独立 React/Vite 遥测控制台 |
 | 测试 | `tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/`、`tests/app/` | 七个 GoogleTest 目标，经 CTest 注册 |
 
-`[当前实现]` 仓库已有行式 TUI、Qt Widgets GUI、WebSocket 后端和浏览器遥测控制台。浏览器通过现有配置选择一个独立测试；应用层把配置中的展示元数据投影为 WebSocket descriptor，前端据此显示测试名称、支持的运行模式、首页主指标、测量标签/单位及 16 路 DI 刺激/回读，并自动发现样本新增字段。当前配置目录包含八项：`SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`、带 STOP 清理的 `TIMER_JITTER`、`DI_READ` 和只支持设备持续模式的 `IMU_STREAM`。后者由 PC 经 COM3 发送一次 START，DUT 持续读取 COM4 并主动回告，PC 发送 STOP 后结束；配置 descriptor 定义的全部测量列可由应用层按固定表头保存。Qt UDP 已覆盖该 START/反馈/STOP 与保存闭环，尚无 COM4/目标板实机验收。其他硬件证据和限制统一见 `testing/testing-specification.md`。
+`[当前实现]` 仓库已有行式 TUI、Qt Widgets GUI、WebSocket 后端和浏览器遥测控制台，当前开发验证以 Web 链路为主基线。浏览器通过现有配置选择一个独立测试；应用层把配置展示元数据和算法层运行参数 Schema 投影为 WebSocket descriptor，前端据此显示测试名称、支持的运行模式、首页主指标、测量标签/单位、可编辑运行参数及 16 路 DI 刺激/回读，并自动发现样本新增字段。当前配置目录包含九项：`SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`、带 STOP 清理的 `TIMER_JITTER`、`DI_READ`、只支持设备持续模式的 `IMU_STREAM` 和 `HELM_STREAM`。惯测由 PC 经 COM3 发送一次 START，DUT 持续读取 COM4 并主动回告；舵机实测由 DUT 以 1 ms 周期生成指令，经 DDS 与用户独立启停的 `MB_DDF_v2_HelmControl` 交互并批量回告。两类设备流都由 PC 发送 STOP 后结束，配置 descriptor 定义的全部测量列可由应用层按固定表头保存。现有自动化尚不构成 COM4、DDS 舵机或目标板实机验收。其他硬件证据和限制统一见 `testing/testing-specification.md`。
 
-外部目录 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 的当前内容已批准为 MB_DDF 协议 CSV 基线；原始导入基线为来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 的 32 份 CSV，2026-07-27 又在外部来源与 `dut/` 同步加入 5 份惯测流 CSV，当前共 37 份。尚无 manifest、内容哈希和不可变快照自动机制；宿主运行期仍显式使用外部资产目录。
+外部目录 `H:/Resources/RTLinux/Demos/MB_DDF_v2/docs/design/product_protocol_csv` 是原始来源追溯；导入基线为来源提交 `982b3f5bbce222aea061e9ce1523ba926c801658` 的 32 份 CSV，2026-07-27 又同步加入 5 份惯测流 CSV。当前仓库内 `dut/docs/design/product_protocol_csv/` 保留 37 份定义，并已更新舵机 START/反馈布局；宿主脚本默认使用这份可复现快照，显式设置 `MB_DDF_PROTOCOL_CSV_DIR` 时才改用其他受控目录。尚无 manifest、内容哈希和不可变快照自动机制。
 
 ## 阅读顺序
 

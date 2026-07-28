@@ -138,10 +138,10 @@ def encode_payload(
     values: Optional[Mapping[str, object]] = None,
     sequence: int = 0,
 ) -> bytes:
-    """Encode exactly one 48/123-byte B4..CRC-predecessor data segment."""
+    """Encode one 1..255-byte B4..CRC-predecessor data segment."""
 
-    if definition.payload_length not in (48, 123):
-        raise ProductProtocolError("产品数据段长度必须是 48 或 123 字节")
+    if not 1 <= definition.payload_length <= 255:
+        raise ProductProtocolError("产品数据段长度必须在 1..255 字节")
     if not 0 <= int(sequence) <= 0xFFFF:
         raise ProductProtocolError("序号必须在 0..65535 范围内")
     supplied = values or {}
@@ -250,9 +250,9 @@ class ProductProtocol:
 
     def decode_response(self, payload: bytes) -> DecodedMessage:
         data = bytes(payload)
-        if len(data) not in (48, 123):
+        if not 5 <= len(data) <= 255:
             raise ProductProtocolError(
-                "产品数据段长度必须是 48 或 123 字节，实际为 {}".format(len(data))
+                "产品响应数据段长度必须在 5..255 字节，实际为 {}".format(len(data))
             )
         type_group = data[1]
         sub_type = data[2]

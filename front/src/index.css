@@ -698,6 +698,108 @@ code,
   font-size: 10px;
 }
 
+.algorithm-parameters {
+  min-width: 0;
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--line);
+  padding-top: 5px;
+}
+
+.algorithm-parameters summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-soft);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.algorithm-parameters summary b {
+  color: var(--muted);
+  font: 10px "Geist Mono", monospace;
+}
+
+.algorithm-parameters__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 5px 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.algorithm-parameters__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 5px 8px;
+  max-height: 148px;
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.algorithm-parameter {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(64px, auto) minmax(70px, 1fr);
+  align-items: center;
+  gap: 5px;
+}
+
+.algorithm-parameter > span:first-child {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.algorithm-parameter select,
+.algorithm-parameter__number {
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--line-bright);
+  background: var(--input);
+  color: var(--text);
+}
+
+.algorithm-parameter select {
+  width: 100%;
+  padding: 0 5px;
+  font-size: 11px;
+}
+
+.algorithm-parameter__number {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.algorithm-parameter__number input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 5px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: 11px "Geist Mono", monospace;
+}
+
+.algorithm-parameter__number b {
+  padding-right: 5px;
+  color: var(--muted);
+  font: 9px "Geist Mono", monospace;
+}
+
+.algorithm-parameter input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--lime);
+}
+
 .page-viewport {
   min-width: 0;
   min-height: 0;

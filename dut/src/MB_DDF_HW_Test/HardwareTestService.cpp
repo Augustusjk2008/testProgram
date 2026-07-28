@@ -211,6 +211,12 @@ bool HardwareTestService::process_once(HW::Timeout timeout) {
     }
 
     auto response = protocol_.create_message(response_descriptor_name, false);
+    std::unique_lock<std::mutex> helm_stream_guard(
+        helm_stream_order_mutex_, std::defer_lock);
+    if (request.name() == "helm_start_request" ||
+        request.name() == "helm_stop_request") {
+        helm_stream_guard.lock();
+    }
     std::lock_guard<std::mutex> lock(provider_mutex_);
     const auto error = provider_.handle(request, response);
     set_execution_status(response, error);
@@ -219,13 +225,14 @@ bool HardwareTestService::process_once(HW::Timeout timeout) {
 }
 
 bool HardwareTestService::emit_helm_feedback_once() {
-    std::lock_guard<std::mutex> lock(provider_mutex_);
+    std::lock_guard<std::mutex> stream_guard(helm_stream_order_mutex_);
     if (!provider_.helm_feedback_active()) {
         return true;
     }
     auto response = protocol_.create_message("helm_feedback_response", false);
-    const auto error = provider_.build_helm_feedback(response);
-    set_execution_status(response, error);
+    const auto error = provider_.poll_helm_feedback(response);
+    if (!error) return true;
+    set_execution_status(response, *error);
     return send_message(response);
 }
 
@@ -263,15 +270,14 @@ int HardwareTestService::run(const StopPredicate& stop_requested) {
                     shutdown_requested.store(true, std::memory_order_relaxed);
                     return;
                 }
-                // COM4 poll 自身提供短超时；有效帧后立即继续，不引入固定降采样等待。
-                continue;
             }
             if (!emit_helm_feedback_once()) {
                 feedback_failed.store(true, std::memory_order_relaxed);
                 shutdown_requested.store(true, std::memory_order_relaxed);
                 return;
             }
-            sleeper_(std::chrono::milliseconds(1));
+            // COM4 活动时 poll 自身提供短超时；否则以 1 ms 节奏轮询 DDS 反馈。
+            if (!imu_active) sleeper_(std::chrono::milliseconds(1));
         }
     });
 

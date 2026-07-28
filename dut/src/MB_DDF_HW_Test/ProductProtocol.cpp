@@ -301,7 +301,7 @@ bool ProductProtocol::assign_transmit_sequence(ProductMessage& message) {
 
 ProductParseResult ProductProtocol::parse_request(
     std::span<const uint8_t> data_segment) const {
-    if (data_segment.size() != 48 && data_segment.size() != 123) {
+    if (data_segment.empty() || data_segment.size() > 255) {
         return ProductParseResult(header_error(data_segment, ProductErrorCode::LenMismatch,
                                                static_cast<uint32_t>(data_segment.size())));
     }

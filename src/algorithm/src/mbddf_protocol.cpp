@@ -13,8 +13,8 @@
 namespace hwtest::algorithm::mbddf {
 namespace {
 
-constexpr int kShortPayloadLength = 48;
-constexpr int kLongPayloadLength = 123;
+constexpr int kMinimumPayloadLength = 1;
+constexpr int kMaximumPayloadLength = 255;
 constexpr int kFrameHeaderLength = 3;
 constexpr int kFrameCrcLength = 2;
 constexpr uchar kSync0 = 0x55;
@@ -522,8 +522,8 @@ bool validateCommonFields(const QString& fileName,
 
     quint64 length = 0;
     if (!defaultAsUnsigned(fields.at(2), &length) ||
-        (length != kShortPayloadLength && length != kLongPayloadLength)) {
-        return fail(error, QStringLiteral("%1: len must be 48 or 123").arg(fileName));
+        length < kMinimumPayloadLength || length > kMaximumPayloadLength) {
+        return fail(error, QStringLiteral("%1: len must be in 1..255").arg(fileName));
     }
     quint64 type = 0;
     quint64 sub = 0;
@@ -637,9 +637,9 @@ bool isKnownFieldType(FieldType type)
 
 bool validateDefinitionForCodec(const MessageDefinition& definition, QString* error)
 {
-    if (definition.payloadLength != kShortPayloadLength &&
-        definition.payloadLength != kLongPayloadLength) {
-        return fail(error, QStringLiteral("product payload length must be 48 or 123"));
+    if (definition.payloadLength < kMinimumPayloadLength ||
+        definition.payloadLength > kMaximumPayloadLength) {
+        return fail(error, QStringLiteral("product payload length must be in 1..255"));
     }
     if (definition.fields.isEmpty()) {
         return fail(error, QStringLiteral("message definition has no fields"));

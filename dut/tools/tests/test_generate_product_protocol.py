@@ -150,12 +150,12 @@ def test_check_rejects_invalid_schema(tmp_path: Path) -> None:
 
 def test_check_rejects_unsupported_data_length(tmp_path: Path) -> None:
     rows = valid_rows()
-    rows[2]["default"] = "49"
+    rows[2]["default"] = "256"
 
     result = run_check(tmp_path, rows)
 
     assert result.returncode == 1
-    assert "len 只能是 48 或 123" in result.stderr
+    assert "len 必须在 1..255" in result.stderr
 
 
 def test_check_rejects_index_length_mismatch(tmp_path: Path) -> None:
@@ -377,8 +377,8 @@ def test_strict_check_reports_complete_catalog_summary(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "37 份 CSV" in result.stdout
-    assert "len=48/123" in result.stdout
-    assert "帧长=53/128" in result.stdout
+    assert "len=1..255" in result.stdout
+    assert "帧长=len+5" in result.stdout
 
 
 def test_repository_catalog_matches_planned_protocol_revisions() -> None:
@@ -412,7 +412,7 @@ def test_repository_catalog_matches_planned_protocol_revisions() -> None:
         "elec_health_status_response.csv": ("B33-51", "19"),
         "helm_board_test_request.csv": ("B14-51", "38"),
         "helm_board_test_response.csv": ("B45-51", "7"),
-        "helm_start_request.csv": ("B37-51", "15"),
+        "helm_start_request.csv": ("B41-51", "11"),
         "helm_start_response.csv": ("B13-51", "39"),
         "imu_stream_start_request.csv": ("B9-51", "43"),
         "imu_stream_start_response.csv": ("B12-51", "40"),
@@ -428,7 +428,13 @@ def test_repository_catalog_matches_planned_protocol_revisions() -> None:
         assert reserved["default"] in {"", "0"}
 
     feedback = read_asset_fields("helm_feedback_response.csv")
-    assert feedback["len"]["default"] == "123"
+    assert feedback["len"]["default"] == "232"
+    assert feedback["sample_count"]["index"] == "B12"
+    assert feedback["first_timestamp_us_low"]["index"] == "B13-16"
+    assert feedback["first_timestamp_us_high"]["index"] == "B17-20"
+    assert feedback["sample[0].serial_b"]["index"] == "B23-24"
+    assert feedback["sample[4].serial_a"]["index"] == "B218-219"
+    assert feedback["sample[4].ins[3]"]["index"] == "B232-235"
 
     imu_feedback = read_asset_fields("imu_stream_feedback_response.csv")
     assert imu_feedback["len"]["default"] == "123"
@@ -467,6 +473,8 @@ def test_repository_catalog_matches_planned_protocol_revisions() -> None:
     helm_request = read_asset_fields("helm_start_request.csv")
     helm_response = read_asset_fields("helm_start_response.csv")
     assert "helm_version" not in helm_request
+    assert helm_request["sweep_duration_s"]["index"] == "B37-40"
+    assert helm_request["sweep_duration_s"]["type"] == "F32"
     assert helm_response["helm_version"]["type"] == "CONST"
     assert helm_response["helm_version"]["default"] == "0x01"
     for field_name in ("waveform", "enable"):

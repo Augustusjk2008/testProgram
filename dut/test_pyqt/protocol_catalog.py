@@ -216,9 +216,9 @@ class ProtocolCatalog:
             )
 
         payload_length = self._required_int_default(path, by_name["len"])
-        if payload_length not in (48, 123):
+        if not 1 <= payload_length <= 255:
             raise ProtocolCatalogError(
-                "{} 的 len 只能是 48 或 123，实际为 {}".format(path.name, payload_length)
+                "{} 的 len 必须在 1..255，实际为 {}".format(path.name, payload_length)
             )
         type_group = self._required_int_default(path, by_name["type_group"])
         sub_type = self._required_int_default(path, by_name["sub_type"])

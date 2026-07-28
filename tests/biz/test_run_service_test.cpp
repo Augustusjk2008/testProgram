@@ -664,6 +664,40 @@ TEST(TestRunServiceTest, SingleRunOptionsPreserveOneCycleAndForwardSampleMetadat
     EXPECT_TRUE(service->shutdown().ok());
 }
 
+TEST(TestRunServiceTest, RunParametersAreForwardedOpaqueToAlgorithmContext)
+{
+    test::ensureQtApplication();
+    QTemporaryDir temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.isValid());
+
+    TestConfig config = test::makeCompleteConfig();
+    config.steps = {config.steps.at(0)};
+    TestConfigManager manager;
+    const ConfigPath path = saveConfiguration(manager,
+                                               temporaryDirectory,
+                                               config,
+                                               QStringLiteral("run-parameters.testcfg"));
+    test::FakeAlgorithmExecutor executor;
+    ServiceHandle service = makeService(executor);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+    ASSERT_TRUE(service->loadConfiguration(path).ok());
+
+    RunOptions options;
+    options.parameters = {
+        {QStringLiteral("waveform"), 4},
+        {QStringLiteral("ampl"), 250.0},
+    };
+    const Result<TaskId> started = service->startTestWithOptions(options);
+    ASSERT_TRUE(started.ok()) << started.status.error.message.toStdString();
+    ASSERT_TRUE(waitForState(service.get(), TestState::Finished));
+
+    const test::FakeAlgorithmExecutor::PrepareSnapshot prepared =
+        executor.prepareSnapshot();
+    EXPECT_EQ(prepared.context.runParameters, options.parameters);
+    EXPECT_TRUE(service->shutdown().ok());
+}
+
 TEST(TestRunServiceTest, PcPeriodicRunsFiniteCyclesAndTagsResultsAndSamples)
 {
     test::ensureQtApplication();

@@ -1600,6 +1600,105 @@ TEST(MbdDfExchangeExecutorTest, AllAddedConfigsPrepareAgainstTheCurrentCatalog)
     }
 }
 
+TEST(MbdDfExchangeExecutorTest, RuntimeParametersOverrideDhConfiguredRequestValues)
+{
+    const QString assets = catalogDirectory();
+    if (!QFileInfo(assets).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present: "
+                     << assets.toStdString();
+    }
+    qputenv("MB_DDF_PROTOCOL_CSV_DIR", assets.toUtf8());
+
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+    const MessageDefinition* responseDefinition =
+        catalog.findByName(QStringLiteral("dh_pulse_config_response"));
+    ASSERT_NE(responseDefinition, nullptr);
+
+    QVariantMap capturedValues;
+    auto transport = std::make_unique<ScriptedByteTransport>(
+        [&](const QByteArray& requestFrame, int) {
+            QString transportError;
+            QByteArray requestPayload;
+            if (!decodeFrame(requestFrame, &requestPayload, &transportError)) {
+                return TransportResult{false, TransportResult::Error::Io, {},
+                                       transportError};
+            }
+            const MessageDefinition* requestDefinition =
+                catalog.findByName(QStringLiteral("dh_pulse_config_request"));
+            if (requestDefinition == nullptr ||
+                !decodePayload(*requestDefinition,
+                               requestPayload,
+                               &capturedValues,
+                               &transportError)) {
+                return TransportResult{false, TransportResult::Error::Io, {},
+                                       transportError};
+            }
+
+            QVariantMap responseValues{{QStringLiteral("status"), 0},
+                                       {QStringLiteral("err_code"), 0}};
+            for (int channel = 0; channel < 23; ++channel) {
+                responseValues.insert(
+                    QStringLiteral("pulse_width_readback[%1]").arg(channel),
+                    capturedValues.value(
+                        QStringLiteral("pulse_width[%1]").arg(channel)));
+            }
+            QByteArray responsePayload;
+            if (!encodePayload(*responseDefinition,
+                               responseValues,
+                               static_cast<quint16>(capturedValues.value(
+                                   QStringLiteral("seq")).toUInt()),
+                               &responsePayload,
+                               &transportError)) {
+                return TransportResult{false, TransportResult::Error::Io, {},
+                                       transportError};
+            }
+            QByteArray responseFrame;
+            if (!encodeFrame(responsePayload, &responseFrame, &transportError)) {
+                return TransportResult{false, TransportResult::Error::Io, {},
+                                       transportError};
+            }
+            return TransportResult{true, TransportResult::Error::None,
+                                   responseFrame, {}};
+        });
+    MbdDfExchangeAlgorithmExecutor executor(
+        std::move(transport),
+        QStringLiteral("mbddf.dh_pulse_config"),
+        QStringLiteral("dh_pulse_config_request"),
+        QStringLiteral("dh_pulse_config_response"),
+        QStringLiteral("DH_PULSE_CONFIG"));
+    RunServiceHandle service = makeRunService(&executor);
+    ASSERT_NE(service, nullptr);
+    ASSERT_TRUE(service->initialize().ok());
+    ResultCollector results;
+    StateCollector states;
+    connectCollectors(service.get(), &results, &states);
+
+    const QString configPath = QDir(QFileInfo(
+        QStringLiteral(HWTEST_MBDDF_TIMER_JITTER_CONFIG)).absolutePath())
+                                   .filePath(QStringLiteral(
+                                       "mbddf_dh_pulse_config.testcfg.json"));
+    ASSERT_TRUE(service->loadConfiguration(configPath).ok());
+    hwtest::biz::RunOptions options;
+    options.parameters.insert(QStringLiteral("pulse_width[0]"), 123);
+    options.parameters.insert(QStringLiteral("pulse_width[22]"), 456);
+    ASSERT_TRUE(service->startTestWithOptions(options).ok());
+    ASSERT_TRUE(results.waitForResult(3000));
+    ASSERT_TRUE(states.waitForTerminal(3000));
+
+    EXPECT_EQ(capturedValues.value(QStringLiteral("pulse_width[0]")).toInt(),
+              123);
+    EXPECT_EQ(capturedValues.value(QStringLiteral("pulse_width[1]")).toInt(),
+              63);
+    EXPECT_EQ(capturedValues.value(QStringLiteral("pulse_width[22]")).toInt(),
+              456);
+    const hwtest::biz::TestResult result = results.result();
+    EXPECT_EQ(result.verdict, hwtest::biz::TestVerdict::Pass);
+    EXPECT_EQ(result.errorCode, hwtest::biz::ErrorCode::Ok);
+    EXPECT_TRUE(service->shutdown().ok());
+}
+
 TEST(SystemStatusUdpIntegrationTest, UdpPeerCompletesSystemStatusThroughHalAndBIZ)
 {
     const QString assets = catalogDirectory();

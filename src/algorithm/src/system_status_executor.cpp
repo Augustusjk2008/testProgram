@@ -1,5 +1,7 @@
 #include <algorithm/system_status_executor.h>
 
+#include <algorithm/run_parameter_schema.h>
+
 #include <logging/log_types.h>
 
 #include <QCryptographicHash>
@@ -198,6 +200,26 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
             QStringLiteral("%1 does not define a device-managed streaming start/stop flow")
                 .arg(m_commandName),
             QStringLiteral("mbddf.prepare"));
+    }
+
+    const RunParameterSchema* runParameterSchema =
+        findRunParameterSchema(m_algorithmId);
+    if (runParameterSchema != nullptr || !context.runParameters.isEmpty()) {
+        QVariantMap configuredDefaults;
+        if (runParameterSchema != nullptr) {
+            for (const TestStep& configuredStep : plan.steps) {
+                if (configuredStep.algorithmId == m_algorithmId) {
+                    configuredDefaults = nestedMap(
+                        nestedMap(configuredStep.parameters,
+                                  QStringLiteral("protocol")),
+                        QStringLiteral("requestValues"));
+                    break;
+                }
+            }
+        }
+        const auto normalized = normalizeRunParameters(
+            m_algorithmId, configuredDefaults, context.runParameters);
+        if (!normalized.ok()) return normalized.status;
     }
 
     const QString assetRoot = effectiveAssetRoot(executionConfig);
@@ -405,6 +427,11 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     for (auto iterator = configuredValues.cbegin(); iterator != configuredValues.cend(); ++iterator) {
         requestValues.insert(iterator.key(), iterator.value());
     }
+    for (auto iterator = m_context.runParameters.cbegin();
+         iterator != m_context.runParameters.cend();
+         ++iterator) {
+        requestValues.insert(iterator.key(), iterator.value());
+    }
 
     const quint16 sequence = m_nextSequence;
     QString error;
@@ -604,7 +631,7 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     }
 
     QString criterionError;
-    if (!evaluateCriteria(step, values, &criterionError)) {
+    if (!evaluateCriteria(step, values, requestValues, &criterionError)) {
         result.verdict = TestVerdict::Fail;
         result.errorCode = ErrorCode::SampleFail;
         result.message = criterionError;
@@ -726,9 +753,41 @@ const ProtocolCatalog& SystemStatusAlgorithmExecutor::catalog() const noexcept
 
 bool SystemStatusAlgorithmExecutor::evaluateCriteria(const TestStep& step,
                                                      const QVariantMap& values,
+                                                     const QVariantMap& effectiveRequestValues,
                                                      QString* failureMessage) const
 {
-    for (const hwtest::biz::Criterion& criterion : step.criteria) {
+    const bool isDhPulseConfig =
+        m_algorithmId == QStringLiteral("mbddf.dh_pulse_config");
+    const bool dhConfigurationEnabled =
+        effectiveRequestValues.value(QStringLiteral("config_enable")).toInt() != 0;
+    const QString readbackPrefix = QStringLiteral("pulse_width_readback[");
+
+    for (const hwtest::biz::Criterion& configuredCriterion : step.criteria) {
+        hwtest::biz::Criterion criterion = configuredCriterion;
+        if (isDhPulseConfig && criterion.metric.startsWith(readbackPrefix) &&
+            criterion.metric.endsWith(QLatin1Char(']'))) {
+            // config_enable=0 is a read-only query: pulse widths are not applied,
+            // so only status/error criteria are meaningful for that transaction.
+            if (!dhConfigurationEnabled) {
+                continue;
+            }
+
+            QString requestMetric = criterion.metric;
+            requestMetric.replace(0,
+                                  QStringLiteral("pulse_width_readback").size(),
+                                  QStringLiteral("pulse_width"));
+            const auto requestIterator = effectiveRequestValues.constFind(requestMetric);
+            if (requestIterator == effectiveRequestValues.cend()) {
+                if (failureMessage != nullptr) {
+                    *failureMessage =
+                        QStringLiteral("Effective request value '%1' is not present")
+                            .arg(requestMetric);
+                }
+                return false;
+            }
+            criterion.ref = requestIterator.value();
+        }
+
         const auto iterator = values.constFind(criterion.metric);
         if (iterator == values.cend()) {
             if (failureMessage != nullptr) {

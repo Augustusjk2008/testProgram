@@ -27,12 +27,19 @@ describe('HwtestClient protocol boundary', () => {
       intervalMs: 250,
       maxCycles: 0,
       saveData: true,
+      algorithmParameters: { waveform: 4, ampl: 250 },
     }))).toEqual({
       v: 1,
       type: 'request',
       id: 'run-1',
       action: 'start',
-      params: { mode: 'pc_periodic', intervalMs: 250, maxCycles: 0, saveData: true },
+      params: {
+        mode: 'pc_periodic',
+        intervalMs: 250,
+        maxCycles: 0,
+        saveData: true,
+        algorithmParameters: { waveform: 4, ampl: 250 },
+      },
     })
   })
 
@@ -101,6 +108,7 @@ describe('HwtestClient protocol boundary', () => {
         message: '',
         attempts: 0,
         rawData: {},
+        effectiveRunParameters: { waveform: 4, ampl: 250 },
         runMode: 'single',
         intervalMs: 1000,
         maxCycles: 1,
@@ -123,6 +131,37 @@ describe('HwtestClient protocol boundary', () => {
           measurements: [
             { id: 'c_volt', label: 'C 路电压', unit: 'V', primary: true },
           ],
+          runParameterSchemaVersion: '1',
+          runParameters: [
+            {
+              id: 'waveform',
+              label: '波形',
+              description: '所有启用通道共用',
+              kind: 'choice',
+              unit: '',
+              required: true,
+              minimumExclusive: false,
+              maximumExclusive: false,
+              choices: [
+                { value: 0, label: '正弦波' },
+                { value: 4, label: '连续对数扫频' },
+              ],
+            },
+            {
+              id: 'max_freq',
+              label: '终止频率',
+              description: '',
+              kind: 'number',
+              unit: 'Hz',
+              required: true,
+              minimum: 0,
+              minimumExclusive: true,
+              maximumExclusive: false,
+              choices: [],
+              visibleWhen: { parameter: 'waveform', equals: 4 },
+            },
+          ],
+          runParameterDefaults: { waveform: 0, max_freq: 80 },
         },
       },
     }))
@@ -131,6 +170,12 @@ describe('HwtestClient protocol boundary', () => {
     if (snapshot.type === 'snapshot') {
       expect(snapshot.snapshot.descriptor.title).toBe('电气健康')
       expect(snapshot.snapshot.descriptor.measurements[0].id).toBe('c_volt')
+      expect(snapshot.snapshot.descriptor.runParameters[1].visibleWhen).toEqual({
+        parameter: 'waveform',
+        equals: 4,
+      })
+      expect(snapshot.snapshot.descriptor.runParameterDefaults.max_freq).toBe(80)
+      expect(snapshot.snapshot.effectiveRunParameters.ampl).toBe(250)
       expect(snapshot.snapshot.digitalStimulus).toEqual({
         available: false,
         configured: false,
@@ -294,6 +339,32 @@ describe('HwtestClient protocol boundary', () => {
       type: 'snapshot',
       seq: 4,
       snapshot: { descriptor: { title: 'missing required fields' } },
+    }))).toThrow(/descriptor/i)
+  })
+
+  it('rejects malformed run parameter schemas', () => {
+    expect(() => parseServerMessage(JSON.stringify({
+      v: 1,
+      type: 'snapshot',
+      seq: 8,
+      snapshot: {
+        descriptor: {
+          configId: 'bad',
+          productModel: '',
+          productName: '',
+          configVersion: '1',
+          stepId: 'bad',
+          testItemId: 'bad',
+          algorithmId: 'bad',
+          title: 'bad',
+          description: '',
+          supportedRunModes: ['single'],
+          measurements: [],
+          runParameterSchemaVersion: '1',
+          runParameters: [{ id: 'x', kind: 'unsupported' }],
+          runParameterDefaults: { x: 1 },
+        },
+      },
     }))).toThrow(/descriptor/i)
   })
 

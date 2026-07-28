@@ -1,6 +1,6 @@
 # testProgram
 
-当前版本提供 MB_DDF_v2 的 `SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG` 和带 STOP 清理的 `TIMER_JITTER` 配置驱动测试，以及一次性 runner、分步 TUI、Qt Widgets GUI、本机 WebSocket 后端和浏览器遥测控制台。四个 C++ 入口共享同一个应用控制器和生命周期；BIZ 支持单次与 PC 主动周期测试，并保留设备主动持续回告的独立语义。板端当前通讯基线是串口，PC 端仍保留 UDP 控制资源，用于本机模拟和后续网口扩展。新增四项尚无真实板端验收证据，SPI Flash 仅可在已隔离且允许写入的目标板执行。
+当前版本提供 MB_DDF_v2 的九项配置驱动测试：`SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`、带 STOP 清理的 `TIMER_JITTER`、`DI_READ`、`IMU_STREAM` 和 `HELM_STREAM`。一次性 runner、分步 TUI、Qt Widgets GUI、本机 WebSocket 后端和浏览器遥测控制台共享同一个应用控制器；当前宿主开发与验证以 Web 链路为主基线。BIZ 支持单次、PC 主动周期和设备主动持续回告三种通用语义。舵机连续实测由 DUT 以 1 ms 周期生成指令，经 DDS 与用户独立启停的 `MB_DDF_v2_HelmControl` 交互；它与 `HELM_BOARD_TEST` 并列存在且没有生命周期、互斥或忙状态绑定。板端当前通讯基线是串口，PC 端仍保留 UDP 控制资源，用于本机模拟和后续网口扩展。IMU、DDS 舵机和其他新增硬件路径尚无真实板端验收证据。
 
 从仓库根目录执行一条命令即可配置、构建和启动：
 
@@ -30,7 +30,7 @@ npm ci
 npm run dev
 ```
 
-随后打开 `http://127.0.0.1:5173`。三张页面顶部都保留同一个运行控制条；PC 周期模式由后端/BIZ 重复执行“发指令 → 采反馈”，浏览器不会用定时器重复发送 `start`。字段选择、同图/分图/自定义图组和时间窗保存在浏览器本机。消息、动作和安全关闭规则见 [WebSocket 前端协议契约](docs/design/contracts/websocket-frontend-protocol.md)。
+随后打开 `http://127.0.0.1:5173`。三张页面顶部都保留同一个运行控制条；PC 周期模式由后端/BIZ 重复执行“发指令 → 采反馈”，浏览器不会用定时器重复发送 `start`。Web 参数编辑器消费算法层 Schema，当前可修改舵机连续实测参数以及 DH 的配置使能和 23 路脉宽；修改值按配置与 Schema 版本保存在当前浏览器，并只随本次 `start` 发送，不改写测试配置文件。字段选择、同图/分图/自定义图组和时间窗同样保存在浏览器本机。消息、动作和关闭规则见 [WebSocket 前端协议契约](docs/design/contracts/websocket-frontend-protocol.md)。
 
 `-Port` 只覆盖本次进程，不修改配置文件。也可以在独立的 HAL 部署配置中设置 `hardware.resources.<ResourceId>.properties.portName`，再用 `-HalConfig` 指定：
 

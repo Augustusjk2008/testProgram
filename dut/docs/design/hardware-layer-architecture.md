@@ -559,7 +559,8 @@ PC 串口工具与板端 COM3 的外部链路协议固定为：帧头 `55 AA`，
 
 #### COM3 产品协议服务边界
 
-HW_TEST 画像复用同一个 COM3 物理口，但只接收 FPGA 已校验的 48 或 123 字节数据段。
+HW_TEST 画像复用同一个 COM3 物理口，接收 FPGA 已校验的 1..255 字节数据段；当前 CSV
+实际使用 48、123 和舵反馈的 232 字节 payload。
 字段布局由 `docs/design/product_protocol_csv/*.csv` 唯一定义，构建时由
 `tools/generate_product_protocol.py` 校验并在构建目录生成描述头；C++ 按描述偏移做
 小端读写，不依赖结构体内存布局，也不重复计算 CRC。
@@ -598,7 +599,7 @@ PWM 全部使能，最后重新打开统一更新。响应 B12 低四位为 `pwm
 采集/滤波状态及 AD7606 通道 0..3 的有符号原始采样；AD 字段继续按 CSV 的
 `10/65536 V/code` 在 PC 端换算。
 
-`07/02` 不启动反馈线程。旧舵控任务活动时返回 `TASK_BUSY (0x0204)`；PWM peak 为 0，
+`07/02` 不启动反馈线程，也不读取或限制连续舵机 DDS bridge 的状态。PWM peak 为 0，
 或者 duty、方向、四路使能、更新、AD 采集/滤波任一回读与本次写入不一致时返回
 `REG_READ_WRITE_FAILED (0x0201)`。底层寄存器访问错误按统一状态映射返回。该命令执行后
 保持 PWM 和 AD7606 状态，不自动清零或恢复，只能在已隔离且允许写入硬件的目标板运行。
@@ -645,20 +646,32 @@ SYSTEM_STATUS 只使用可追溯事实源：CPU/内存/上电时间来自 `/proc
 兼容回退；`lspci -vvv` 只用于人工核对。任一必需来源缺失时整条 SYSTEM_STATUS 返回
 `TASK_EXEC_FAILED`，不以零值伪装成功。
 
-保留的舵控功能测试使用 `HELM_START (07/10)`、异步 `HELM_FEEDBACK (07/01)` 和
-`HELM_STOP (07/11)`；该实现不属于 `07/02` 板级测试。`start` 字段是弧度相位。普通
-波形使用
-`phase = 2*pi*freq*t + start`；25 秒扫频在 `f0 != f1` 时使用参考积分
-`phase = 2*pi*f0*f1*T/(f1-f0)*ln(f1*T/(f1*T-t*(f1-f0))) + start`（`T=25 s`），
-`f0 == f1` 时退化为定频，超过 25 秒输出零。生成角度严格校验到 `[-30,30]` 后以
-`30` 度为满量程归一化给 `PwmDevice`，超范围返回参数错误，不静默裁剪。
+#### DDS 舵机连续实测边界
 
-每个 HELM_FEEDBACK 帧在同一工作循环中采集 10 组样本，组间隔 1 ms；相邻帧之间再等待
-1 ms，直到 HELM_STOP。STOP 将四路 PWM 输出清零并恢复更新，同时关闭 AD7606 采集和
-滤波；只有这些操作全部成功后才清除活动状态并停止反馈，因此清理失败会返回明确错误，
-后续仍可再次请求 STOP。反馈沿用参考换算：AD7606 原始 16 位
-先按 `uint16_t` 重解释，再按 `raw * (-10/65536) + 12.048` 换算，超过 10 时减 10，
-最后舍入并饱和到协议 S16。
+舵机连续实测使用 `HELM_START (07/10)`、异步 `HELM_FEEDBACK (07/01)` 和
+`HELM_STOP (07/11)`，与 `07/02` 板级测试并列。START 参数为波形 U32、`freq`、`ampl`、
+`offset`、`start`、`max_freq`、`sweep_duration_s` 六个 F32 和四路 `enable` 位图；`start`
+是弧度相位。参数只要求波形/位图合法、频率与时长为有限正数，其余 F32 有限；DUT 不设置
+角度幅值或偏置边界。
+
+`HelmDdsTestBridge` 在 START 时 create-or-get `local:://helm_command` writer 和
+`local:://helm_feedback` reader，以单调时钟每 1 ms 生成一条四路舵角指令。普通波形使用
+`phase = 2*pi*freq*t + start`；连续对数扫频在 `f0 != f1` 时使用
+`phase = 2*pi*f0*f1*T/(f1-f0)*ln(f1*T/(f1*T-t*(f1-f0))) + start`，其中 `T` 来自
+`sweep_duration_s`，`f0 == f1` 时退化为定频。超过 T 后四路指令归零，但 DDS 反馈订阅和
+COM3 主动回告继续运行到 STOP。启用通道共用该波形，未启用通道固定为零。
+
+DDS 指令严格使用 `tmp/helm_control` 对应的 27 字节 `Helm_ins_frame`，独立
+`MB_DDF_v2_HelmControl` 回送 41 字节 `Helm_fdb_frame`。bridge 完整保留 `serial_a`、
+`serial_b`、版本、四路 `ins/fdb`、六项 2-bit 自检和 timeout，并以首样本 DDS 微秒时间戳
+加 U16 相对时间打包；每个 232 字节 `07/01` payload 包含 1..5 个完整样本。队列有界，
+发送失败通过 `HELM_DDS_FAILED` 上报；同一流的 START ACK、反馈和 STOP ACK 严格保序，
+已进入发送的反馈先于 STOP ACK，ACK 后不再补发旧反馈。STOP 只停止 bridge、关闭本次 DDS
+端点并清空队列。
+
+`MB_DDF_v2_HelmControl` 由用户独立启动或停止，内部保留自身舵角限幅。HW_TEST 不创建、
+终止、探测、占有或等待该进程；两个程序启动顺序不限。`07/02` 不查询 bridge，bridge 也
+不访问 `07/02` 的 PWM/AD7606 路径，二者没有生命周期、互斥、忙状态或其他形式的绑定。
 
 #### COM4 惯测设备流边界
 
@@ -888,14 +901,14 @@ target_link_libraries(my_application PRIVATE MB_DDF_HW_DDS_Adapter)
 - CPU SPI Flash 完整工作流的明确地址读取、4 KiB 正常恢复、测试写失败恢复，以及
   恢复首轮失败后重试但整体仍判失败。
 - DDS Adapter 的 timeout/payload 映射。
-- 产品协议 48/123 字节布局、大小端、默认值/RESERVED、工程量 LSB 有界编码、错误响应
+- 产品协议 1..255 字节 payload（当前 48/123/232）布局、大小端、默认值/RESERVED、工程量 LSB 有界编码、错误响应
   和独立发送序号。
-- 产品测试服务的普通响应、DH 多帧、`07/02` 舵控板级写入与回读、保留的舵反馈、发送锁、
+- 产品测试服务的普通响应、DH 多帧、`07/02` 舵控板级写入与回读、DDS 舵机反馈、发送锁、
   Busy 有界同帧流控和 link 4 拒绝。
 - 惯测 `09/10`/`09/01`/`09/11` 路由、COM4 921600/8E1 配置、59 字节全字段映射、全部
   12 个 F32 非有限拒绝、异常长度丢弃、空闲不消耗发送序号和终止错误反馈。
 - 系统状态的 CPU 计数解析和 XDMA sysfs BDF 事实链，以及 UDP 固定自环、SPI 安全
-  JEDEC LOOP、舵控弧度相位与 25 秒扫频公式。
+  JEDEC LOOP、舵控弧度相位、可配置扫频公式、27/41 字节帧和最多五样本打包。
 
 ### 9.2 真实硬件 smoke
 

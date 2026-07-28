@@ -29,6 +29,12 @@ public:
     }
     virtual bool helm_feedback_active() const = 0;
     virtual ProductErrorCode build_helm_feedback(ProductMessage& response) = 0;
+    /// nullopt 表示当前没有可上送的舵控 DDS 反馈样本。
+    virtual std::optional<ProductErrorCode> poll_helm_feedback(
+        ProductMessage& response) {
+        if (!helm_feedback_active()) return std::nullopt;
+        return build_helm_feedback(response);
+    }
     virtual bool imu_stream_active() const { return false; }
     /// nullopt 表示当前没有可上送帧；有值时 response 必须发送，错误码写入状态字段。
     virtual std::optional<ProductErrorCode> poll_imu_stream_feedback(
@@ -67,8 +73,10 @@ private:
     ProductProtocol protocol_;
     Sleeper sleeper_;
     std::mutex send_mutex_;
-    // 接收线程和舵反馈线程不得并发访问同一组硬件 Device/Transport。
+    // 硬件 Provider 调用串行化；舵 DDS 反馈不使用此锁，避免与板级测试绑定。
     std::mutex provider_mutex_;
+    // 只保证同一 HELM 流的 START/反馈/STOP 线序，不管理舵控进程，也不锁板级请求。
+    std::mutex helm_stream_order_mutex_;
 };
 
 } // namespace MB_DDF::HWTest

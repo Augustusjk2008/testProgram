@@ -13,5 +13,6 @@ B21-24,4,F32,偏置deg,offset,,0,1
 B25-28,4,F32,起始相位,start,,0,1
 B29-32,4,F32,扫频上限Hz,max_freq,,0,1
 B33-36,4,U32,通道使能位,enable,,1,1
-B37-51,15,RESERVED,填充,pad,,,1
+B37-40,4,F32,扫频总时长s,sweep_duration_s,,25,1
+B41-51,11,RESERVED,填充,pad,,,1
 B52-53,2,U16,CRC16校验,crc,,,1
