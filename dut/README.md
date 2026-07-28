@@ -1,7 +1,7 @@
 # MB_DDF_v2
 
 > 项目版本：`1.0.0`
-> 文档最后更新：`2026-07-17`
+> 文档最后更新：`2026-07-28`
 
 MB_DDF_v2 是面向 AArch64 Linux 的 C++20 工程，包含共享内存 DDS、XDMA 硬件抽象层、
 产品硬件测试服务、只读硬件 Demo，以及配套的 Windows PyQt5 串口工具。Windows 主机
@@ -48,6 +48,50 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 help
 | 产品硬件测试 | `.\build.ps1 hw_test_debug` | `.\debug.ps1 -Run -HardwareTest` | 按产品协议执行硬件测试命令；同时产出独立 `MB_DDF_v2_HelmControl` |
 
 `build.bat` 和 `debug.bat` 是兼容包装；完整动作和参数见构建指南。
+
+### 舵机控制程序
+
+`MB_DDF_v2_HelmControl` 随 `HW_TEST` 画像一起构建。仅编译 Release 版本时，在 `dut/`
+目录执行：
+
+```powershell
+.\build.bat hw_test_release
+# 或
+.\build.ps1 hw_test_release
+```
+
+构建产物为：
+
+```text
+build\aarch64\hw_test\Release\MB_DDF_v2_HelmControl
+```
+
+当前 `debug.bat`/`debug.ps1` 没有独立的舵控快捷入口；`debug.bat hw_test_run` 会构建上述
+二进制，但只部署并运行产品测试服务 `MB_DDF_v2`。使用默认目标板
+`root@192.168.1.29` 和默认远端目录 `/home/sast8/tmp` 时，可在两个终端中运行：
+
+终端 1 先构建、部署并运行产品测试服务：
+
+```powershell
+.\debug.bat hw_test_run
+```
+
+终端 2 部署并以前台方式运行舵机控制程序：
+
+```powershell
+scp .\build\aarch64\hw_test\Release\MB_DDF_v2_HelmControl root@192.168.1.29:/home/sast8/tmp/
+ssh -t root@192.168.1.29 "cd /home/sast8/tmp && chmod +x MB_DDF_v2_HelmControl && ./MB_DDF_v2_HelmControl"
+```
+
+远端已有同版本二进制时可跳过 `scp`。两个程序可以同时运行，舵机连续实测正是由产品
+测试服务中的 DDS bridge 与独立舵控程序协作完成；停止时也需分别停止，`HELM_STOP`
+只停止本次 DDS bridge，不结束 `MB_DDF_v2_HelmControl`。
+
+程序本身允许任意启动顺序，但当前 `debug.ps1` 部署前会使用
+`pkill -f "MB_DDF_v2"` 清理旧进程，可能同时匹配 `MB_DDF_v2_HelmControl`。因此使用上述
+快捷脚本时应先启动终端 1，再启动终端 2。自定义目标板地址或远端目录时，两条
+`scp`/`ssh` 命令必须使用与 `debug.ps1` 相同的 `-RemoteHost`、`-RemoteUser` 和
+`-RemoteDir` 值。
 
 ## 目标板测试
 

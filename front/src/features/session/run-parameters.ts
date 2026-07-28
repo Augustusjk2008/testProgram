@@ -69,7 +69,7 @@ export function validateRunParameterValues(
   for (const parameter of visibleRunParameters(descriptor, values)) {
     const value = values[parameter.id]
     if (value === undefined || value === null || value === '') {
-      if (parameter.required) return `${parameter.label}为必填项`
+      // if (parameter.required) return `${parameter.label}为必填项`
       continue
     }
     if (parameter.kind === 'boolean') {

@@ -92,18 +92,15 @@ export function RunParameterEditor({
       <summary>
         <span>测试参数</span>
         <b>{parameters.length} 项{effective ? ' · 本次已生效' : ''}</b>
-      </summary>
-      <div className="algorithm-parameters__toolbar">
-        <span>由算法定义；修改仅用于本次及当前浏览器，不改写配置文件。</span>
         <button
           className="button button--quiet button--compact"
           disabled={disabled}
           onClick={onReset}
           type="button"
         >
-          恢复配置值
+          设为默认
         </button>
-      </div>
+      </summary>
       <div className="algorithm-parameters__grid">
         {parameters.map((parameter) => (
           <label

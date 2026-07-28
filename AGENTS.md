@@ -24,10 +24,11 @@
 - 九份 `configs/mbddf_*.testcfg.json` 中，前七项声明 `single`，系统状态、电气健康、内存、定时器和 DI 还声明 `pc_periodic`；惯测与舵机连续实测只声明 `device_stream`。BIZ 提供 `single`、`pc_periodic` 和 `device_stream` 三种通用运行语义，配置能力以各 JSON 的 `reportFields.supportedRunModes` 为准；同一配置不得同时声明 `pc_periodic` 与 `device_stream`，字段缺失时只安全回退到 `single`，应用控制器拒绝启动未声明的模式。
 - 电气健康以设备 `status`/`err_code` 判定；SPI Flash 写入固定隔离测试区并保留写入结果；`TIMER_JITTER` 在结束阶段发送 STOP 清理。
 - `DiStimulusController` 通过 HAL 批量数字输出维护 16 路逻辑掩码、revision 和安全复位；PXI-6259 配置中的物理 safe state 与 DI descriptor 的 inactive level 保持一致。
-- 应用层位于 `src/app/`，共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support` 和 `hwtest_web_support`，产出 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web`。四个入口统一使用 `TestApplicationController` 和 MB_DDF 注册表；启动选项动态扫描 `configs/*.testcfg.json`，并校验配置结构、运行模式能力与已注册算法。`ContinuousDataRecorder` 可在显式启用的 `pc_periodic` 或 `device_stream` 任务中把完整应用样本增量保存为 UTF-8-SIG/TSV TXT，`single` 任务不保存。
-- `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置目录切换、运行控制、两种连续模式、算法层声明的运行期参数编辑、配置定义的全部测量列保存开关、动态测量字段和 16 路 DI 刺激/回读状态。运行期覆盖只作用于本次启动，浏览器按 `configId + schemaVersion` 保存编辑值；保存目录只由后端 `dataStorage.directory` 配置，曲线字段选择不改变保存列。
+- 应用层位于 `src/app/`，共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support` 和 `hwtest_web_support`，产出 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web`。四个入口统一使用 `TestApplicationController` 和 MB_DDF 注册表；启动选项动态扫描并校验 `configs/*.testcfg.json`。`ContinuousDataRecorder` 在显式启用的连续任务中按固定元数据和 descriptor 测量列增量保存 UTF-8-SIG/TSV TXT，`single` 不保存。
+- `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置选择、运行控制、两种连续模式、算法运行参数编辑、完整 descriptor 测量列保存、动态测量字段和 16 路 DI 刺激/回读。运行期覆盖只作用于本次启动，浏览器按 `configId + runParameterSchemaVersion` 保存编辑值；保存目录只由后端配置，曲线选择不改变保存列。
+- 舵机连续实测由 DUT 以 1 ms 周期经 DDS 连接用户独立启停的 `MB_DDF_v2_HelmControl`；它与 `HELM_BOARD_TEST 07/02` 不建立生命周期、互斥、忙状态或进程控制绑定。DUT/Web 不设置舵角业务范围，舵控程序保留内部限幅；当前保存原始样本，不计算性能或伯德图。
 - `tests/` 按 HAL、日志、BIZ、算法和应用组织 GoogleTest 目标；NI Fake Adapter 使用独立 CTest 入口；`front/` 的 Vitest 独立运行。测试清单与统计以测试规范为准。
-- `dut/docs/design/product_protocol_csv/` 保存并作为默认使用的 MB_DDF 协议 CSV 快照；显式传入 `MB_DDF_PROTOCOL_CSV_DIR` 时可改用另一受控资产目录。
+- `dut/docs/design/product_protocol_csv/` 保存当前 MB_DDF 协议 CSV 快照；`hwtest.ps1` 默认使用该目录，显式传入 `MB_DDF_PROTOCOL_CSV_DIR` 时可改用另一受控资产目录。
 
 ## 分层与 I/O 归属
 
@@ -92,19 +93,20 @@ npm run dev
 ```powershell
 cmake -S . -B build_vs -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
 cmake --build build_vs --config Debug --parallel
+$env:MB_DDF_PROTOCOL_CSV_DIR = (Resolve-Path ".\dut\docs\design\product_protocol_csv").Path
 ctest --test-dir build_vs -C Debug --output-on-failure
 cmake --build build_vs --config Release --parallel
 ctest --test-dir build_vs -C Release --output-on-failure
 ```
 
-- 涉及协议 CSV 的验证默认使用 `dut/docs/design/product_protocol_csv/`；需要核对其他受控来源时显式设置 `MB_DDF_PROTOCOL_CSV_DIR`。`GTEST_SKIP` 记为待验证证据。
+- 直接运行 CTest 时显式设置 `MB_DDF_PROTOCOL_CSV_DIR`，核对其他受控来源时替换该目录；`GTEST_SKIP` 记为待验证证据。
 - 当前 NI 证据等级为 Fake NI-DAQmx 自动化。PXI-6259 真机验收记录共地、电平、隔离、接线映射、NI SDK 版本、MAX 设备身份、采样/触发参数、长时运行和安全收尾结果。
 - 修改 BIZ 时运行 BIZ 契约与架构测试；修改算法层时运行 `tests/algorithm/`；产品模拟与集成测试沿 HAL 路径执行。
 - 说明性文档改动至少运行链接/术语检查和 `git diff --check`。
 - 宿主工程与 DUT 使用独立构建树和验证入口。进入 `dut/` 后按局部 `AGENTS.md` 与 `README.md` 使用 `build.ps1`、`debug.ps1`、`tests/test-dds-only.ps1`、`tests/test-all.ps1` 和 `tests/test-deploy.ps1`。
 - DUT C++20 二进制面向 AArch64 目标板；Windows PyQt5/QtSerialPort 用例按 DUT 局部规则作为主机侧测试入口。
 - DUT 板端结果记录 AArch64 工具链、sysroot、部署目标与运行结果，并作为独立的板端验证证据归档。DIDO、DH、舵控和 SPI 写入在隔离且明确授权的目标板环境执行。
-- 
+
 ## CodeGraph
 
 - 跨模块修改、架构分析、重构、调用链或影响面分析先用可用的 CodeGraph 工具；仅对未覆盖或将要修改的具体细节读源码。
