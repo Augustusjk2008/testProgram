@@ -56,10 +56,6 @@ private:
     };
     FlightState STATE = FlightState::Step1;
 
-    // 数字量和模拟量比例
-    // AD7606 量程为 ±10V 时：-544.6516
-    // AD7606 量程为 ±5V  时：-272.3258（当前硬件为 ±5V）
-    const double K_IN_OUT = -272.3258;
     // 占空比放大比例（1e8/22）
     const double Pwm_gain = 4545454.545454546;
     // 控制解算周期
@@ -138,7 +134,10 @@ private:
 
     // 反馈换算
     void _fn_getFdb() {
-        fdb[0] = fdb_data / K_IN_OUT;
+        // AD7606 原始反馈码 → 舵机实际角度的现行标定公式
+        fdb[0] =
+            (static_cast<double>(fdb_data) * 10.0 / 65535.0 - 2.048)
+            * 3.0 * 115.0 / 20.0;
     }
 
     // 自动生成可变参数
@@ -260,4 +259,3 @@ private:
         insf.shift();
     }
 };
-

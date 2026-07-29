@@ -674,6 +674,12 @@ DDS 指令严格使用 `tmp/helm_control` 对应的 27 字节 `Helm_ins_frame`�
 已进入发送的反馈先于 STOP ACK，ACK 后不再补发旧反馈。STOP 停止指令线程后先发布
 “四路零位 + `helm_unlock=0xFF`”尾帧，再关闭本次 DDS 端点并清空队列。
 
+独立舵控程序将 AD7606 的有符号 16 位原始反馈码按现有路径扩展为 `int32_t data`，再按
+`actual_angle = (static_cast<double>(data) * 10.0 / 65535.0 - 2.048) * 3.0 * 115.0 / 20.0`
+换算舵机实际角度；该角度同时参与闭环控制反馈并填入 41 字节 DDS 反馈帧。此公式只属于
+`MB_DDF_v2_HelmControl` 的连续舵控实际角度换算，不替代或改变独立 `HELM_BOARD_TEST 07/02`
+上传 AD7606 有符号原始码后由 PC 按 `10/65536 V/code` 执行的通用换算。
+
 `MB_DDF_v2_HelmControl` 由用户独立启动或停止，内部保留自身舵角限幅。程序打开
 PWM transport 后的首个控制写是 `disable_outputs()` 直接禁止四路 PWM，随后关闭 update gate
 并写入零 duty；未收到解锁请求时不允许输出。首次 `helm_unlock=0xFF` 使控制线程将全局基址
