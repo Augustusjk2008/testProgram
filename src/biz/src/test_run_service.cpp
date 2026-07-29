@@ -512,7 +512,7 @@ public:
 
 private:
     static constexpr int kShutdownTimeoutMs = 5000;
-    static constexpr int kMinPeriodicIntervalMs = 10;
+    static constexpr int kMinPeriodicIntervalMs = 0;
     static constexpr int kMaxPeriodicIntervalMs = 60 * 60 * 1000;
     static constexpr quint64 kMaxFiniteCycles = 1000000000ULL;
 
@@ -586,7 +586,7 @@ private:
                 options.intervalMs > kMaxPeriodicIntervalMs) {
                 return makeStatus(
                     ErrorCode::ParameterRangeError,
-                    QStringLiteral("PC periodic interval must be in the range 10..3600000 ms"));
+                    QStringLiteral("PC periodic interval must be in the range 0..3600000 ms"));
             }
             if (options.maxCycles > kMaxFiniteCycles) {
                 return makeStatus(
@@ -849,8 +849,15 @@ private:
                 (runOptions.maxCycles > 0 && cycleIndex >= runOptions.maxCycles)) {
                 break;
             }
-            if (!waitForRetryInterval(runOptions.intervalMs)) {
-                break;
+            if (runOptions.intervalMs > 0) {
+                if (!waitForRetryInterval(runOptions.intervalMs)) {
+                    break;
+                }
+            } else {
+                QThread::yieldCurrentThread();
+                if (!m_runControl.checkpoint()) {
+                    break;
+                }
             }
             ++cycleIndex;
         }

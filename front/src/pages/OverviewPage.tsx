@@ -18,7 +18,7 @@ import {
   verdictLabel,
 } from '../shared/format'
 import type { TestMeasurementDescriptor } from '../shared/protocol'
-import { useSession } from '../features/session/SessionProvider'
+import { useSession, useTelemetry } from '../features/session/SessionProvider'
 
 function MetricCard({
   field,
@@ -49,11 +49,11 @@ function MetricCard({
 export function OverviewPage() {
   const {
     connectionState,
-    latestSample,
     resetDigitalStimulus,
     setDigitalStimulus,
     snapshot,
   } = useSession()
+  const { latestSample } = useTelemetry()
   const values = latestSample?.values ?? {}
   const numericValues = Object.entries(values).filter((entry): entry is [string, number] => (
     typeof entry[1] === 'number'

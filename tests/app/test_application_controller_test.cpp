@@ -1247,7 +1247,7 @@ TEST(TestApplicationControllerTest, StoppedPcPeriodicSavesCompleteElectricalHeal
 
     TestRunOptions options;
     options.mode = QStringLiteral("pc_periodic");
-    options.intervalMs = 1000;
+    options.intervalMs = 0;
     options.maxCycles = 0;
     options.saveData = true;
     ASSERT_TRUE(controller.start(options).ok);
@@ -1301,7 +1301,7 @@ TEST(TestApplicationControllerTest, StoppedPcPeriodicSavesCompleteElectricalHeal
     EXPECT_TRUE(text.contains(QStringLiteral("# 电气健康连续采集数据\n")));
     EXPECT_TRUE(text.contains(QStringLiteral("# final_status=用户停止\n")));
     EXPECT_TRUE(text.contains(QStringLiteral("# sample_count=2\n")));
-    EXPECT_TRUE(text.contains(QStringLiteral("# repeat_delay_ms=1000\n")));
+    EXPECT_TRUE(text.contains(QStringLiteral("# repeat_delay_ms=0\n")));
     EXPECT_TRUE(text.contains(QStringLiteral(
         "report_index\tsample_time_us\tseq\tresponse_status\terr_code\t"
         "c_volt_V\tb_volt_V\texternal_vol_V\tcore_vol_V\tassist_vol_V\t"
@@ -1739,7 +1739,7 @@ TEST(TestApplicationControllerTest, PcPeriodicRunForwardsTimestampedSamplesFromE
 
     TestRunOptions invalidOptions;
     invalidOptions.mode = QStringLiteral("pc_periodic");
-    invalidOptions.intervalMs = 9;
+    invalidOptions.intervalMs = -1;
     invalidOptions.maxCycles = 2;
     const ActionResult rejected = controller.start(invalidOptions);
     EXPECT_FALSE(rejected.ok);
@@ -1748,7 +1748,7 @@ TEST(TestApplicationControllerTest, PcPeriodicRunForwardsTimestampedSamplesFromE
 
     TestRunOptions options;
     options.mode = QStringLiteral("pc_periodic");
-    options.intervalMs = 10;
+    options.intervalMs = 0;
     options.maxCycles = 2;
     const ActionResult started = controller.start(options);
     ASSERT_TRUE(started.ok) << started.message.toStdString();
@@ -1774,7 +1774,7 @@ TEST(TestApplicationControllerTest, PcPeriodicRunForwardsTimestampedSamplesFromE
     const ApplicationSnapshot finished = controller.snapshot();
     EXPECT_EQ(finished.phase, QStringLiteral("finished"));
     EXPECT_EQ(finished.runMode, QStringLiteral("pc_periodic"));
-    EXPECT_EQ(finished.intervalMs, 10);
+    EXPECT_EQ(finished.intervalMs, 0);
     EXPECT_EQ(finished.maxCycles, 2u);
     EXPECT_EQ(finished.cycleIndex, 2u);
     EXPECT_EQ(finished.sampleCount, 2u);
@@ -1948,6 +1948,71 @@ TEST(TestApplicationControllerTest, AsyncStopGuardsLifecycleAndCompletesOnAffini
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("stopped"));
     EXPECT_FALSE(controller.snapshot().hasResult);
     EXPECT_TRUE(controller.snapshot().errorCode.isEmpty());
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, AsyncStopStillProjectsSampleQueuedBeforeStopRequest)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
+
+    TestApplicationController controller;
+    QVector<ApplicationSample> samples;
+    QObject::connect(&controller,
+                     &TestApplicationController::sampleReceived,
+                     &controller,
+                     [&](const ApplicationSample& sample) {
+                         samples.push_back(sample);
+                     });
+    ASSERT_TRUE(controller.loadConfigurations(QStringLiteral(HWTEST_APP_TEST_CONFIG),
+                                                halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    ASSERT_TRUE(controller.start().ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(&peerError)) << peerError.toStdString();
+
+    // Keep the controller affinity thread from draining queued BIZ signals until
+    // the stop suppression marker has been installed.
+    QThread::msleep(200);
+
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    bool completed = false;
+    ActionResult completion;
+    QObject::connect(&controller,
+                     &TestApplicationController::stopCompleted,
+                     &controller,
+                     [&](const ActionResult& result) {
+                         completed = true;
+                         completion = result;
+                         loop.quit();
+                     });
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+
+    ASSERT_TRUE(controller.stopAsync(5000).ok);
+    timeout.start(5000);
+    loop.exec();
+
+    ASSERT_TRUE(completed);
+    ASSERT_TRUE(completion.ok) << completion.message.toStdString();
+    ASSERT_EQ(samples.size(), 1);
+    EXPECT_EQ(samples.first().taskId, controller.snapshot().taskId);
+    EXPECT_EQ(controller.snapshot().sampleCount, 1u);
     EXPECT_TRUE(controller.shutdown().ok);
 }
 

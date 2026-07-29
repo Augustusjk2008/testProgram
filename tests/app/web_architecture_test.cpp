@@ -22,12 +22,17 @@ TEST(WebArchitectureTest, UsesOnlyApplicationControllerAndQtWebSockets)
     const QString sources =
         readProjectFile(QStringLiteral("src/app/web/web_protocol.h")) +
         readProjectFile(QStringLiteral("src/app/web/web_protocol.cpp")) +
+        readProjectFile(QStringLiteral("src/app/web/web_telemetry_batcher.h")) +
+        readProjectFile(QStringLiteral("src/app/web/web_telemetry_batcher.cpp")) +
         readProjectFile(QStringLiteral("src/app/web/web_socket_frontend_server.h")) +
         readProjectFile(QStringLiteral("src/app/web/web_socket_frontend_server.cpp")) +
         readProjectFile(QStringLiteral("src/app/web/web_main.cpp"));
 
     EXPECT_TRUE(sources.contains(QStringLiteral("QWebSocketServer")));
     EXPECT_TRUE(sources.contains(QStringLiteral("TestApplicationController")));
+    EXPECT_TRUE(sources.contains(QStringLiteral("bytesToWrite")));
+    EXPECT_TRUE(sources.contains(QStringLiteral("bytesWritten")));
+    EXPECT_TRUE(sources.contains(QStringLiteral("telemetry_backpressure")));
     for (const QString& forbidden : {
              QStringLiteral("<hal/"),
              QStringLiteral("<biz/"),
@@ -53,6 +58,8 @@ TEST(WebArchitectureTest, SupportTargetDoesNotLinkHardwareLayers)
     EXPECT_TRUE(linkBlock.contains(QStringLiteral("hwtest_app_core")));
     EXPECT_TRUE(linkBlock.contains(QStringLiteral("${HWTEST_QT_CORE_TARGET}")));
     EXPECT_TRUE(linkBlock.contains(QStringLiteral("${HWTEST_QT_WEBSOCKETS_TARGET}")));
+    EXPECT_TRUE(cmake.contains(QStringLiteral("web/web_telemetry_batcher.h")));
+    EXPECT_TRUE(cmake.contains(QStringLiteral("web/web_telemetry_batcher.cpp")));
     for (const QString& forbidden : {
              QStringLiteral("hwtest_hal"),
              QStringLiteral("hwtest_biz"),

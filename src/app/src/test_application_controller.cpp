@@ -882,9 +882,6 @@ ActionResult TestApplicationController::prepare()
                              }
                          }
                          m_impl->analysisCoordinator.append(sample);
-                         if (taskId == m_impl->suppressedResultTaskId) {
-                             return;
-                         }
                          m_impl->snapshot.cycleIndex = rawSample.cycleIndex;
                          ++m_impl->snapshot.sampleCount;
                          emit sampleReceived(sample);
@@ -1109,9 +1106,9 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     runOptions.intervalMs = effectiveIntervalMs;
     runOptions.maxCycles = effectiveMaxCycles;
     if (mode == hwtest::biz::RunMode::PcPeriodic &&
-        (options.intervalMs < 10 || options.intervalMs > 60 * 60 * 1000)) {
+        (options.intervalMs < 0 || options.intervalMs > 60 * 60 * 1000)) {
         return failure(QStringLiteral("ParameterRangeError"),
-                       QStringLiteral("PC periodic interval must be in the range 10..3600000 ms"));
+                       QStringLiteral("PC periodic interval must be in the range 0..3600000 ms"));
     }
     if (mode == hwtest::biz::RunMode::PcPeriodic &&
         options.maxCycles > 1000000000ULL) {

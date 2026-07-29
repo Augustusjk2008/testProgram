@@ -1,8 +1,28 @@
 import { describe, expect, it } from 'vitest'
 
-import { normalizeRunOptionsForStart } from './run-options'
+import { normalizeRunOptionsForStart, validatePcPeriodicOptions } from './run-options'
 
 describe('continuous data run options', () => {
+  it('accepts zero periodic delay and still rejects negative delays', () => {
+    expect(validatePcPeriodicOptions(0, 0)).toBe('')
+    expect(validatePcPeriodicOptions(-1, 0)).toMatch(/0–3,600,000/)
+    expect(validatePcPeriodicOptions(3_600_001, 0)).toMatch(/0–3,600,000/)
+  })
+
+  it('keeps zero periodic delay unchanged for start', () => {
+    expect(normalizeRunOptionsForStart({
+      mode: 'pc_periodic',
+      intervalMs: 0,
+      maxCycles: 0,
+      saveData: true,
+      algorithmParameters: {},
+    })).toMatchObject({
+      mode: 'pc_periodic',
+      intervalMs: 0,
+      maxCycles: 0,
+    })
+  })
+
   it('keeps periodic saving enabled', () => {
     expect(normalizeRunOptionsForStart({
       mode: 'pc_periodic',

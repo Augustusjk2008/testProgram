@@ -6,6 +6,7 @@
 #include <QHostAddress>
 #include <QObject>
 #include <QUrl>
+#include <QtGlobal>
 
 #include <memory>
 
@@ -15,6 +16,13 @@ struct WebSocketServerOptions {
     quint16 port = 18765;
     int handshakeTimeoutMs = 5000;
     quint64 maxIncomingMessageBytes = 16384;
+    int maxBatchSamples = 64;
+    qint64 maxBatchBytes = 32768;
+    int maxBatchLatencyMs = 20;
+    int snapshotIntervalMs = 100;
+    qint64 socketHighWaterBytes = 1024 * 1024;
+    qint64 socketLowWaterBytes = 256 * 1024;
+    qint64 maxQueuedOutputBytes = 4 * 1024 * 1024;
 };
 
 class WebSocketFrontendServer final : public QObject {

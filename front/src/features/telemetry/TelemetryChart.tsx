@@ -27,6 +27,8 @@ export function TelemetryChart({
   const { theme } = useTheme()
   const hostRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
+  const queryRef = useRef({ fields, windowSeconds })
+  queryRef.current = { fields, windowSeconds }
   const fieldsKey = fields.join('|')
   const palette = getChartPalette(theme)
 
@@ -89,8 +91,8 @@ export function TelemetryChart({
       const nextWidth = Math.max(320, Math.floor(entry.contentRect.width))
       if (nextWidth !== plot.width) {
         plot.setSize({ width: nextWidth, height: CHART_HEIGHT })
-        const nextData = buffer.query(fields, {
-          windowSeconds,
+        const nextData = buffer.query(queryRef.current.fields, {
+          windowSeconds: queryRef.current.windowSeconds,
           pixelWidth: nextWidth,
         })
         plot.setData(nextData as uPlot.AlignedData)

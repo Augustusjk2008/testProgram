@@ -1,6 +1,6 @@
 import { BracketsCurly, Bug, Radio, Trash } from '@phosphor-icons/react'
 
-import { useSession } from '../features/session/SessionProvider'
+import { useSession, useTelemetry } from '../features/session/SessionProvider'
 import { formatTimestamp } from '../shared/format'
 
 function pretty(value: unknown): string {
@@ -16,12 +16,8 @@ const EVENT_KIND_LABELS = {
 } as const
 
 export function DiagnosticsPage() {
-  const {
-    clearTelemetry,
-    diagnostics,
-    latestSample,
-    snapshot,
-  } = useSession()
+  const { snapshot } = useSession()
+  const { clearTelemetry, diagnostics, latestSample } = useTelemetry()
   const requestFrame = snapshot.rawData?.requestFrameHex
   const responseFrame = snapshot.rawData?.responseFrameHex
 

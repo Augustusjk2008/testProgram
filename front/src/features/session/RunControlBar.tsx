@@ -15,7 +15,7 @@ import {
   analysisStageLabel,
   isAnalysisBlockingWrites,
 } from '../performance/analysis-session-state'
-import { normalizeRunOptionsForStart } from './run-options'
+import { normalizeRunOptionsForStart, validatePcPeriodicOptions } from './run-options'
 import {
   loadRunParameterValues,
   runParameterStorageKey,
@@ -23,7 +23,7 @@ import {
   type RunParameterValues,
 } from './run-parameters'
 import { RunParameterEditor } from './RunParameterEditor'
-import { useSession } from './SessionProvider'
+import { useSession, useTelemetry } from './SessionProvider'
 
 const RUN_OPTIONS_KEY = 'hwtest.run-options.v1'
 
@@ -63,6 +63,47 @@ function isSweepWaveform(value: unknown): boolean {
   return value === 4 || (typeof value === 'string' && value.toLowerCase().includes('sweep'))
 }
 
+function TelemetryStatus() {
+  const { telemetryStats } = useTelemetry()
+  return (
+    <div className="run-console__telemetry-stats" aria-label="浏览器遥测统计">
+      <span>本次已接收 {telemetryStats.receivedCount.toLocaleString('zh-CN')}</span>
+      <span>当前缓存 {telemetryStats.retainedCount.toLocaleString('zh-CN')}</span>
+      <span>已淘汰 {telemetryStats.evictedCount.toLocaleString('zh-CN')}</span>
+      <span>
+        序号状态：{telemetryStats.sequenceStatus === 'continuous'
+          ? '连续'
+          : telemetryStats.sequenceStatus === 'reconnect_incomplete'
+            ? '重连后不完整'
+            : '存在缺口'}
+      </span>
+    </div>
+  )
+}
+
+function AnalysisRunHint({ activeRunParameters }: { activeRunParameters: Record<string, unknown> }) {
+  const { latestSample } = useTelemetry()
+  const sweepDurationS = finiteNumber(activeRunParameters.sweep_duration_s)
+  const maxDelayMs = finiteNumber(activeRunParameters.maxDelayMs) ??
+    finiteNumber(activeRunParameters.max_delay_ms) ?? 100
+  const observedStreamSeconds = latestSample?.streamElapsedUs === undefined
+    ? null
+    : latestSample.streamElapsedUs / 1_000_000
+  const sweepReached = isSweepWaveform(activeRunParameters.waveform) &&
+    sweepDurationS !== null && observedStreamSeconds !== null &&
+    observedStreamSeconds >= sweepDurationS + maxDelayMs / 1000
+
+  return (
+    <div className="analysis-run-hint" role="status">
+      <strong>停止后自动计算</strong>
+      <span>设备流：{formatObservedStreamDuration(latestSample?.streamElapsedUs)}</span>
+      {sweepReached && (
+        <span>理论时长已达到，可手动停止；完整性将在停止后确认</span>
+      )}
+    </div>
+  )
+}
+
 function formatObservedStreamDuration(streamElapsedUs: number | undefined): string {
   if (streamElapsedUs === undefined || !Number.isSafeInteger(streamElapsedUs) || streamElapsedUs < 0) return '等待设备流'
   return `${(streamElapsedUs / 1_000_000).toLocaleString('zh-CN', { maximumFractionDigits: 3 })} s`
@@ -75,7 +116,6 @@ export function RunControlBar() {
     connectionState,
     connect,
     invoke,
-    latestSample,
     snapshot,
     selectedConfigId,
     start,
@@ -98,13 +138,7 @@ export function RunControlBar() {
   const loadingConfig = !testConfigsReady || busyAction === 'load' || busyAction === 'selectTest'
   const periodicError = useMemo(() => {
     if (options.mode !== 'pc_periodic') return ''
-    if (!Number.isInteger(options.intervalMs) || options.intervalMs < 10 || options.intervalMs > 3_600_000) {
-      return '周期需为 10–3,600,000 ms 的整数'
-    }
-    if (!Number.isInteger(options.maxCycles) || options.maxCycles < 0 || options.maxCycles > 1_000_000_000) {
-      return '轮数需为 0–1,000,000,000；0 表示持续运行'
-    }
-    return ''
+    return validatePcPeriodicOptions(options.intervalMs, options.maxCycles)
   }, [options])
   const parameterError = useMemo(
     () => validateRunParameterValues(snapshot.descriptor, options.algorithmParameters),
@@ -115,15 +149,6 @@ export function RunControlBar() {
   const activeRunParameters = Object.keys(snapshot.effectiveRunParameters).length > 0
     ? snapshot.effectiveRunParameters
     : options.algorithmParameters
-  const sweepDurationS = finiteNumber(activeRunParameters.sweep_duration_s)
-  const maxDelayMs = finiteNumber(activeRunParameters.maxDelayMs) ??
-    finiteNumber(activeRunParameters.max_delay_ms) ?? 100
-  const observedStreamSeconds = latestSample?.streamElapsedUs === undefined
-    ? null
-    : latestSample.streamElapsedUs / 1_000_000
-  const sweepReached = isSweepWaveform(activeRunParameters.waveform) &&
-    sweepDurationS !== null && observedStreamSeconds !== null &&
-    observedStreamSeconds >= sweepDurationS + maxDelayMs / 1000
 
   useEffect(() => {
     const descriptor = snapshot.descriptor
@@ -209,6 +234,7 @@ export function RunControlBar() {
           <span>轮 {snapshot.cycleIndex || 0}</span>
           <span>样本 {snapshot.sampleCount || 0}</span>
         </div>
+        <TelemetryStatus />
       </div>
 
       <div className="run-mode" role="group" aria-label="运行模式">
@@ -229,12 +255,12 @@ export function RunControlBar() {
         {options.mode === 'pc_periodic' ? (
           <>
             <label>
-              <span>间隔</span>
+              <span>间隔（0 表示上一轮完成后立即开始下一轮）</span>
               <span className="number-input">
                 <input
                   aria-label="PC 周期轮间隔毫秒"
                   disabled={active || analysisBlockingWrites}
-                  min={10}
+                  min={0}
                   max={3_600_000}
                   onChange={(event) => saveOptions({ ...options, intervalMs: Number(event.target.value) })}
                   type="number"
@@ -344,13 +370,7 @@ export function RunControlBar() {
       />
 
       {snapshot.descriptor.postRunAnalysis.supported && active && (
-        <div className="analysis-run-hint" role="status">
-          <strong>停止后自动计算</strong>
-          <span>设备流：{formatObservedStreamDuration(latestSample?.streamElapsedUs)}</span>
-          {sweepReached && (
-            <span>理论时长已达到，可手动停止；完整性将在停止后确认</span>
-          )}
-        </div>
+        <AnalysisRunHint activeRunParameters={activeRunParameters} />
       )}
 
       <div className="run-console__progress" aria-label={`测试进度 ${snapshot.progress}%`}>

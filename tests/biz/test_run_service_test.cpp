@@ -13,6 +13,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
+#include <QWaitCondition>
 
 #include <memory>
 
@@ -128,6 +129,172 @@ private:
 
     mutable QMutex m_mutex;
     Snapshot m_snapshot;
+};
+
+class SerialCycleProbeExecutor final : public IAlgorithmExecutor {
+public:
+    struct Snapshot {
+        int prepareCalls = 0;
+        int executeCalls = 0;
+        int finishCalls = 0;
+        int maxActiveCalls = 0;
+        TestContext context;
+    };
+
+    Status prepare(const TestPlan&,
+                   const TestContext& context,
+                   const QVariantMap&) override
+    {
+        QMutexLocker locker(&m_mutex);
+        ++m_snapshot.prepareCalls;
+        m_snapshot.context = context;
+        return Status{};
+    }
+
+    Result<TestResult> executeStep(const TestStep& step,
+                                   const IRunControl&,
+                                   IAlgorithmObserver& observer) override
+    {
+        {
+            QMutexLocker locker(&m_mutex);
+            ++m_snapshot.executeCalls;
+            ++m_activeCalls;
+            m_snapshot.maxActiveCalls = qMax(m_snapshot.maxActiveCalls, m_activeCalls);
+        }
+
+        RawSample sample;
+        sample.channelId = QStringLiteral("serial-probe");
+        sample.values.insert(QStringLiteral("value"), 1.0);
+        observer.onSample(step.stepId, sample);
+
+        {
+            QMutexLocker locker(&m_mutex);
+            --m_activeCalls;
+        }
+        return test::successfulResult(step);
+    }
+
+    Status finishRun() override
+    {
+        QMutexLocker locker(&m_mutex);
+        ++m_snapshot.finishCalls;
+        return Status{};
+    }
+
+    Status requestStop(int) override { return Status{}; }
+    Status reset() override { return Status{}; }
+    Status shutdown(int) override { return Status{}; }
+
+    Snapshot snapshot() const
+    {
+        QMutexLocker locker(&m_mutex);
+        return m_snapshot;
+    }
+
+private:
+    mutable QMutex m_mutex;
+    Snapshot m_snapshot;
+    int m_activeCalls = 0;
+};
+
+class ZeroIntervalGateExecutor final : public IAlgorithmExecutor {
+public:
+    Status prepare(const TestPlan&,
+                   const TestContext&,
+                   const QVariantMap&) override
+    {
+        QMutexLocker locker(&m_mutex);
+        ++m_prepareCalls;
+        return Status{};
+    }
+
+    Result<TestResult> executeStep(const TestStep& step,
+                                   const IRunControl&,
+                                   IAlgorithmObserver&) override
+    {
+        QMutexLocker locker(&m_mutex);
+        const int callIndex = ++m_executeCalls;
+        ++m_activeCalls;
+        m_maxActiveCalls = qMax(m_maxActiveCalls, m_activeCalls);
+        m_callChanged.wakeAll();
+        while (m_releasedThrough < callIndex && !m_stopRequested) {
+            m_callChanged.wait(&m_mutex);
+        }
+        --m_activeCalls;
+        return test::successfulResult(step);
+    }
+
+    Status finishRun() override
+    {
+        QMutexLocker locker(&m_mutex);
+        ++m_finishCalls;
+        return Status{};
+    }
+
+    Status requestStop(int) override
+    {
+        QMutexLocker locker(&m_mutex);
+        m_stopRequested = true;
+        m_callChanged.wakeAll();
+        return Status{};
+    }
+
+    Status reset() override { return Status{}; }
+    Status shutdown(int) override { return Status{}; }
+
+    bool waitForExecuteCalls(int expected, int timeoutMs)
+    {
+        QElapsedTimer timer;
+        timer.start();
+        QMutexLocker locker(&m_mutex);
+        while (m_executeCalls < expected && timer.elapsed() < timeoutMs) {
+            const int remaining = timeoutMs - static_cast<int>(timer.elapsed());
+            m_callChanged.wait(&m_mutex, qMax(1, remaining));
+        }
+        return m_executeCalls >= expected;
+    }
+
+    void releaseThrough(int callIndex)
+    {
+        QMutexLocker locker(&m_mutex);
+        m_releasedThrough = qMax(m_releasedThrough, callIndex);
+        m_callChanged.wakeAll();
+    }
+
+    int executeCalls() const
+    {
+        QMutexLocker locker(&m_mutex);
+        return m_executeCalls;
+    }
+
+    int prepareCalls() const
+    {
+        QMutexLocker locker(&m_mutex);
+        return m_prepareCalls;
+    }
+
+    int finishCalls() const
+    {
+        QMutexLocker locker(&m_mutex);
+        return m_finishCalls;
+    }
+
+    int maxActiveCalls() const
+    {
+        QMutexLocker locker(&m_mutex);
+        return m_maxActiveCalls;
+    }
+
+private:
+    mutable QMutex m_mutex;
+    QWaitCondition m_callChanged;
+    int m_prepareCalls = 0;
+    int m_executeCalls = 0;
+    int m_finishCalls = 0;
+    int m_activeCalls = 0;
+    int m_maxActiveCalls = 0;
+    int m_releasedThrough = 0;
+    bool m_stopRequested = false;
 };
 
 ConfigPath saveConfiguration(TestConfigManager& manager,
@@ -711,7 +878,7 @@ TEST(TestRunServiceTest, PcPeriodicRunsFiniteCyclesAndTagsResultsAndSamples)
                                                temporaryDirectory,
                                                config,
                                                QStringLiteral("pc-periodic.testcfg"));
-    test::FakeAlgorithmExecutor executor;
+    SerialCycleProbeExecutor executor;
     ServiceHandle service = makeService(executor);
     ASSERT_NE(service, nullptr);
 
@@ -744,7 +911,7 @@ TEST(TestRunServiceTest, PcPeriodicRunsFiniteCyclesAndTagsResultsAndSamples)
     ASSERT_TRUE(service->loadConfiguration(path).ok());
     RunOptions options;
     options.mode = RunMode::PcPeriodic;
-    options.intervalMs = 10;
+    options.intervalMs = 0;
     options.maxCycles = 3;
     ASSERT_TRUE(service->startTestWithOptions(options).ok());
     ASSERT_TRUE(waitForState(service.get(), TestState::Finished));
@@ -752,14 +919,62 @@ TEST(TestRunServiceTest, PcPeriodicRunsFiniteCyclesAndTagsResultsAndSamples)
         [&] { return cycles.size() == 3 && results.size() == 3 && samples.size() == 3; },
         1000));
 
-    EXPECT_EQ(executor.prepareCalls(), 1);
-    EXPECT_EQ(executor.executeCallCount(), 3);
+    const SerialCycleProbeExecutor::Snapshot executorSnapshot = executor.snapshot();
+    EXPECT_EQ(executorSnapshot.prepareCalls, 1);
+    EXPECT_EQ(executorSnapshot.executeCalls, 3);
+    EXPECT_EQ(executorSnapshot.finishCalls, 1);
+    EXPECT_EQ(executorSnapshot.maxActiveCalls, 1);
+    EXPECT_EQ(executorSnapshot.context.tags.value(QStringLiteral("intervalMs")).toInt(), 0);
     EXPECT_EQ(cycles, QVector<quint64>({1, 2, 3}));
     for (int index = 0; index < 3; ++index) {
         const quint64 expectedCycle = static_cast<quint64>(index + 1);
         EXPECT_EQ(results.at(index).cycleIndex, expectedCycle);
         EXPECT_EQ(samples.at(index).cycleIndex, expectedCycle);
     }
+    EXPECT_TRUE(service->shutdown().ok());
+}
+
+TEST(TestRunServiceTest, ZeroIntervalCycleBoundaryCanPauseResumeAndStop)
+{
+    test::ensureQtApplication();
+    QTemporaryDir temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.isValid());
+
+    TestConfig config = test::makeCompleteConfig();
+    config.steps = {config.steps.at(0)};
+    TestConfigManager manager;
+    const ConfigPath path = saveConfiguration(manager,
+                                               temporaryDirectory,
+                                               config,
+                                               QStringLiteral("pc-periodic-zero-gate.testcfg"));
+    ZeroIntervalGateExecutor executor;
+    ServiceHandle service = makeService(executor);
+    ASSERT_NE(service, nullptr);
+
+    ASSERT_TRUE(service->initialize().ok());
+    ASSERT_TRUE(service->loadConfiguration(path).ok());
+    RunOptions options;
+    options.mode = RunMode::PcPeriodic;
+    options.intervalMs = 0;
+    options.maxCycles = 0;
+    ASSERT_TRUE(service->startTestWithOptions(options).ok());
+    ASSERT_TRUE(executor.waitForExecuteCalls(1, 1000));
+
+    ASSERT_TRUE(service->pauseTest().ok());
+    executor.releaseThrough(1);
+    QThread::msleep(50);
+    EXPECT_EQ(executor.executeCalls(), 1);
+
+    ASSERT_TRUE(service->resumeTest().ok());
+    ASSERT_TRUE(executor.waitForExecuteCalls(2, 1000));
+    ASSERT_TRUE(service->stopTest(1000).ok());
+    ASSERT_TRUE(waitForState(service.get(), TestState::Idle));
+    QThread::msleep(50);
+
+    EXPECT_EQ(executor.prepareCalls(), 1);
+    EXPECT_EQ(executor.executeCalls(), 2);
+    EXPECT_EQ(executor.finishCalls(), 1);
+    EXPECT_EQ(executor.maxActiveCalls(), 1);
     EXPECT_TRUE(service->shutdown().ok());
 }
 
@@ -916,11 +1131,11 @@ TEST(TestRunServiceTest, RejectsInvalidPcPeriodicOptionsBeforePreparingTheExecut
     ASSERT_TRUE(service->initialize().ok());
     ASSERT_TRUE(service->loadConfiguration(path).ok());
 
-    RunOptions tooFast;
-    tooFast.mode = RunMode::PcPeriodic;
-    tooFast.intervalMs = 9;
-    tooFast.maxCycles = 0;
-    EXPECT_EQ(service->startTestWithOptions(tooFast).status.code,
+    RunOptions negativeInterval;
+    negativeInterval.mode = RunMode::PcPeriodic;
+    negativeInterval.intervalMs = -1;
+    negativeInterval.maxCycles = 0;
+    EXPECT_EQ(service->startTestWithOptions(negativeInterval).status.code,
               ErrorCode::ParameterRangeError);
 
     RunOptions tooMany;

@@ -7,6 +7,7 @@ describe('global action busy policy', () => {
     expect(tracksGlobalBusyAction('analysisResult')).toBe(false)
     expect(tracksGlobalBusyAction('setDigitalStimulus')).toBe(false)
     expect(tracksGlobalBusyAction('resetDigitalStimulus')).toBe(false)
+    expect(tracksGlobalBusyAction('setTelemetryDelivery')).toBe(false)
     expect(tracksGlobalBusyAction('stop')).toBe(true)
     expect(tracksGlobalBusyAction('start')).toBe(true)
   })

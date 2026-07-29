@@ -636,6 +636,120 @@ TEST(WebSocketContinuousIntegrationTest, PcPeriodicStreamsSamplesFromTwoCommandR
     EXPECT_TRUE(client.waitForDisconnected(5000));
 }
 
+TEST(WebSocketContinuousIntegrationTest, PcPeriodicBatchesSamplesWithoutChangingSavedResult)
+{
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QTemporaryDir directory;
+    QString error;
+    QString halConfigPath;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    options.maxBatchLatencyMs = 1000;
+    WebSocketFrontendServer server(&controller,
+                                   launchOptions(halConfigPath),
+                                   options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+    ASSERT_TRUE(sendAndWait(&client, QStringLiteral("load"), QStringLiteral("load"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("prepare"),
+                            QStringLiteral("prepare"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    ASSERT_TRUE(sendAndWait(
+                    &client,
+                    QStringLiteral("batch"),
+                    QStringLiteral("setTelemetryDelivery"),
+                    QJsonObject{{QStringLiteral("mode"), QStringLiteral("batch")}})
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+
+    const QJsonObject started = sendAndWait(
+        &client,
+        QStringLiteral("periodic-batch"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 0},
+                    {QStringLiteral("maxCycles"), 2},
+                    {QStringLiteral("saveData"), true}});
+    ASSERT_TRUE(started.value(QStringLiteral("ok")).toBool())
+        << started.value(QStringLiteral("message")).toString().toStdString();
+
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+        ASSERT_TRUE(peer.replyToLastRequest(&error)) << error.toStdString();
+    }
+
+    QJsonObject terminal;
+    ASSERT_TRUE(client.waitForSnapshotPhase(QStringLiteral("finished"),
+                                            &terminal,
+                                            5000));
+    QVector<QJsonObject> samples;
+    quint64 expectedSequence = 1;
+    int lastBatchIndex = -1;
+    int terminalIndex = -1;
+    for (int index = 0; index < client.messages().size(); ++index) {
+        const QJsonObject& message = client.messages().at(index);
+        if (message.value(QStringLiteral("type")).toString() ==
+            QStringLiteral("sampleBatch")) {
+            const QJsonArray batch = message.value(QStringLiteral("samples")).toArray();
+            ASSERT_FALSE(batch.isEmpty());
+            EXPECT_EQ(message.value(QStringLiteral("firstSeq")).toDouble(),
+                      static_cast<double>(expectedSequence));
+            EXPECT_EQ(message.value(QStringLiteral("lastSeq")).toDouble(),
+                      static_cast<double>(expectedSequence +
+                                          static_cast<quint64>(batch.size() - 1)));
+            const QString taskId = batch.first().toObject()
+                                       .value(QStringLiteral("taskId"))
+                                       .toString();
+            for (const QJsonValue& value : batch) {
+                EXPECT_EQ(value.toObject().value(QStringLiteral("taskId")).toString(),
+                          taskId);
+                samples.push_back(value.toObject());
+                ++expectedSequence;
+            }
+            lastBatchIndex = index;
+        }
+        if (message == terminal) {
+            terminalIndex = index;
+        }
+    }
+    ASSERT_EQ(samples.size(), 2);
+    ASSERT_GE(lastBatchIndex, 0);
+    ASSERT_GE(terminalIndex, 0);
+    EXPECT_LT(lastBatchIndex, terminalIndex);
+    EXPECT_EQ(samples.at(0).value(QStringLiteral("cycleIndex")).toInt(), 1);
+    EXPECT_EQ(samples.at(1).value(QStringLiteral("cycleIndex")).toInt(), 2);
+
+    const QJsonObject snapshot = terminal.value(QStringLiteral("snapshot")).toObject();
+    EXPECT_EQ(snapshot.value(QStringLiteral("intervalMs")).toInt(), 0);
+    EXPECT_EQ(snapshot.value(QStringLiteral("sampleCount")).toInt(), 2);
+    EXPECT_TRUE(snapshot.value(QStringLiteral("dataSaveEnabled")).toBool());
+    EXPECT_TRUE(snapshot.value(QStringLiteral("dataSaveError")).toString().isEmpty());
+    EXPECT_TRUE(QFileInfo(snapshot.value(QStringLiteral("dataFilePath")).toString()).isFile());
+
+    const QJsonObject disconnected = sendAndWait(&client,
+                                                  QStringLiteral("cleanup-batch"),
+                                                  QStringLiteral("disconnect"));
+    EXPECT_TRUE(disconnected.value(QStringLiteral("ok")).toBool());
+    EXPECT_TRUE(client.waitForDisconnected(5000));
+}
+
 TEST_F(WebSocketUdpIntegrationTest, PassesSystemStatusThroughHalUdp)
 {
     ASSERT_TRUE(peer.replyToLastRequest(&error)) << error.toStdString();

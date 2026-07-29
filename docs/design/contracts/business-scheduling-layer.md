@@ -144,12 +144,12 @@ void destroyReportGenerator(IReportGenerator* generator);
 | 模式 | BIZ 行为 | 结束条件 |
 | --- | --- | --- |
 | `Single` / `single` | 执行测试计划一轮 | 一轮完成、错误或停止 |
-| `PcPeriodic` / `pc_periodic` | 每轮完整执行计划；上一轮完成后等待 `intervalMs`，再由 PC 主机重新发起一次独立请求，设备对每次请求返回一次；不允许轮次重叠 | 达到 `maxCycles`、错误或停止；`maxCycles == 0` 表示不限轮数 |
+| `PcPeriodic` / `pc_periodic` | 每轮完整执行计划；上一轮完整收发结束后按 `intervalMs` 增加轮间等待，再由 PC 主机重新发起一次独立请求；`intervalMs == 0` 表示不增加额外等待；设备对每次请求返回一次，轮次与 `executeStep()` 均不得重叠或重入 | 达到 `maxCycles`、错误或停止；`maxCycles == 0` 表示不限轮数 |
 | `DeviceStream` / `device_stream` | PC 只发起一次设备流启动；BIZ 只调用一轮、每个步骤只调用一次 `executeStep()`，算法可在该调用内多次 `onSample()`，直到 PC 停止或设备流结束；不得在外层重复发起请求 | 算法返回、错误或停止 |
 
 - 配置能力由应用层读取 `reportFields.supportedRunModes`。同一测试配置最多只能声明 `pc_periodic`、`device_stream` 中的一种：前者是 PC 多次单发单回，后者是设备主动连续回告，二者不是同一测试的可互换选项。字段缺失时只回退到 `single`；应用控制器在进入 BIZ 前以 `CapabilityUnsupported` 拒绝未声明模式。通用 BIZ 服务仍只实现运行语义，不读取展示字段。
 - `DeviceStream` 不允许步骤重试。BIZ 在启动 worker 和调用算法 `prepare()` 前检查经过默认值继承及步骤筛选后的计划；任一选中步骤 `retryCount > 0` 都以 `ParameterRangeError` 拒绝，避免重复 START/STOP 建立第二条设备流。`Single` 与 `PcPeriodic` 保持既有类型化重试语义。
-- `PcPeriodic` 只接受 `10..3600000` ms 的整数间隔，有限轮数不超过 `1000000000`。轮间等待可被暂停、恢复和停止唤醒。
+- `PcPeriodic` 只接受 `0..3600000` ms 的整数间隔，有限轮数不超过 `1000000000`。正间隔等待可被暂停、恢复和停止唤醒；零间隔在上一轮完整结束后让出一次线程调度并检查暂停/停止，再严格串行进入下一轮，不泵送嵌套事件循环，也不并行调用算法。
 - 每轮开始先发出 `cycleStarted`；结果和样本均标记当前 `cycleIndex`。算法未给 `timestampUs` 时，BIZ 使用当前 UTC epoch 微秒补齐，再发出 `sampleProduced`；这只服务于未提供相对轴的兼容样本，`streamElapsedUs >= 0` 的算法必须自行提供一次锚定后的非零 `timestampUs`。BIZ 不生成、重写或解释可选的 `streamElapsedUs`，只原样转发。当前服务不额外长期缓存样本，避免无限周期会话在 BIZ 内形成无界样本副本。
 - `HELM_STREAM` 的 `sampleProduced` 可以是应用后处理捕获的输入来源，但 BIZ 对此没有额外端口或状态：它仍只发出通用 `RawSample`。尾样本封存、`{taskId, analysisGeneration}`、后台计算、`queued` 起写门禁、按通道投影和取消属于应用/Web 控制面；它们不得改变本节三种运行模式、BIZ `TestState` 或停止收敛语义。
 - BIZ 把 `runMode`、`intervalMs` 和 `maxCycles` 写入 `TestContext::tags`，把 `RunOptions::parameters` 原样写入 `TestContext::runParameters`，但不据此解释产品命令。`intervalMs`/`maxCycles` 只对 `PcPeriodic` 有调度含义；应用层对 `Single`/`DeviceStream` 使用固定兼容值 `1000/1`，不会据此重复请求。设备是否支持 `DeviceStream` 由算法决定；当前 `mbddf.system_status` 没有设备流启动/停止命令，准备阶段返回 `CapabilityUnsupported`。

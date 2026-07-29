@@ -19,6 +19,11 @@ bool isJsonSafeNonNegativeInteger(qint64 value)
     return value >= 0 && value <= kMaxJsonSafeInteger;
 }
 
+bool isJsonSafeNonNegativeInteger(quint64 value)
+{
+    return value <= static_cast<quint64>(kMaxJsonSafeInteger);
+}
+
 QJsonObject analysisMetricObject(const AnalysisMetric& metric)
 {
     QJsonValue value = QJsonValue::Null;
@@ -115,6 +120,7 @@ bool isKnownAction(const QString& action)
         QStringLiteral("resume"),
         QStringLiteral("setDigitalStimulus"),
         QStringLiteral("resetDigitalStimulus"),
+        QStringLiteral("setTelemetryDelivery"),
         QStringLiteral("stop"),
         QStringLiteral("disconnect"),
         QStringLiteral("quit"),
@@ -242,6 +248,28 @@ QJsonObject snapshotObject(const ApplicationSnapshot& snapshot)
                   digitalStimulusObject(snapshot.digitalStimulus));
     object.insert(QStringLiteral("analysis"),
                   analysisSnapshotObject(snapshot.analysis));
+    return object;
+}
+
+QJsonObject sampleObject(const ApplicationSample& sample)
+{
+    if (!isJsonSafeNonNegativeInteger(sample.timestampUs) ||
+        sample.streamElapsedUs > kMaxJsonSafeInteger) {
+        return {};
+    }
+    QJsonObject object{
+        {QStringLiteral("taskId"), sample.taskId},
+        {QStringLiteral("stepId"), sample.stepId},
+        {QStringLiteral("channelId"), sample.channelId},
+        {QStringLiteral("timestampUs"), static_cast<double>(sample.timestampUs)},
+        {QStringLiteral("cycleIndex"), static_cast<double>(sample.cycleIndex)},
+        {QStringLiteral("values"), QJsonObject::fromVariantMap(sample.values)},
+        {QStringLiteral("tags"), QJsonObject::fromVariantMap(sample.tags)},
+    };
+    if (sample.streamElapsedUs >= 0) {
+        object.insert(QStringLiteral("streamElapsedUs"),
+                      static_cast<double>(sample.streamElapsedUs));
+    }
     return object;
 }
 
@@ -394,13 +422,25 @@ ProtocolParseResult parseRequest(const QString& text)
     return result;
 }
 
-QJsonObject makeHello()
+QJsonObject makeHello(int maxBatchSamples,
+                      qint64 maxBatchBytes,
+                      int maxBatchLatencyMs,
+                      int snapshotIntervalMs)
 {
+    const QJsonObject telemetryBatch{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("maxSamples"), maxBatchSamples},
+        {QStringLiteral("maxBytes"), static_cast<double>(maxBatchBytes)},
+        {QStringLiteral("maxLatencyMs"), maxBatchLatencyMs},
+        {QStringLiteral("snapshotIntervalMs"), snapshotIntervalMs},
+    };
     return QJsonObject{
         {QStringLiteral("v"), 1},
         {QStringLiteral("type"), QStringLiteral("hello")},
         {QStringLiteral("server"), QStringLiteral("hwtest_web")},
         {QStringLiteral("protocolVersion"), 1},
+        {QStringLiteral("capabilities"),
+         QJsonObject{{QStringLiteral("telemetryBatch"), telemetryBatch}}},
     };
 }
 
@@ -438,7 +478,8 @@ QJsonObject makeAnalysisResultReply(const QString& id,
 QJsonObject makeSnapshot(quint64 sequence,
                          const ApplicationSnapshot& snapshot)
 {
-    if (snapshot.analysis.analysisGeneration >
+    if (!isJsonSafeNonNegativeInteger(sequence) ||
+        snapshot.analysis.analysisGeneration >
         static_cast<quint64>(kMaxJsonSafeInteger)) {
         return {};
     }
@@ -453,28 +494,58 @@ QJsonObject makeSnapshot(quint64 sequence,
 QJsonObject makeSample(quint64 sequence,
                        const ApplicationSample& sample)
 {
-    if (!isJsonSafeNonNegativeInteger(sample.timestampUs) ||
-        sample.streamElapsedUs > kMaxJsonSafeInteger) {
+    if (!isJsonSafeNonNegativeInteger(sequence)) {
         return {};
     }
-    QJsonObject sampleObject{
-        {QStringLiteral("taskId"), sample.taskId},
-        {QStringLiteral("stepId"), sample.stepId},
-        {QStringLiteral("channelId"), sample.channelId},
-        {QStringLiteral("timestampUs"), static_cast<double>(sample.timestampUs)},
-        {QStringLiteral("cycleIndex"), static_cast<double>(sample.cycleIndex)},
-        {QStringLiteral("values"), QJsonObject::fromVariantMap(sample.values)},
-        {QStringLiteral("tags"), QJsonObject::fromVariantMap(sample.tags)},
-    };
-    if (sample.streamElapsedUs >= 0) {
-        sampleObject.insert(QStringLiteral("streamElapsedUs"),
-                            static_cast<double>(sample.streamElapsedUs));
+    const QJsonObject projectedSample = sampleObject(sample);
+    if (projectedSample.isEmpty()) {
+        return {};
     }
     return QJsonObject{
         {QStringLiteral("v"), 1},
         {QStringLiteral("type"), QStringLiteral("sample")},
         {QStringLiteral("seq"), static_cast<double>(sequence)},
-        {QStringLiteral("sample"), sampleObject},
+        {QStringLiteral("sample"), projectedSample},
+    };
+}
+
+QJsonObject makeSampleBatch(quint64 firstSequence,
+                            const QVector<ApplicationSample>& samples)
+{
+    constexpr int kMaxBatchSamples = 64;
+    if (samples.isEmpty() || samples.size() > kMaxBatchSamples ||
+        !isJsonSafeNonNegativeInteger(firstSequence)) {
+        return {};
+    }
+
+    const quint64 sampleCountMinusOne =
+        static_cast<quint64>(samples.size() - 1);
+    const quint64 maxJsonSafeInteger =
+        static_cast<quint64>(kMaxJsonSafeInteger);
+    if (sampleCountMinusOne > maxJsonSafeInteger - firstSequence) {
+        return {};
+    }
+
+    const QString taskId = samples.first().taskId;
+    QJsonArray projectedSamples;
+    for (const ApplicationSample& sample : samples) {
+        if (sample.taskId != taskId) {
+            return {};
+        }
+        const QJsonObject projectedSample = sampleObject(sample);
+        if (projectedSample.isEmpty()) {
+            return {};
+        }
+        projectedSamples.push_back(projectedSample);
+    }
+
+    return QJsonObject{
+        {QStringLiteral("v"), 1},
+        {QStringLiteral("type"), QStringLiteral("sampleBatch")},
+        {QStringLiteral("firstSeq"), static_cast<double>(firstSequence)},
+        {QStringLiteral("lastSeq"),
+         static_cast<double>(firstSequence + sampleCountMinusOne)},
+        {QStringLiteral("samples"), projectedSamples},
     };
 }
 

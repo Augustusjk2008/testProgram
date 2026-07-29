@@ -186,6 +186,7 @@ export type ActionName =
   | 'resume'
   | 'setDigitalStimulus'
   | 'resetDigitalStimulus'
+  | 'setTelemetryDelivery'
   | 'analysisResult'
   | 'stop'
   | 'disconnect'
@@ -234,11 +235,24 @@ export interface ApplicationSample {
   streamElapsedUs?: number
 }
 
+export interface TelemetryBatchCapability {
+  version: 1
+  maxSamples: number
+  maxBytes: number
+  maxLatencyMs: number
+  snapshotIntervalMs: number
+}
+
+export interface ServerCapabilities {
+  telemetryBatch?: TelemetryBatchCapability
+}
+
 export interface HelloMessage {
   v: 1
   type: 'hello'
   server: string
   protocolVersion: number
+  capabilities?: ServerCapabilities
 }
 
 export interface SnapshotMessage {
@@ -253,6 +267,14 @@ export interface SampleMessage {
   type: 'sample'
   seq: number
   sample: ApplicationSample
+}
+
+export interface SampleBatchMessage {
+  v: 1
+  type: 'sampleBatch'
+  firstSeq: number
+  lastSeq: number
+  samples: ApplicationSample[]
 }
 
 export type ReplyData = Record<string, unknown> & {
@@ -270,7 +292,7 @@ export interface ReplyMessage {
   data: ReplyData
 }
 
-export type ServerMessage = HelloMessage | SnapshotMessage | SampleMessage | ReplyMessage
+export type ServerMessage = HelloMessage | SnapshotMessage | SampleMessage | SampleBatchMessage | ReplyMessage
 
 export interface ControlResource {
   resourceId: string

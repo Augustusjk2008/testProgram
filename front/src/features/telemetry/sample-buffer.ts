@@ -32,6 +32,7 @@ export class SampleBuffer {
   private readonly series = new Map<string, Float64Array>()
   private writeIndex = 0
   private pointCount = 0
+  private evictedPoints = 0
   private latestSample: ApplicationSample | null = null
 
   constructor(readonly capacity: number) {
@@ -46,8 +47,21 @@ export class SampleBuffer {
     return this.pointCount
   }
 
+  get evictedCount(): number {
+    return this.evictedPoints
+  }
+
   append(sample: ApplicationSample): void {
+    this.appendMany([sample])
+  }
+
+  appendMany(samples: readonly ApplicationSample[]): void {
+    samples.forEach((sample) => this.appendOne(sample))
+  }
+
+  private appendOne(sample: ApplicationSample): void {
     const index = this.writeIndex
+    if (this.pointCount === this.capacity) this.evictedPoints += 1
     this.series.forEach((values) => { values[index] = Number.NaN })
 
     const flattened = flattenFiniteNumbers(sample.values)
@@ -71,6 +85,7 @@ export class SampleBuffer {
   clear(): void {
     this.writeIndex = 0
     this.pointCount = 0
+    this.evictedPoints = 0
     this.latestSample = null
     this.series.clear()
     this.channels.fill('')
@@ -95,24 +110,93 @@ export class SampleBuffer {
       : Number.NEGATIVE_INFINITY
     const first = this.pointCount === this.capacity ? this.writeIndex : 0
     const fieldSeries = fields.map((field) => this.series.get(field))
-
-    for (let offset = 0; offset < this.pointCount; offset += 1) {
-      const index = (first + offset) % this.capacity
+    const includes = (index: number) => {
       const timestamp = this.timestamps[index]
-      if (timestamp < cutoff ||
-          (options.channelId && this.channels[index] !== options.channelId)) {
-        continue
-      }
-      result[0].push(timestamp)
-      fields.forEach((field, fieldIndex) => {
+      return timestamp >= cutoff &&
+        (!options.channelId || this.channels[index] === options.channelId)
+    }
+    const appendPoint = (index: number) => {
+      result[0].push(this.timestamps[index])
+      fields.forEach((_field, fieldIndex) => {
         const value = fieldSeries[fieldIndex]?.[index]
-        result[fieldIndex + 1].push(value === undefined || Number.isNaN(value) ? null : value)
+        result[fieldIndex + 1]?.push(value === undefined || Number.isNaN(value) ? null : value)
       })
     }
 
-    return options.pixelWidth
-      ? downsampleAlignedMinMax(result, options.pixelWidth)
-      : result
+    if (options.pixelWidth === undefined) {
+      for (let offset = 0; offset < this.pointCount; offset += 1) {
+        const index = (first + offset) % this.capacity
+        if (includes(index)) appendPoint(index)
+      }
+      return result
+    }
+
+    const width = Number.isFinite(options.pixelWidth)
+      ? Math.max(1, Math.floor(options.pixelWidth))
+      : 1
+    let matchingCount = 0
+    let firstMatch = -1
+    let lastMatch = -1
+
+    for (let offset = 0; offset < this.pointCount; offset += 1) {
+      const index = (first + offset) % this.capacity
+      if (!includes(index)) continue
+      if (firstMatch < 0) firstMatch = index
+      lastMatch = index
+      matchingCount += 1
+    }
+
+    if (matchingCount === 0) return result
+    const maximumPointCount = 2 * Math.max(1, fields.length) * width + 2
+    if (matchingCount <= maximumPointCount) {
+      for (let offset = 0; offset < this.pointCount; offset += 1) {
+        const index = (first + offset) % this.capacity
+        if (includes(index)) appendPoint(index)
+      }
+      return result
+    }
+
+    const minimumValues = fields.map(() => Array<number>(width).fill(Number.POSITIVE_INFINITY))
+    const maximumValues = fields.map(() => Array<number>(width).fill(Number.NEGATIVE_INFINITY))
+    const minimumIndices = fields.map(() => Array<number>(width).fill(-1))
+    const maximumIndices = fields.map(() => Array<number>(width).fill(-1))
+    let ordinal = 0
+    const interiorCount = matchingCount - 2
+    for (let offset = 0; offset < this.pointCount; offset += 1) {
+      const index = (first + offset) % this.capacity
+      if (!includes(index)) continue
+      if (ordinal > 0 && ordinal < matchingCount - 1) {
+        const bucket = Math.min(width - 1, Math.floor((ordinal - 1) * width / interiorCount))
+        fields.forEach((_field, fieldIndex) => {
+          const value = fieldSeries[fieldIndex]?.[index]
+          if (value === undefined || Number.isNaN(value)) return
+          if (value < minimumValues[fieldIndex]![bucket]!) {
+            minimumValues[fieldIndex]![bucket] = value
+            minimumIndices[fieldIndex]![bucket] = index
+          }
+          if (value > maximumValues[fieldIndex]![bucket]!) {
+            maximumValues[fieldIndex]![bucket] = value
+            maximumIndices[fieldIndex]![bucket] = index
+          }
+        })
+      }
+      ordinal += 1
+    }
+
+    const selected = new Set<number>([firstMatch, lastMatch])
+    minimumIndices.forEach((indices, fieldIndex) => {
+      indices.forEach((index, bucket) => {
+        if (index >= 0) selected.add(index)
+        const maximumIndex = maximumIndices[fieldIndex]![bucket]!
+        if (maximumIndex >= 0) selected.add(maximumIndex)
+      })
+    })
+    for (let offset = 0; offset < this.pointCount; offset += 1) {
+      const index = (first + offset) % this.capacity
+      if (includes(index) && selected.has(index)) appendPoint(index)
+    }
+
+    return result
   }
 }
 
@@ -121,48 +205,35 @@ export function downsampleAlignedMinMax(
   pixelWidth: number,
 ): AlignedData {
   const pointCount = data[0]?.length ?? 0
-  const width = Math.max(1, Math.floor(pixelWidth))
+  const width = Number.isFinite(pixelWidth) ? Math.max(1, Math.floor(pixelWidth)) : 1
   if (pointCount <= width * 2 || data.length < 2) return data
 
   const valueSeries = data.slice(1)
-  const ranges = valueSeries.map((series) => {
-    let min = Number.POSITIVE_INFINITY
-    let max = Number.NEGATIVE_INFINITY
-    series.forEach((value) => {
-      if (value === null) return
-      min = Math.min(min, value)
-      max = Math.max(max, value)
-    })
-    return { min, range: max > min ? max - min : 1 }
-  })
   const bucketSize = Math.max(1, Math.ceil((pointCount - 2) / width))
   const selected = new Set<number>([0, pointCount - 1])
 
   for (let start = 1; start < pointCount - 1; start += bucketSize) {
     const end = Math.min(pointCount - 1, start + bucketSize)
-    let lowIndex = start
-    let highIndex = start
-    let lowScore = Number.POSITIVE_INFINITY
-    let highScore = Number.NEGATIVE_INFINITY
-
-    for (let index = start; index < end; index += 1) {
-      valueSeries.forEach((series, seriesIndex) => {
+    valueSeries.forEach((series) => {
+      let minimum = Number.POSITIVE_INFINITY
+      let maximum = Number.NEGATIVE_INFINITY
+      let minimumIndex = -1
+      let maximumIndex = -1
+      for (let index = start; index < end; index += 1) {
         const value = series[index]
-        if (value === null) return
-        const range = ranges[seriesIndex]
-        const score = (value - range.min) / range.range
-        if (score < lowScore) {
-          lowScore = score
-          lowIndex = index
+        if (value === null || value === undefined) continue
+        if (value < minimum) {
+          minimum = value
+          minimumIndex = index
         }
-        if (score > highScore) {
-          highScore = score
-          highIndex = index
+        if (value > maximum) {
+          maximum = value
+          maximumIndex = index
         }
-      })
-    }
-    selected.add(lowIndex)
-    selected.add(highIndex)
+      }
+      if (minimumIndex >= 0) selected.add(minimumIndex)
+      if (maximumIndex >= 0) selected.add(maximumIndex)
+    })
   }
 
   const indices = [...selected].sort((left, right) => left - right)

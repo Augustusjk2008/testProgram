@@ -12,9 +12,11 @@ import type {
   ApplicationSnapshot,
   DigitalStimulusSnapshot,
   DigitalSwitchDescriptor,
+  HelloMessage,
   ReplyData,
   ReplyMessage,
   RunMode,
+  SampleBatchMessage,
   ServerMessage,
   TestConfigCatalog,
   TestConfigOption,
@@ -459,6 +461,34 @@ function parseReplyData(value: JsonObject): ReplyData {
   return data
 }
 
+function parseTelemetryBatchCapability(
+  value: JsonObject,
+): NonNullable<HelloMessage['capabilities']>['telemetryBatch'] {
+  if (requiredSafeInteger(value, 'version', 1, 1) !== 1) {
+    throw new Error('Invalid protocol field: capabilities.telemetryBatch.version')
+  }
+  return {
+    version: 1,
+    maxSamples: requiredSafeInteger(value, 'maxSamples', 1, 64),
+    maxBytes: requiredSafeInteger(value, 'maxBytes', 1),
+    maxLatencyMs: requiredSafeInteger(value, 'maxLatencyMs'),
+    snapshotIntervalMs: requiredSafeInteger(value, 'snapshotIntervalMs'),
+  }
+}
+
+function parseHelloCapabilities(
+  value: JsonObject,
+): HelloMessage['capabilities'] | undefined {
+  if (!Object.prototype.hasOwnProperty.call(value, 'capabilities')) return undefined
+  const capabilities = requiredObject(value, 'capabilities')
+  if (!Object.prototype.hasOwnProperty.call(capabilities, 'telemetryBatch')) return {}
+  return {
+    telemetryBatch: parseTelemetryBatchCapability(
+      requiredObject(capabilities, 'telemetryBatch'),
+    ),
+  }
+}
+
 function parseSnapshot(value: JsonObject): ApplicationSnapshot {
   const descriptorValue = value.descriptor
   const digitalStimulus = Object.prototype.hasOwnProperty.call(value, 'digitalStimulus')
@@ -500,11 +530,37 @@ function parseSample(value: JsonObject): ApplicationSample {
     stepId: requiredString(value, 'stepId'),
     channelId: requiredString(value, 'channelId'),
     timestampUs: requiredSafeInteger(value, 'timestampUs'),
-    cycleIndex: requiredNumber(value, 'cycleIndex'),
+    cycleIndex: requiredSafeInteger(value, 'cycleIndex'),
     values: requiredObject(value, 'values'),
     tags: requiredObject(value, 'tags'),
     ...(streamElapsedUs === undefined ? {} : { streamElapsedUs }),
   }
+}
+
+function parseSampleBatch(value: JsonObject): SampleBatchMessage {
+  const firstSeq = requiredSafeInteger(value, 'firstSeq')
+  const lastSeq = requiredSafeInteger(value, 'lastSeq')
+  const sampleValues = requiredArray(value, 'samples')
+  if (sampleValues.length < 1 || sampleValues.length > 64) {
+    throw new Error('Invalid protocol sampleBatch: samples')
+  }
+  const expectedLast = firstSeq + sampleValues.length - 1
+  if (!Number.isSafeInteger(expectedLast) || lastSeq !== expectedLast) {
+    throw new Error('Invalid protocol sampleBatch: firstSeq/lastSeq')
+  }
+  const samples = sampleValues.map((item) => {
+    if (!isObject(item)) throw new Error('Invalid protocol sampleBatch: samples')
+    return parseSample(item)
+  })
+  const taskId = samples[0]?.taskId
+  if (!taskId || samples.some((sample) => sample.taskId !== taskId)) {
+    throw new Error('Invalid protocol sampleBatch: taskId')
+  }
+  return { v: 1, type: 'sampleBatch', firstSeq, lastSeq, samples }
+}
+
+export function supportsTelemetryBatch(hello: HelloMessage): boolean {
+  return hello.capabilities?.telemetryBatch?.version === 1
 }
 
 export function parseServerMessage(text: string): ServerMessage {
@@ -519,18 +575,20 @@ export function parseServerMessage(text: string): ServerMessage {
   }
 
   if (parsed.type === 'hello') {
+    const capabilities = parseHelloCapabilities(parsed)
     return {
       v: 1,
       type: 'hello',
       server: requiredString(parsed, 'server'),
       protocolVersion: requiredNumber(parsed, 'protocolVersion'),
+      ...(capabilities === undefined ? {} : { capabilities }),
     }
   }
   if (parsed.type === 'snapshot') {
     return {
       v: 1,
       type: 'snapshot',
-      seq: requiredNumber(parsed, 'seq'),
+      seq: requiredSafeInteger(parsed, 'seq'),
       snapshot: parseSnapshot(requiredObject(parsed, 'snapshot')),
     }
   }
@@ -538,10 +596,11 @@ export function parseServerMessage(text: string): ServerMessage {
     return {
       v: 1,
       type: 'sample',
-      seq: requiredNumber(parsed, 'seq'),
+      seq: requiredSafeInteger(parsed, 'seq'),
       sample: parseSample(requiredObject(parsed, 'sample')),
     }
   }
+  if (parsed.type === 'sampleBatch') return parseSampleBatch(parsed)
   if (parsed.type === 'reply') {
     if (typeof parsed.ok !== 'boolean') {
       throw new Error('Invalid protocol field: ok')
@@ -576,7 +635,13 @@ export type ConnectionState =
 
 export type ClientEvent =
   | { type: 'connection'; state: ConnectionState; detail?: string }
-  | { type: 'message'; message: ServerMessage }
+  | { type: 'message'; message: Exclude<ServerMessage, { type: 'sample' } | { type: 'sampleBatch' }> }
+  | {
+    type: 'samples'
+    firstSeq: number
+    lastSeq: number
+    samples: ApplicationSample[]
+  }
 
 type Listener = (event: ClientEvent) => void
 
@@ -619,16 +684,22 @@ export class HwtestClient {
       const socket = new WebSocket(this.url)
       this.socket = socket
       socket.addEventListener('open', () => {
-        this.emit({ type: 'connection', state: 'connected' })
+        if (this.socket === socket) {
+          this.emit({ type: 'connection', state: 'connected' })
+        }
         resolve()
       }, { once: true })
-      socket.addEventListener('message', (event) => this.handleMessage(String(event.data)))
+      socket.addEventListener('message', (event) => {
+        if (this.socket === socket) this.handleMessage(String(event.data))
+      })
       socket.addEventListener('close', () => {
-        if (this.socket === socket) this.socket = null
+        if (this.socket !== socket) return
+        this.socket = null
         this.rejectPending(new Error('WebSocket connection closed'))
         this.emit({ type: 'connection', state: 'disconnected' })
       })
       socket.addEventListener('error', () => {
+        if (this.socket !== socket) return
         const error = new Error(`Cannot connect to ${this.url}`)
         this.emit({ type: 'connection', state: 'error', detail: error.message })
         reject(error)
@@ -660,6 +731,24 @@ export class HwtestClient {
           this.pending.delete(message.id)
           pending.resolve(message)
         }
+      }
+      if (message.type === 'sample') {
+        this.emit({
+          type: 'samples',
+          firstSeq: message.seq,
+          lastSeq: message.seq,
+          samples: [message.sample],
+        })
+        return
+      }
+      if (message.type === 'sampleBatch') {
+        this.emit({
+          type: 'samples',
+          firstSeq: message.firstSeq,
+          lastSeq: message.lastSeq,
+          samples: message.samples,
+        })
+        return
       }
       this.emit({ type: 'message', message })
     } catch (error) {

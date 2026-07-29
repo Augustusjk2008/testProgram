@@ -6,9 +6,11 @@
 
 #include <QHostAddress>
 #include <QDir>
+#include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTimer>
 
 namespace hwtest::app::web {
 namespace {
@@ -66,6 +68,277 @@ TEST(WebSocketFrontendServerTest, ListensOnlyOnLoopbackAndSendsHelloThenSnapshot
                   .value(QStringLiteral("phase"))
                   .toString(),
               QStringLiteral("empty"));
+}
+
+TEST(WebSocketFrontendServerTest, NegotiatesBatchDeliveryAndFlushesTailBeforeTerminalSnapshot)
+{
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, {}, testOptions());
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("batch"),
+                  QStringLiteral("setTelemetryDelivery"),
+                  QJsonObject{{QStringLiteral("mode"), QStringLiteral("batch")}}))),
+              0);
+    QJsonObject reply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("batch"), &reply));
+    ASSERT_TRUE(reply.value(QStringLiteral("ok")).toBool())
+        << reply.value(QStringLiteral("message")).toString().toStdString();
+    EXPECT_EQ(reply.value(QStringLiteral("data"))
+                  .toObject()
+                  .value(QStringLiteral("mode"))
+                  .toString(),
+              QStringLiteral("batch"));
+
+    ApplicationSample first;
+    first.taskId = QStringLiteral("task-1");
+    first.stepId = QStringLiteral("SYSTEM_STATUS");
+    first.channelId = QStringLiteral("SYSTEM_STATUS");
+    first.timestampUs = 1785000000123456LL;
+    first.values.insert(QStringLiteral("cpu_usage"), 12.5);
+    ApplicationSample second = first;
+    second.timestampUs += 1000;
+    second.cycleIndex = 2;
+    second.values.insert(QStringLiteral("cpu_usage"), 13.5);
+    controller.sampleReceived(first);
+    controller.sampleReceived(second);
+
+    ApplicationSnapshot terminal;
+    terminal.phase = QStringLiteral("finished");
+    controller.snapshotChanged(terminal);
+    QJsonObject terminalMessage;
+    ASSERT_TRUE(client.waitForSnapshotPhase(QStringLiteral("finished"),
+                                            &terminalMessage));
+
+    int batchIndex = -1;
+    int terminalIndex = -1;
+    for (int index = 0; index < client.messages().size(); ++index) {
+        const QJsonObject& message = client.messages().at(index);
+        if (message.value(QStringLiteral("type")).toString() ==
+            QStringLiteral("sampleBatch")) {
+            batchIndex = index;
+        }
+        if (message == terminalMessage) {
+            terminalIndex = index;
+        }
+    }
+    ASSERT_GE(batchIndex, 0);
+    ASSERT_GE(terminalIndex, 0);
+    EXPECT_LT(batchIndex, terminalIndex);
+    const QJsonObject batch = client.messages().at(batchIndex);
+    EXPECT_EQ(batch.value(QStringLiteral("firstSeq")).toInt(), 1);
+    EXPECT_EQ(batch.value(QStringLiteral("lastSeq")).toInt(), 2);
+    EXPECT_EQ(batch.value(QStringLiteral("samples")).toArray().size(), 2);
+
+    ASSERT_GT(client.sendText(compact(request(QStringLiteral("disconnect"),
+                                               QStringLiteral("disconnect")))),
+              0);
+    QJsonObject disconnectReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("disconnect"), &disconnectReply));
+    ASSERT_TRUE(disconnectReply.value(QStringLiteral("ok")).toBool());
+    int replyIndex = -1;
+    for (int index = 0; index < client.messages().size(); ++index) {
+        const QJsonObject& message = client.messages().at(index);
+        if (message.value(QStringLiteral("type")).toString() ==
+                QStringLiteral("reply") &&
+            message.value(QStringLiteral("id")).toString() ==
+                QStringLiteral("disconnect")) {
+            replyIndex = index;
+        }
+    }
+    ASSERT_GE(replyIndex, 0);
+    EXPECT_LT(terminalIndex, replyIndex);
+    EXPECT_TRUE(client.waitForDisconnected());
+}
+
+TEST(WebSocketFrontendServerTest, KeepsLegacySingleDeliveryUntilBatchIsNegotiated)
+{
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, {}, testOptions());
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    ApplicationSample sample;
+    sample.taskId = QStringLiteral("task-legacy");
+    sample.stepId = QStringLiteral("SYSTEM_STATUS");
+    sample.channelId = QStringLiteral("SYSTEM_STATUS");
+    sample.timestampUs = 1785000000123456LL;
+    controller.sampleReceived(sample);
+
+    ASSERT_TRUE(client.waitForMessageCount(3));
+    EXPECT_EQ(client.messages().at(2).value(QStringLiteral("type")).toString(),
+              QStringLiteral("sample"));
+    EXPECT_EQ(client.messages().at(2).value(QStringLiteral("seq")).toInt(), 1);
+}
+
+TEST(WebSocketFrontendServerTest, ValidatesTelemetryDeliveryAndRejectsActiveOrPendingSwitches)
+{
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, {}, testOptions());
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    struct InvalidRequest {
+        QJsonObject params;
+        QString code;
+    };
+    const QVector<InvalidRequest> invalid{
+        InvalidRequest{QJsonObject{}, QStringLiteral("missing_field")},
+        InvalidRequest{QJsonObject{{QStringLiteral("mode"), 1}},
+                       QStringLiteral("invalid_envelope")},
+        InvalidRequest{QJsonObject{{QStringLiteral("mode"),
+                                    QStringLiteral("stream")}},
+                       QStringLiteral("invalid_envelope")},
+        InvalidRequest{QJsonObject{{QStringLiteral("mode"),
+                                    QStringLiteral("batch")},
+                                   {QStringLiteral("extra"), true}},
+                       QStringLiteral("invalid_envelope")},
+    };
+    for (int index = 0; index < invalid.size(); ++index) {
+        const QString id = QStringLiteral("invalid-delivery-%1").arg(index);
+        ASSERT_GT(client.sendText(compact(request(
+                      id,
+                      QStringLiteral("setTelemetryDelivery"),
+                      invalid.at(index).params))),
+                  0);
+        QJsonObject reply;
+        ASSERT_TRUE(client.waitForReply(id, &reply));
+        EXPECT_FALSE(reply.value(QStringLiteral("ok")).toBool());
+        EXPECT_EQ(reply.value(QStringLiteral("code")).toString(),
+                  invalid.at(index).code);
+    }
+
+    ApplicationSnapshot running;
+    running.phase = QStringLiteral("running");
+    controller.snapshotChanged(running);
+    ASSERT_TRUE(client.waitForSnapshotPhase(QStringLiteral("running"), nullptr));
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("active"),
+                  QStringLiteral("setTelemetryDelivery"),
+                  QJsonObject{{QStringLiteral("mode"), QStringLiteral("batch")}}))),
+              0);
+    QJsonObject activeReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("active"), &activeReply));
+    EXPECT_FALSE(activeReply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(activeReply.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_state"));
+
+    ApplicationSnapshot finished;
+    finished.phase = QStringLiteral("finished");
+    finished.analysis.state = QStringLiteral("queued");
+    controller.snapshotChanged(finished);
+    ASSERT_TRUE(client.waitForSnapshotPhase(QStringLiteral("finished"), nullptr));
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("batch"),
+                  QStringLiteral("setTelemetryDelivery"),
+                  QJsonObject{{QStringLiteral("mode"), QStringLiteral("batch")}}))),
+              0);
+    QJsonObject batchReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("batch"), &batchReply));
+    ASSERT_TRUE(batchReply.value(QStringLiteral("ok")).toBool());
+
+    ApplicationSample sample;
+    sample.taskId = QStringLiteral("task-pending");
+    sample.timestampUs = 1785000000123456LL;
+    controller.sampleReceived(sample);
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("pending"),
+                  QStringLiteral("setTelemetryDelivery"),
+                  QJsonObject{{QStringLiteral("mode"), QStringLiteral("single")}}))),
+              0);
+    QJsonObject pendingReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("pending"), &pendingReply));
+    EXPECT_FALSE(pendingReply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(pendingReply.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_state"));
+}
+
+TEST(WebSocketFrontendServerTest, MergesOrdinaryRunningSnapshotsInBatchMode)
+{
+    WebSocketServerOptions options = testOptions();
+    options.snapshotIntervalMs = 1000;
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, {}, options);
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("batch"),
+                  QStringLiteral("setTelemetryDelivery"),
+                  QJsonObject{{QStringLiteral("mode"), QStringLiteral("batch")}}))),
+              0);
+    QJsonObject reply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("batch"), &reply));
+    ASSERT_TRUE(reply.value(QStringLiteral("ok")).toBool());
+
+    ApplicationSnapshot running;
+    running.phase = QStringLiteral("running");
+    running.progress = 1;
+    controller.snapshotChanged(running);
+    ASSERT_TRUE(client.waitForSnapshotPhase(QStringLiteral("running"), nullptr));
+    running.progress = 2;
+    controller.snapshotChanged(running);
+    running.progress = 3;
+    controller.snapshotChanged(running);
+
+    QEventLoop settleLoop;
+    QTimer::singleShot(30, &settleLoop, &QEventLoop::quit);
+    settleLoop.exec();
+    EXPECT_EQ(client.messages().size(), 4);
+
+    ApplicationSnapshot finished = running;
+    finished.phase = QStringLiteral("finished");
+    controller.snapshotChanged(finished);
+    ASSERT_TRUE(client.waitForMessageCount(6));
+    const QJsonObject merged = client.messages().at(4);
+    const QJsonObject terminal = client.messages().at(5);
+    EXPECT_EQ(merged.value(QStringLiteral("type")).toString(),
+              QStringLiteral("snapshot"));
+    EXPECT_EQ(merged.value(QStringLiteral("seq")).toInt(), 3);
+    EXPECT_EQ(merged.value(QStringLiteral("snapshot"))
+                  .toObject()
+                  .value(QStringLiteral("progress"))
+                  .toInt(),
+              3);
+    EXPECT_EQ(terminal.value(QStringLiteral("snapshot"))
+                  .toObject()
+                  .value(QStringLiteral("phase"))
+                  .toString(),
+              QStringLiteral("finished"));
+}
+
+TEST(WebSocketFrontendServerTest, HardOutputLimitClosesClientAfterTelemetryBackpressure)
+{
+    WebSocketServerOptions options = testOptions();
+    options.maxQueuedOutputBytes = 65536;
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, {}, options);
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    ApplicationSample oversized;
+    oversized.taskId = QStringLiteral("task-overflow");
+    oversized.stepId = QStringLiteral("SYSTEM_STATUS");
+    oversized.channelId = QStringLiteral("SYSTEM_STATUS");
+    oversized.timestampUs = 1785000000123456LL;
+    oversized.values.insert(QStringLiteral("payload"),
+                            QString(70000, QLatin1Char('x')));
+    controller.sampleReceived(oversized);
+
+    ASSERT_TRUE(client.waitForDisconnected(5000));
+    EXPECT_EQ(client.closeCode(), QWebSocketProtocol::CloseCodeBadOperation);
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
 }
 
 TEST(WebSocketFrontendServerTest, RejectsUnknownAnalysisResultParameters)

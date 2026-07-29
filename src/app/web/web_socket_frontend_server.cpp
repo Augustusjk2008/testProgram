@@ -1,12 +1,15 @@
 #include "web_socket_frontend_server.h"
 
 #include "web_protocol.h"
+#include "web_telemetry_batcher.h"
 
+#include <QByteArray>
 #include <QDebug>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QFileInfo>
 #include <QPointer>
+#include <QQueue>
 #include <QSet>
 #include <QTimer>
 #include <QWebSocket>
@@ -23,6 +26,8 @@
 namespace hwtest::app::web {
 
 namespace {
+
+constexpr quint64 kMaxJsonSafeInteger = 9007199254740991ULL;
 
 ActionResult protocolError(const QString& code, const QString& message)
 {
@@ -119,6 +124,21 @@ quint64 qtIncomingLimit(quint64 protocolLimit)
     return protocolLimit + 1;
 }
 
+int normalizedBatchSampleLimit(int value)
+{
+    return std::max(1, std::min(value, 64));
+}
+
+qint64 normalizedPositiveBytes(qint64 value)
+{
+    return std::max<qint64>(1, value);
+}
+
+int normalizedNonNegativeMilliseconds(int value)
+{
+    return std::max(0, value);
+}
+
 } // namespace
 
 class WebSocketFrontendServer::Impl final {
@@ -129,6 +149,18 @@ public:
         Disconnect,
         Quit,
         DropCleanup,
+        BackpressureCleanup,
+    };
+
+    enum class TelemetryDeliveryMode {
+        Single,
+        Batch,
+    };
+
+    struct QueuedOutput {
+        quint64 epoch = 0;
+        QString text;
+        qint64 byteCount = 0;
     };
 
     Impl(WebSocketFrontendServer* owner,
@@ -141,22 +173,19 @@ public:
         , options(optionsValue)
         , server(QStringLiteral("hwtest_web"), QWebSocketServer::NonSecureMode)
     {
+        snapshotFlushTimer.setSingleShot(true);
+        QObject::connect(&snapshotFlushTimer,
+                         &QTimer::timeout,
+                         q,
+                         [this] { flushDeferredRunningSnapshot(); });
         if (controller != nullptr) {
             cachedSnapshot = controller->snapshot();
             QObject::connect(controller,
-                             &TestApplicationController::snapshotChanged,
-                             q,
-                             [this](const ApplicationSnapshot& snapshot) {
-                                 cachedSnapshot = snapshot;
-                                 ++snapshotSequence;
-                                 if (activeClient != nullptr &&
-                                     activeClient->state() ==
-                                         QAbstractSocket::ConnectedState) {
-                                     send(activeClient,
-                                          makeSnapshot(snapshotSequence,
-                                                       cachedSnapshot));
-                                 }
-                             });
+                              &TestApplicationController::snapshotChanged,
+                              q,
+                              [this](const ApplicationSnapshot& snapshot) {
+                                  handleSnapshotChanged(snapshot);
+                              });
             QObject::connect(controller,
                              &TestApplicationController::stopCompleted,
                              q,
@@ -164,25 +193,11 @@ public:
                                  handleStopCompleted(result);
                              });
             QObject::connect(controller,
-                             &TestApplicationController::sampleReceived,
-                             q,
-                             [this](const ApplicationSample& sample) {
-                                 if (activeClient == nullptr ||
-                                     activeClient->state() !=
-                                         QAbstractSocket::ConnectedState) {
-                                     return;
-                                 }
-                                 const QJsonObject event =
-                                     makeSample(sampleSequence + 1, sample);
-                                 if (event.isEmpty()) {
-                                     qWarning().noquote()
-                                         << "Dropping sample with a timestamp outside "
-                                            "the WebSocket v1 safe-integer range";
-                                     return;
-                                 }
-                                 ++sampleSequence;
-                                 send(activeClient, event);
-                             });
+                              &TestApplicationController::sampleReceived,
+                              q,
+                              [this](const ApplicationSample& sample) {
+                                  handleSampleReceived(sample);
+                              });
         }
 
         server.setMaxPendingConnections(2);
@@ -232,6 +247,308 @@ public:
             suppressDisconnectCleanup = socket;
             socket->close(QWebSocketProtocol::CloseCodeNormal,
                           QStringLiteral("Server closed"));
+        }
+    }
+
+    void resetActiveClientProjection()
+    {
+        clearActiveClientProjection();
+        telemetryDeliveryMode = TelemetryDeliveryMode::Single;
+        backpressureCleanupStarted = false;
+        backpressureSocket.clear();
+    }
+
+    void clearActiveClientProjection()
+    {
+        snapshotFlushTimer.stop();
+        hasDeferredRunningSnapshot = false;
+        deferredRunningSnapshot = {};
+        deferredRunningSnapshotSource = {};
+        hasLastProjectedSnapshot = false;
+        if (telemetryBatcher != nullptr) {
+            telemetryBatcher->clear();
+        }
+        telemetryBatcher.reset();
+        outputQueue.clear();
+        queuedOutputBytes = 0;
+        outputPausedAtHighWater = false;
+        closeAfterDrainSocket.clear();
+        closeAfterDrainEpoch = 0;
+        closeAfterDrainReason.clear();
+    }
+
+    void handleSnapshotChanged(const ApplicationSnapshot& snapshot)
+    {
+        cachedSnapshot = snapshot;
+        if (snapshotSequence >= kMaxJsonSafeInteger) {
+            qWarning().noquote()
+                << "Unable to project snapshot after WebSocket v1 sequence exhaustion";
+            return;
+        }
+        ++snapshotSequence;
+        if (activeClient == nullptr ||
+            activeClient->state() != QAbstractSocket::ConnectedState) {
+            return;
+        }
+
+        const QJsonObject message = makeSnapshot(snapshotSequence, cachedSnapshot);
+        if (message.isEmpty()) {
+            qWarning().noquote()
+                << "Unable to project snapshot within the WebSocket v1 safe-integer range";
+            return;
+        }
+        if (canMergeRunningSnapshot(snapshot)) {
+            deferredRunningSnapshot = message;
+            deferredRunningSnapshotSource = snapshot;
+            hasDeferredRunningSnapshot = true;
+            if (!snapshotFlushTimer.isActive()) {
+                snapshotFlushTimer.start(
+                    normalizedNonNegativeMilliseconds(options.snapshotIntervalMs));
+            }
+            return;
+        }
+
+        flushDeferredRunningSnapshot();
+        flushTelemetry();
+        enqueueActiveMessage(message);
+        lastProjectedSnapshot = snapshot;
+        hasLastProjectedSnapshot = true;
+    }
+
+    void handleSampleReceived(const ApplicationSample& sample)
+    {
+        if (activeClient == nullptr ||
+            activeClient->state() != QAbstractSocket::ConnectedState ||
+            backpressureCleanupStarted) {
+            return;
+        }
+        if (sampleSequence >= kMaxJsonSafeInteger) {
+            qWarning().noquote()
+                << "Unable to project sample after WebSocket v1 sequence exhaustion";
+            beginTelemetryBackpressureCleanup(activeClient);
+            return;
+        }
+
+        const quint64 nextSequence = sampleSequence + 1;
+        if (telemetryDeliveryMode == TelemetryDeliveryMode::Batch) {
+            if (telemetryBatcher == nullptr ||
+                !telemetryBatcher->enqueueSample(nextSequence, sample)) {
+                qWarning().noquote()
+                    << "Dropping sample outside the WebSocket v1 safe-integer range";
+                return;
+            }
+        } else {
+            const QJsonObject event = makeSample(nextSequence, sample);
+            if (event.isEmpty()) {
+                qWarning().noquote()
+                    << "Dropping sample outside the WebSocket v1 safe-integer range";
+                return;
+            }
+            enqueueActiveMessage(event);
+        }
+        sampleSequence = nextSequence;
+    }
+
+    bool canMergeRunningSnapshot(const ApplicationSnapshot& snapshot) const
+    {
+        if (telemetryDeliveryMode != TelemetryDeliveryMode::Batch ||
+            snapshot.phase != QStringLiteral("running") ||
+            !hasLastProjectedSnapshot ||
+            lastProjectedSnapshot.phase != QStringLiteral("running")) {
+            return false;
+        }
+        if (snapshot.errorCode != lastProjectedSnapshot.errorCode ||
+            snapshot.dataSaveError != lastProjectedSnapshot.dataSaveError ||
+            snapshot.analysis.state != lastProjectedSnapshot.analysis.state) {
+            return false;
+        }
+        return compactJson(digitalStimulusObject(snapshot.digitalStimulus)) ==
+            compactJson(digitalStimulusObject(lastProjectedSnapshot.digitalStimulus));
+    }
+
+    void flushDeferredRunningSnapshot()
+    {
+        if (!hasDeferredRunningSnapshot) {
+            return;
+        }
+        snapshotFlushTimer.stop();
+        const QJsonObject message = deferredRunningSnapshot;
+        const ApplicationSnapshot snapshot = deferredRunningSnapshotSource;
+        hasDeferredRunningSnapshot = false;
+        deferredRunningSnapshot = {};
+        deferredRunningSnapshotSource = {};
+        enqueueActiveMessage(message);
+        lastProjectedSnapshot = snapshot;
+        hasLastProjectedSnapshot = true;
+    }
+
+    void flushTelemetry()
+    {
+        if (telemetryBatcher != nullptr) {
+            telemetryBatcher->flush();
+        }
+    }
+
+    void send(QWebSocket* socket, const QJsonObject& message)
+    {
+        if (message.isEmpty()) {
+            return;
+        }
+        if (socket == activeClient) {
+            if (message.value(QStringLiteral("type")).toString() ==
+                QStringLiteral("reply")) {
+                flushDeferredRunningSnapshot();
+                flushTelemetry();
+            }
+            enqueueActiveMessage(message);
+            return;
+        }
+        sendDirect(socket, message);
+    }
+
+    static void sendDirect(QWebSocket* socket, const QJsonObject& message)
+    {
+        if (socket != nullptr &&
+            socket->state() == QAbstractSocket::ConnectedState &&
+            !message.isEmpty()) {
+            socket->sendTextMessage(compactJson(message));
+        }
+    }
+
+    void enqueueActiveMessage(const QJsonObject& message)
+    {
+        QWebSocket* socket = activeClient;
+        if (socket == nullptr ||
+            socket->state() != QAbstractSocket::ConnectedState ||
+            backpressureCleanupStarted || message.isEmpty()) {
+            return;
+        }
+
+        const QString text = compactJson(message);
+        const qint64 byteCount = text.toUtf8().size();
+        if (wouldExceedQueuedOutputLimit(socket, byteCount)) {
+            beginTelemetryBackpressureCleanup(socket);
+            return;
+        }
+        outputQueue.enqueue(QueuedOutput{activeClientEpoch, text, byteCount});
+        queuedOutputBytes += byteCount;
+        pumpOutput();
+    }
+
+    bool wouldExceedQueuedOutputLimit(const QWebSocket* socket,
+                                       qint64 additionalBytes) const
+    {
+        const qint64 hardLimit =
+            normalizedPositiveBytes(options.maxQueuedOutputBytes);
+        const qint64 socketBytes =
+            socket == nullptr ? 0 : std::max<qint64>(0, socket->bytesToWrite());
+        if (socketBytes >= hardLimit || queuedOutputBytes > hardLimit - socketBytes) {
+            return true;
+        }
+        return additionalBytes > hardLimit - socketBytes - queuedOutputBytes;
+    }
+
+    void pumpOutput()
+    {
+        QWebSocket* socket = activeClient;
+        if (socket == nullptr ||
+            socket->state() != QAbstractSocket::ConnectedState) {
+            return;
+        }
+        const qint64 highWater =
+            normalizedPositiveBytes(options.socketHighWaterBytes);
+        const qint64 lowWater = std::min(
+            std::max<qint64>(0, options.socketLowWaterBytes), highWater);
+        const qint64 socketBytes = std::max<qint64>(0, socket->bytesToWrite());
+        if (outputPausedAtHighWater) {
+            if (socketBytes > lowWater) {
+                return;
+            }
+            outputPausedAtHighWater = false;
+        }
+
+        while (!outputQueue.isEmpty()) {
+            if (outputQueue.head().epoch != activeClientEpoch) {
+                queuedOutputBytes -= outputQueue.dequeue().byteCount;
+                continue;
+            }
+            if (socket->bytesToWrite() >= highWater) {
+                outputPausedAtHighWater = true;
+                break;
+            }
+            const QueuedOutput output = outputQueue.dequeue();
+            queuedOutputBytes -= output.byteCount;
+            socket->sendTextMessage(output.text);
+            if (socket->bytesToWrite() >= highWater) {
+                outputPausedAtHighWater = true;
+                break;
+            }
+        }
+        maybeCloseAfterDrain();
+    }
+
+    void resumeOutput(QWebSocket* socket)
+    {
+        if (socket == activeClient) {
+            pumpOutput();
+        }
+    }
+
+    void queueCloseAfterDrain(QWebSocket* socket,
+                              QWebSocketProtocol::CloseCode code,
+                              const QString& reason)
+    {
+        if (socket == nullptr || socket != activeClient) {
+            return;
+        }
+        closeAfterDrainSocket = socket;
+        closeAfterDrainEpoch = activeClientEpoch;
+        closeAfterDrainCode = code;
+        closeAfterDrainReason = reason;
+        pumpOutput();
+    }
+
+    void maybeCloseAfterDrain()
+    {
+        QWebSocket* socket = closeAfterDrainSocket;
+        if (socket == nullptr) {
+            return;
+        }
+        if (socket != activeClient || closeAfterDrainEpoch != activeClientEpoch) {
+            closeAfterDrainSocket.clear();
+            return;
+        }
+        if (!outputQueue.isEmpty() || socket->bytesToWrite() > 0) {
+            return;
+        }
+        const QWebSocketProtocol::CloseCode code = closeAfterDrainCode;
+        const QString reason = closeAfterDrainReason;
+        closeAfterDrainSocket.clear();
+        closeAfterDrainReason.clear();
+        suppressDisconnectCleanup = socket;
+        socket->close(code, reason);
+    }
+
+    void beginTelemetryBackpressureCleanup(QWebSocket* socket)
+    {
+        if (backpressureCleanupStarted) {
+            return;
+        }
+        backpressureCleanupStarted = true;
+        backpressureSocket = socket;
+        qWarning().noquote()
+            << "telemetry_backpressure: WebSocket output exceeded its configured hard limit";
+        snapshotFlushTimer.stop();
+        hasDeferredRunningSnapshot = false;
+        deferredRunningSnapshot = {};
+        if (telemetryBatcher != nullptr) {
+            telemetryBatcher->clear();
+        }
+        outputQueue.clear();
+        queuedOutputBytes = 0;
+        outputPausedAtHighWater = false;
+        if (pendingOperation == PendingOperation::None) {
+            beginCleanup(PendingOperation::BackpressureCleanup, QString(), socket);
         }
     }
 
@@ -305,6 +622,20 @@ public:
     void activate(QWebSocket* socket)
     {
         activeClient = socket;
+        ++activeClientEpoch;
+        resetActiveClientProjection();
+        WebTelemetryBatcherOptions batcherOptions;
+        batcherOptions.maxSamples = normalizedBatchSampleLimit(options.maxBatchSamples);
+        batcherOptions.maxBytes = normalizedPositiveBytes(options.maxBatchBytes);
+        batcherOptions.maxLatencyMs =
+            normalizedNonNegativeMilliseconds(options.maxBatchLatencyMs);
+        telemetryBatcher = std::make_unique<WebTelemetryBatcher>(batcherOptions);
+        const quint64 epoch = activeClientEpoch;
+        telemetryBatcher->setFlushCallback([this, epoch](const QJsonObject& batch) {
+            if (epoch == activeClientEpoch) {
+                enqueueActiveMessage(batch);
+            }
+        });
         const quint64 hardLimit = qtIncomingLimit(options.maxIncomingMessageBytes);
         socket->setMaxAllowedIncomingFrameSize(hardLimit);
         socket->setMaxAllowedIncomingMessageSize(hardLimit);
@@ -321,9 +652,9 @@ public:
                          &QWebSocket::binaryMessageReceived,
                          q,
                          [this, socket](const QByteArray&) {
-                             if (socket != activeClient) {
-                                 return;
-                             }
+                              if (socket != activeClient) {
+                                  return;
+                              }
                              send(socket,
                                   makeReply(
                                       QString(),
@@ -334,6 +665,14 @@ public:
                              socket->close(
                                  QWebSocketProtocol::CloseCodeDatatypeNotSupported,
                                  QStringLiteral("Binary messages are not supported"));
+                          });
+        QObject::connect(socket,
+                         &QWebSocket::bytesWritten,
+                         q,
+                         [this, socket](qint64) {
+                             if (socket == activeClient) {
+                                 resumeOutput(socket);
+                             }
                          });
         QObject::connect(socket,
                          &QWebSocket::disconnected,
@@ -341,6 +680,7 @@ public:
                          [this, socket] {
                              if (socket == activeClient) {
                                  activeClient.clear();
+                                 clearActiveClientProjection();
                                  if (socket == suppressDisconnectCleanup) {
                                      suppressDisconnectCleanup.clear();
                                      return;
@@ -349,10 +689,19 @@ public:
                                      handleActiveClientDropped();
                                  }
                              }
-                         });
+                          });
 
-        send(socket, makeHello());
-        send(socket, makeSnapshot(snapshotSequence, cachedSnapshot));
+        send(socket,
+             makeHello(normalizedBatchSampleLimit(options.maxBatchSamples),
+                       normalizedPositiveBytes(options.maxBatchBytes),
+                       normalizedNonNegativeMilliseconds(options.maxBatchLatencyMs),
+                       normalizedNonNegativeMilliseconds(options.snapshotIntervalMs)));
+        const QJsonObject initialSnapshot = makeSnapshot(snapshotSequence, cachedSnapshot);
+        send(socket, initialSnapshot);
+        if (!initialSnapshot.isEmpty()) {
+            lastProjectedSnapshot = cachedSnapshot;
+            hasLastProjectedSnapshot = true;
+        }
     }
 
     void receiveText(QWebSocket* socket, const QString& text)
@@ -387,6 +736,16 @@ public:
                  snapshot.value(QStringLiteral("snapshot"))},
             };
             send(socket, makeReply(request.id, ActionResult{}, data));
+            return;
+        }
+
+        if (request.action == QStringLiteral("setTelemetryDelivery")) {
+            ActionResult validation;
+            if (!validateAction(request, &validation)) {
+                send(socket, makeReply(request.id, validation));
+                return;
+            }
+            setTelemetryDelivery(request, socket);
             return;
         }
 
@@ -543,11 +902,11 @@ public:
                 }
                 return false;
             }
-            if (value < 10.0 || value > 3600000.0) {
+            if (value < 0.0 || value > 3600000.0) {
                 if (error != nullptr) {
                     *error = protocolError(
                         QStringLiteral("ParameterRangeError"),
-                        QStringLiteral("Parameter 'intervalMs' must be in the range 10..3600000"));
+                        QStringLiteral("Parameter 'intervalMs' must be in the range 0..3600000"));
                 }
                 return false;
             }
@@ -659,6 +1018,31 @@ public:
         }
         if (request.action == QStringLiteral("start")) {
             return parseStartOptions(request, nullptr, error);
+        }
+        if (request.action == QStringLiteral("setTelemetryDelivery")) {
+            if (request.params.size() != 1 ||
+                !request.params.contains(QStringLiteral("mode"))) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        request.params.contains(QStringLiteral("mode"))
+                            ? QStringLiteral("invalid_envelope")
+                            : QStringLiteral("missing_field"),
+                        QStringLiteral("setTelemetryDelivery only accepts mode"));
+                }
+                return false;
+            }
+            const QJsonValue mode = request.params.value(QStringLiteral("mode"));
+            if (!mode.isString() ||
+                (mode.toString() != QStringLiteral("single") &&
+                 mode.toString() != QStringLiteral("batch"))) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'mode' must be 'single' or 'batch'"));
+                }
+                return false;
+            }
+            return true;
         }
         if (request.action == QStringLiteral("analysisResult")) {
             static const QSet<QString> allowed{
@@ -788,6 +1172,49 @@ public:
             return false;
         }
         return true;
+    }
+
+    void setTelemetryDelivery(const WebRequest& request, QWebSocket* socket)
+    {
+        const QString mode = request.params.value(QStringLiteral("mode")).toString();
+        if (!canChangeTelemetryDelivery()) {
+            send(socket,
+                 makeReply(
+                     request.id,
+                     protocolError(
+                         QStringLiteral("invalid_state"),
+                         QStringLiteral(
+                             "Telemetry delivery can only change without an active test or pending output"))));
+            return;
+        }
+
+        telemetryDeliveryMode = mode == QStringLiteral("batch")
+            ? TelemetryDeliveryMode::Batch
+            : TelemetryDeliveryMode::Single;
+        send(socket,
+             makeReply(request.id,
+                       ActionResult{},
+                       QJsonObject{{QStringLiteral("mode"), mode}}));
+    }
+
+    bool canChangeTelemetryDelivery() const
+    {
+        if (pendingOperation != PendingOperation::None ||
+            backpressureCleanupStarted) {
+            return false;
+        }
+        const QString& phase = cachedSnapshot.phase;
+        if (phase == QStringLiteral("preparing") ||
+            phase == QStringLiteral("running") ||
+            phase == QStringLiteral("paused") ||
+            phase == QStringLiteral("stopping")) {
+            return false;
+        }
+        if ((telemetryBatcher != nullptr && telemetryBatcher->hasPendingSamples()) ||
+            hasDeferredRunningSnapshot || !outputQueue.isEmpty()) {
+            return false;
+        }
+        return activeClient == nullptr || activeClient->bytesToWrite() == 0;
     }
 
     void dispatchControllerAction(const WebRequest& request, QWebSocket* socket)
@@ -961,10 +1388,11 @@ public:
                         if (socketGuard == nullptr) {
                             return;
                         }
-                        send(socketGuard,
-                             action == QStringLiteral("analysisResult")
-                                 ? makeAnalysisResultReply(id, result, data)
-                                 : makeReply(id, result, data));
+                        owner->m_impl->send(
+                            socketGuard,
+                            action == QStringLiteral("analysisResult")
+                                ? makeAnalysisResultReply(id, result, data)
+                                : makeReply(id, result, data));
                     },
                     Qt::QueuedConnection);
             },
@@ -1009,6 +1437,15 @@ public:
                            const QString& id,
                            const ActionResult& result)
     {
+        if (backpressureCleanupStarted &&
+            pendingOperation == PendingOperation::Stop &&
+            pendingRequestId == id && !result.ok) {
+            pendingOperation = PendingOperation::BackpressureCleanup;
+            pendingRequestId.clear();
+            pendingSocket = backpressureSocket;
+            scheduleShutdown();
+            return;
+        }
         if (pendingOperation != PendingOperation::Stop ||
             pendingRequestId != id || result.ok) {
             return;
@@ -1019,6 +1456,14 @@ public:
 
     void handleStopCompleted(const ActionResult& result)
     {
+        if (backpressureCleanupStarted) {
+            pendingOperation = PendingOperation::BackpressureCleanup;
+            pendingRequestId.clear();
+            pendingSocket = backpressureSocket;
+            Q_UNUSED(result);
+            scheduleShutdown();
+            return;
+        }
         if (pendingOperation == PendingOperation::Stop) {
             const QString id = pendingRequestId;
             const QPointer<QWebSocket> socket = pendingSocket;
@@ -1089,7 +1534,14 @@ public:
     {
         if (pendingOperation != PendingOperation::Disconnect &&
             pendingOperation != PendingOperation::Quit &&
-            pendingOperation != PendingOperation::DropCleanup) {
+            pendingOperation != PendingOperation::DropCleanup &&
+            pendingOperation != PendingOperation::BackpressureCleanup) {
+            return;
+        }
+        if (backpressureCleanupStarted) {
+            if (!result.ok || !needsStop) {
+                scheduleShutdown();
+            }
             return;
         }
         if (!result.ok) {
@@ -1153,6 +1605,20 @@ public:
         const QPointer<QWebSocket> socket = pendingSocket;
         clearPending();
 
+        if (backpressureCleanupStarted ||
+            completedOperation == PendingOperation::BackpressureCleanup) {
+            backpressureCleanupStarted = false;
+            const QPointer<QWebSocket> backpressureTarget = backpressureSocket;
+            backpressureSocket.clear();
+            if (backpressureTarget != nullptr) {
+                suppressDisconnectCleanup = backpressureTarget;
+                backpressureTarget->close(
+                    QWebSocketProtocol::CloseCodeBadOperation,
+                    QStringLiteral("telemetry_backpressure"));
+            }
+            return;
+        }
+
         if (completedOperation == PendingOperation::DropCleanup) {
             return;
         }
@@ -1181,7 +1647,6 @@ public:
             }
             return;
         }
-        suppressDisconnectCleanup = socket;
         if (quitting) {
             const QPointer<WebSocketFrontendServer> owner(q);
             QObject::connect(socket,
@@ -1193,9 +1658,10 @@ public:
                                  }
                              });
         }
-        socket->close(QWebSocketProtocol::CloseCodeNormal,
-                      quitting ? QStringLiteral("quit")
-                               : QStringLiteral("disconnect"));
+        queueCloseAfterDrain(socket,
+                             QWebSocketProtocol::CloseCodeNormal,
+                             quitting ? QStringLiteral("quit")
+                                      : QStringLiteral("disconnect"));
     }
 
     void handleActiveClientDropped()
@@ -1208,7 +1674,8 @@ public:
         }
         if (pendingOperation == PendingOperation::Disconnect ||
             pendingOperation == PendingOperation::Quit ||
-            pendingOperation == PendingOperation::DropCleanup) {
+            pendingOperation == PendingOperation::DropCleanup ||
+            pendingOperation == PendingOperation::BackpressureCleanup) {
             pendingSocket.clear();
             return;
         }
@@ -1222,20 +1689,31 @@ public:
         pendingSocket.clear();
     }
 
-    static void send(QWebSocket* socket, const QJsonObject& message)
-    {
-        if (socket != nullptr && socket->state() == QAbstractSocket::ConnectedState) {
-            const QString text = compactJson(message);
-            socket->sendTextMessage(text);
-        }
-    }
-
     WebSocketFrontendServer* q = nullptr;
     QPointer<TestApplicationController> controller;
     FrontendLaunchOptions launchOptions;
     WebSocketServerOptions options;
     QWebSocketServer server;
     QPointer<QWebSocket> activeClient;
+    quint64 activeClientEpoch = 0;
+    TelemetryDeliveryMode telemetryDeliveryMode = TelemetryDeliveryMode::Single;
+    std::unique_ptr<WebTelemetryBatcher> telemetryBatcher;
+    QTimer snapshotFlushTimer;
+    bool hasDeferredRunningSnapshot = false;
+    QJsonObject deferredRunningSnapshot;
+    ApplicationSnapshot deferredRunningSnapshotSource;
+    ApplicationSnapshot lastProjectedSnapshot;
+    bool hasLastProjectedSnapshot = false;
+    QQueue<QueuedOutput> outputQueue;
+    qint64 queuedOutputBytes = 0;
+    bool outputPausedAtHighWater = false;
+    QPointer<QWebSocket> closeAfterDrainSocket;
+    quint64 closeAfterDrainEpoch = 0;
+    QWebSocketProtocol::CloseCode closeAfterDrainCode =
+        QWebSocketProtocol::CloseCodeNormal;
+    QString closeAfterDrainReason;
+    bool backpressureCleanupStarted = false;
+    QPointer<QWebSocket> backpressureSocket;
     ApplicationSnapshot cachedSnapshot;
     quint64 snapshotSequence = 0;
     quint64 sampleSequence = 0;

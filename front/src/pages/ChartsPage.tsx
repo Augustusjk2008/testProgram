@@ -10,7 +10,7 @@ import {
   type SeriesAssignment,
 } from '../features/telemetry/series-config'
 import { chartWorkspaceStorageKey } from '../features/telemetry/chart-workspace-storage'
-import { useSession } from '../features/session/SessionProvider'
+import { useSession, useTelemetry } from '../features/session/SessionProvider'
 import { DEFAULT_TIME_WINDOW_SECONDS } from '../shared/config'
 import { fieldLabel } from '../shared/format'
 import { setLocalStorageValue } from '../shared/storage'
@@ -32,7 +32,8 @@ function loadConfig(storageKey: string): StoredConfig {
 }
 
 export function ChartsPage() {
-  const { clearTelemetry, dataVersion, fields, snapshot, telemetry } = useSession()
+  const { snapshot } = useSession()
+  const { clearTelemetry, dataVersion, fields, telemetry } = useTelemetry()
   const descriptor = snapshot.descriptor
   const storageKey = useMemo(
     () => chartWorkspaceStorageKey(descriptor.configId, descriptor.algorithmId),

@@ -31,7 +31,8 @@
 - 字段名区分大小写。协议未定义的顶层字段应被忽略，以便尾部扩展；已定义字段的类型必须严格符合本文。
 - 服务器发送紧凑 JSON，不依赖空白或对象成员顺序。
 - 每个有效请求恰好产生一个相同 `id` 的 reply。快照和样本是独立异步事件，可以出现在请求与 reply 之间。
-- `setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、descriptor 中的 `postRunAnalysis`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。新客户端收到旧服务端缺失的后处理字段时，安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。
+- 所有对浏览器可见的事件序号必须是 `0..9007199254740991` 内的整数。服务端不得把超出 JavaScript 安全整数范围的 `snapshot.seq`、`sample.seq`、`sampleBatch.firstSeq` 或 `sampleBatch.lastSeq` 转成 JSON number 后发送。
+- `setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`setTelemetryDelivery`、descriptor 中的 `postRunAnalysis`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。新客户端收到旧服务端缺失的后处理字段时，安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。
 
 ## 4. 消息结构
 
@@ -62,10 +63,12 @@
 ### 4.3 握手问候
 
 ```json
-{"v":1,"type":"hello","server":"hwtest_web","protocolVersion":1}
+{"v":1,"type":"hello","server":"hwtest_web","protocolVersion":1,"capabilities":{"telemetryBatch":{"version":1,"maxSamples":64,"maxBytes":32768,"maxLatencyMs":20,"snapshotIntervalMs":100}}}
 ```
 
 连接成为活跃客户端后，服务器首先发送 `hello`，随后发送当前完整快照。客户端不应把 `hello` 当作请求 reply。
+
+`capabilities.telemetryBatch` 是协商式批量遥测能力；字段中的数值是该连接实际可用的上限。默认值为 `version=1`、`maxSamples=64`、`maxBytes=32768`、`maxLatencyMs=20`、`snapshotIntervalMs=100`。缺失该 capability 的旧服务端只支持旧的单条 `sample` 投影；客户端必须保持 `single`，不得仅因协议版本为 1 推断批量能力。
 
 ### 4.4 快照事件
 
@@ -73,7 +76,9 @@
 {"v":1,"type":"snapshot","seq":12,"snapshot":{"phase":"running","progress":25}}
 ```
 
-`seq` 是服务器进程生命周期内单调递增的非负整数。服务器启动时缓存控制器当前快照且 `seq` 为 `0`；每收到一次 `snapshotChanged` 就先递增 `seq`，再广播完整快照。新客户端收到的是当前 `seq` 和完整缓存，而不是增量补丁。
+`seq` 是服务器进程生命周期内单调递增、位于 JavaScript 安全整数范围内的非负整数。服务器启动时缓存控制器当前快照且 `seq` 为 `0`；每收到一次 `snapshotChanged` 都先递增源序号，再更新完整缓存。新客户端收到的是当前 `seq` 和完整缓存，而不是增量补丁。
+
+在默认 `single` 投递模式，服务器逐次投影快照，保持既有行为。在已协商的 `batch` 模式，普通 `phase="running"` 快照可只保留最新值并最多每 `snapshotIntervalMs` 投影一次；因此客户端看到的快照 `seq` 可以跳号，跳号只表示状态投影合并，不能推断样本丢失。首个运行快照、暂停/恢复、`errorCode`、`dataSaveError` 或数字刺激安全状态变化、分析状态变化、以及 `finished`、`stopped`、`error` 等非运行终态均不得合并或延迟。
 
 `snapshot` 必须包含 `ApplicationSnapshot` 的全部公共字段：
 
@@ -146,7 +151,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 
 摘要不携带完整伯德数组，避免每次快照或重连重复广播大载荷。摘要在结果提交前按 `maxAnalysisSummaryBytes` 验证，每通道警告最多 16 条、单条 UTF-8 最多 512 字节，超出部分只反映为 `omittedWarningCount`；无法满足限制时整体进入 `failed`。`failed`/`cancelled` 只能是整体基础设施终态，不得携带半成品曲线。
 
-分析状态独立于 `snapshot.phase` 和 BIZ `TestState`：性能结果不改变采集 `verdict`、`errorCode`、`TestResult` 或 STOP 硬件语义。`[当前实现]` DTO 可以投影 `capturing` 和查询接口；完整的 STOP 尾样本封存、`queued` 到终态状态机和投影填充尚未在控制器中接通。
+分析状态独立于 `snapshot.phase` 和 BIZ `TestState`：性能结果不改变采集 `verdict`、`errorCode`、`TestResult` 或 STOP 硬件语义。`[当前实现]` 控制器已接通 STOP 尾样本封存、`queued` 起写门禁、硬件收尾栅栏、后台分析/持久化/取消和终态投影；Web 只按当前 `{taskId, analysisGeneration}` 暴露摘要与只读查询结果。
 
 ### 4.5 样本事件
 
@@ -154,7 +159,23 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 {"v":1,"type":"sample","seq":42,"sample":{"taskId":"...","stepId":"IMU_STREAM","channelId":"IMU_STREAM","timestampUs":1785000000123456,"streamElapsedUs":2500,"cycleIndex":1,"values":{"delta_angle_x":0.1},"tags":{}}}
 ```
 
-`sample.seq` 所在的顶层 `seq` 是样本事件在服务器进程生命周期内的独立单调递增序号；它不与快照 `seq` 共用计数器。`timestampUs` 继续是 UTC epoch 微秒，必须是 `0..9007199254740991` 范围内的整数。算法提供非负流内相对时间时，服务追加同一范围内的可选整数 `streamElapsedUs`；其原点是本次设备流第一条有效样本，任意负值均按不可用处理并省略字段，字段缺失保持旧客户端兼容。前端拒绝负数、小数和非 JavaScript 安全整数；服务端也在最终 Web 投影处防御，遇到负或超限 `timestampUs`、超限 `streamElapsedUs` 时丢弃该 Web 事件并记录警告，不发送舍入或不合约 JSON。当前 IMU 使用 `0, 2500, 5000, ...` 的已发布样本理想轴，HELM 使用原始 DDS 时间相对首样本的实际差值；二者的 `timestampUs` 都只用一次 PC UTC 锚点加相对时间生成。HELM 的 `values.dds_timestamp_us` 也受同一安全整数上限约束。`values` 和 `tags` 的其他字段使用与 `rawData` 相同的 JSON-compatible QVariant 转换规则。服务器不缓存或重放历史样本；新客户端从连接后产生的样本开始接收。
+`sample.seq` 所在的顶层 `seq` 是样本事件在服务器进程生命周期内的独立、JavaScript 安全整数范围内的单调递增序号；它不与快照 `seq` 共用计数器。每个新连接默认使用此消息，保持旧客户端完全兼容。`timestampUs` 继续是 UTC epoch 微秒，必须是 `0..9007199254740991` 范围内的整数。算法提供非负流内相对时间时，服务追加同一范围内的可选整数 `streamElapsedUs`；其原点是本次设备流第一条有效样本，任意负值均按不可用处理并省略字段，字段缺失保持旧客户端兼容。前端拒绝负数、小数和非 JavaScript 安全整数；服务端也在最终 Web 投影处防御，遇到负或超限 `timestampUs`、超限 `streamElapsedUs` 时丢弃该 Web 事件并记录警告，不发送舍入或不合约 JSON。当前 IMU 使用 `0, 2500, 5000, ...` 的已发布样本理想轴，HELM 使用原始 DDS 时间相对首样本的实际差值；二者的 `timestampUs` 都只用一次 PC UTC 锚点加相对时间生成。HELM 的 `values.dds_timestamp_us` 也受同一安全整数上限约束。`values` 和 `tags` 的其他字段使用与 `rawData` 相同的 JSON-compatible QVariant 转换规则。服务器不缓存或重放历史样本；新客户端从连接后产生的样本开始接收。
+
+### 4.5.1 批量样本事件
+
+协商 `setTelemetryDelivery.mode="batch"` 成功后，服务端以如下消息替代后续的单条 `sample` 帧：
+
+```json
+{"v":1,"type":"sampleBatch","firstSeq":101,"lastSeq":102,"samples":[{"taskId":"...","stepId":"IMU_STREAM","channelId":"IMU_STREAM","timestampUs":1785000000123456,"cycleIndex":1,"values":{},"tags":{}},{"taskId":"...","stepId":"IMU_STREAM","channelId":"IMU_STREAM","timestampUs":1785000000125956,"cycleIndex":1,"values":{},"tags":{}}]}
+```
+
+- `samples` 必须非空，最多包含 capability `maxSamples` 所声明的数量，且 v1 上限为 64。
+- `firstSeq`、`lastSeq` 都是 JavaScript 安全整数，且严格满足 `lastSeq == firstSeq + samples.length - 1`。样本在进入服务端批量器时分配序号，flush 时不得重编或重排；跨 batch 的序号也不得重置。
+- batch 内样本顺序与 `sampleReceived` 顺序一致；每个元素的字段形状与旧 `sample.sample` 完全一致，不含单独的 `seq` 字段。
+- 一个 batch 不得跨 `taskId`。任务变化前必须先 flush；不得丢字段、降采样或合并相邻样本。
+- 到达样本数、紧凑 JSON 软字节上限、首样本最大等待时间、任务变化、暂停、停止、错误、终态、断线或 `disconnect`/`quit` 收尾时必须 flush。单个样本本身超过软字节上限时，允许完整发送一个超过软上限的单元素 batch，不得截断或静默丢弃。
+
+健康连接期间，批量投影仍包含每一条可投影样本；浏览器环形显示缓存淘汰旧点不等于网络样本丢失。断线前历史不会被缓存或重放，完整长期记录仍以后端启用保存后的 TXT 为事实源。
 
 ## 5. 协议层错误码
 
@@ -167,6 +188,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `missing_field` | 必填字段缺失、字符串为空，或动作必需参数缺失 | 是 |
 | `server_busy` | 已有活跃客户端 | 否，关闭码 `1008` |
 | `message_too_large` | UTF-8 文本超过 `16384` 字节 | 否，关闭码 `1009` |
+| `telemetry_backpressure` | 活跃客户端的出站 FIFO 加 Qt socket 待写字节超过 `maxQueuedOutputBytes` 硬上限 | 否；记录诊断、执行现有安全停止/收尾后以 `1011` 关闭，绝不静默丢样 |
 | `command_in_progress` | `[当前实现]` 正在异步停止、安全收尾，或分析处于 `queued` 到终态之间时又收到新会话写动作 | 是 |
 | `test_config_not_found` | `selectTest.configId` 不在后端启动时发现的配置白名单中 | 是 |
 | `invalid_run_mode` | `start.mode` 不是固定三种模式之一 | 是 |
@@ -190,13 +212,14 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `testConfigs` | `{}` | 返回后端固定 `configs/` 目录中已验证的测试配置摘要；`data` 为 `{ "selectedConfigId": "...", "configs": [{"configId":"...","title":"...","description":"...","algorithmId":"..."}] }`，不返回本地路径 |
 | `selectTest` | `{"configId":"mbddf-elec-health"}` | 只接受 `testConfigs` 返回的白名单 `configId`；服务器映射到本地路径并重新加载配置，若当前处于可运行终态则先安全关闭当前会话；运行中或停止中拒绝切换 |
 | `snapshot` | `{}` | 从 Web 层缓存读取；`data` 为 `{ "seq": n, "snapshot": { ... } }`，其中包含当前配置 descriptor |
+| `setTelemetryDelivery` | `{"mode":"single"}` 或 `{"mode":"batch"}` | Web 层本地协商动作，不调用应用控制器、不占用全局硬件 busy；每个新连接默认为 `single`。只能在没有 `preparing`/`running`/`paused`/`stopping` 活动测试、没有待批样本、没有待发输出且不在 cleanup 时切换；成功 `data` 为 `{ "mode": "single" | "batch" }`。缺少 `mode` 为 `missing_field`，非 string、未知 mode 或额外字段为 `invalid_envelope`，状态不满足为 `invalid_state`。 |
 | `analysisResult` | `{"taskId":"...","analysisGeneration":3,"channel":0}` | 只读；参数必须且只能为这三个字段，taskId 非空，generation 为 `1..9007199254740991` 的安全整数，channel 为 `0..3`。只允许读取当前身份且 `completed`/`partial` 的通道；不匹配返回 `stale_analysis_result`，未就绪返回 `analysis_not_ready`。成功 `data` 为 `{ "analysisResult": { "channelSummary": { ... }, "bode": { "frequencyHz": [], "magnitudeDb": [], "phaseDeg": [], "pointStatus": [] } } }` |
 | `controls` | `{}` | 在控制器亲和线程读取；`data.controls` 为 `{resourceId, providerId}` 数组 |
 | `ports` | `{}` | 在控制器亲和线程读取；`data.ports` 为完整 `SerialPortInfo` 对象数组 |
 | `selectControl` | `{"resourceId":"CONTROL_SERIAL"}` | 调用 `selectControl`；`resourceId` 必须是非空字符串 |
 | `selectSerialPort` | `{"portName":"COM7"}` | 调用 `selectSerialPort`；`portName` 必须是非空字符串 |
 | `prepare` | `{}` | 调用 `prepare` |
-| `start` | `{}` 或 `{"mode":"device_stream","saveData":true,"algorithmParameters":{"waveform":4,"ampl":3.5}}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`，且必须由当前 descriptor 声明；`intervalMs` 为 `10..3600000` 的整数，`maxCycles` 为 `0..1000000000` 的整数且 `0` 表示 PC 周期不限轮数，两者只有 `pc_periodic` 具备调度含义，其他模式由控制器归一为 `1000/1`；`saveData` 只能是 boolean，`pc_periodic` 与 `device_stream` 均可启用保存，`single` 强制不保存；`algorithmParameters` 必须是 object，键和值再由当前算法 Schema 校验 |
+| `start` | `{}` 或 `{"mode":"device_stream","saveData":true,"algorithmParameters":{"waveform":4,"ampl":3.5}}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`，且必须由当前 descriptor 声明；`intervalMs` 为 `0..3600000` 的整数，`0` 表示上一轮完整收发结束后不增加额外等待，所有步骤仍严格串行；`maxCycles` 为 `0..1000000000` 的整数且 `0` 表示 PC 周期不限轮数。两者只有 `pc_periodic` 具备调度含义，其他模式由控制器归一为 `1000/1`；`saveData` 只能是 boolean，`pc_periodic` 与 `device_stream` 均可启用保存，`single` 强制不保存；`algorithmParameters` 必须是 object，键和值再由当前算法 Schema 校验 |
 | `pause` | `{}` | 调用 `pause` |
 | `resume` | `{}` | 调用 `resume` |
 | `setDigitalStimulus` | `{"switchId":"di0","active":true,"expectedRevision":0}` | 必须且只能包含这三个字段；`switchId` 为非空 string，`active` 为 boolean，`expectedRevision` 为 0..9007199254740991 的非负安全整数。未知字段（包括 `resourceId`、`adapterId`、端口或路径）一律 `invalid_envelope`；控制器再按已加载配置白名单验证 `switchId`。reply 的 `data.digitalStimulus` 返回当前状态 |
@@ -241,7 +264,9 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 
 - WebSocket 回调不得直接跨线程调用控制器。所有控制器动作和读取都通过 queued invocation 投递到控制器的 QObject 亲和线程；禁止 `BlockingQueuedConnection`。
 - Web 层不得调用 `waitForTerminal()`。运行进度和终态只通过 `snapshotChanged` 观察。
-- `sampleReceived` 直接形成 sample 事件；Web 层不解释、聚合或绘制字段，也不为连续测试建立定时器或写文件。连续数据文件由共享应用控制器在形成应用 DTO 后记录，TUI/GUI/WebSocket 适配器都不持有 recorder。`analysis` 不进入 sample 事件；伯德数组只能经 `analysisResult` 读取，避免每个样本重复携带大载荷。
+- `sampleReceived` 只消费已形成的应用 DTO；默认 `single` 直接形成旧 `sample` 事件，已协商 `batch` 时进入每连接私有 `WebTelemetryBatcher`。批量器只按数目、字节、时间和 task 边界打包，不解释、合并或绘制业务字段，也不为连续测试写文件。连续数据文件在 Web 投影前已由共享应用控制器记录，TUI/GUI/WebSocket 适配器都不持有 recorder。`analysis` 不进入 sample 事件；伯德数组只能经 `analysisResult` 读取，避免每个样本重复携带大载荷。
+- 活跃客户端的样本 batch、关键快照和控制 reply 进入同一个按调用顺序的出站 FIFO。WebSocket、批量器定时器、快照合并定时器、FIFO 和 `bytesToWrite()` 只在 WebSocket server 亲和线程访问；不得跨线程发送或阻塞等待网络 drain。
+- 默认出站限制为：`maxBatchSamples=64`、`maxBatchBytes=32768`、`maxBatchLatencyMs=20`、`snapshotIntervalMs=100`、`socketHighWaterBytes=1048576`、`socketLowWaterBytes=262144`、`maxQueuedOutputBytes=4194304`。`bytesToWrite()` 到达高水位后暂停继续提交到 Qt socket；在 `bytesWritten()` 使其降至低水位后恢复。达到硬上限时，服务端记录 `telemetry_backpressure`、停止接收新的遥测投影、执行既有安全停止/收尾并关闭旧连接；不保留历史、不重放，也不得把旧 epoch 的 FIFO 内容交给重连客户端。
 - `setDigitalStimulus` 和 `resetDigitalStimulus` 只在控制器处于 `ready`、`running`、`paused`、`finished` 或 `stopped`，且 DI 已准备时才会执行；Web 层不持有或传递物理资源/Adapter 参数。
 - `stop` 保存请求 id，调用 `stopAsync()` 后保持事件循环运行；发起成功后收到 `stopCompleted` 才回复。若 `stopAsync()` 因状态、超时参数或已有停止而立即失败，则直接返回该控制器错误并清除 Web 层 pending 状态。
 - `[当前实现]` 异步停止、断开收尾或后处理处于 `queued` 到终态期间，`snapshot`、`analysisResult`、`testConfigs`、`controls` 和 `ports` 等只读动作仍允许；其他新会话写动作回复 `command_in_progress`，不得再次触发控制器写动作。当前捕获任务 STOP 和所有 cleanup 始终允许。
@@ -251,9 +276,9 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 
 ## 8. 消息顺序保证
 
-1. 活跃连接建立后依次发送 `hello`、当前完整 `snapshot`。
-2. 同一事件循环队列中的普通请求按接收顺序投递；每个请求最多一个 reply。
-3. `snapshotChanged` 和 `sampleReceived` 分别立即形成完整 snapshot/sample 消息，因此它们可以先于触发该变化的动作 reply 到达；`setDigitalStimulus`/`resetDigitalStimulus` 的 reply 也携带当时的 `data.digitalStimulus`。客户端必须按 `type` 分流，不能假定 reply 先于相应 snapshot，且应以序号更高的后续完整 snapshot 更新状态。
-4. `stop`、`disconnect`、`quit` 的 reply 必须晚于 `stopCompleted`（若需要停止）和 `shutdown`（若需要收尾）。
-5. `disconnect`/`quit` 的最终 reply 必须先于正常关闭帧；`quit` 的关闭帧必须先于进程退出。
+1. 活跃连接建立后依次把 `hello`、当前完整 `snapshot` 放入该连接 FIFO；每个新连接都从 `single` 模式开始。
+2. 同一事件循环队列中的普通请求按接收顺序投递；每个请求最多一个 reply。样本、关键快照和 reply 通过同一 FIFO 提交，客户端必须按 `type` 分流，不能假定 reply 先于相应 snapshot。
+3. `single` 模式维持逐样本、逐快照兼容投影。`batch` 模式只允许合并普通运行态快照；样本序号和样本字段绝不合并、降采样或改序。批量器在关键快照和控制 reply 前先 flush 已收样本，确保健康连接中批内及跨批样本序号连续。
+4. 暂停、停止、错误、终态和安全状态变化时，顺序固定为：必要的尾部 `sampleBatch`（或已发送的单条 sample）→ 最终完整 `snapshot` → `stop`/`disconnect`/`quit` reply → 必要时关闭帧。`disconnect`/`quit` 不得在 FIFO 中的 reply 提交前关闭 socket；`quit` 的关闭帧必须先于进程退出。
+5. `stop`、`disconnect`、`quit` 的 reply 必须晚于 `stopCompleted`（若需要停止）和 `shutdown`（若需要收尾）。高水位只暂停继续提交，不能重排 FIFO；硬背压失败不承诺普通遥测或 reply 投影，但仍执行安全收尾并关闭受影响连接。
 6. `[当前实现]` `HELM_STREAM` 的成功 STOP reply 不等待性能计算：捕获封存先发布 `analysis.state=queued` 以建立写门禁，`stopCompleted` 硬件收尾完成后再排队启动分析线程，随后发布 validating/preprocessing/calculating/persisting/终态摘要；浏览器收到终态摘要后再按通道请求 `analysisResult`。旧身份的进度、文件提交和 reply 不得覆盖新 `{taskId,analysisGeneration}`。

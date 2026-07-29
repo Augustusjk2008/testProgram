@@ -122,6 +122,7 @@ gtest_discover_tests(hwtest_gui_tests)
 add_executable(hwtest_web_tests
     web_test_main.cpp
     web_protocol_test.cpp
+    web_telemetry_batcher_test.cpp
     web_socket_frontend_server_test.cpp
     web_controller_integration_test.cpp
     web_architecture_test.cpp

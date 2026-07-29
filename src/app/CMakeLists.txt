@@ -93,6 +93,8 @@ endif()
 add_library(hwtest_web_support STATIC
     web/web_protocol.h
     web/web_protocol.cpp
+    web/web_telemetry_batcher.h
+    web/web_telemetry_batcher.cpp
     web/web_socket_frontend_server.h
     web/web_socket_frontend_server.cpp
 )

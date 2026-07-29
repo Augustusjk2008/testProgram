@@ -4,6 +4,7 @@
 
 #include <QJsonObject>
 #include <QString>
+#include <QVector>
 #include <QtGlobal>
 
 namespace hwtest::app::web {
@@ -22,7 +23,10 @@ struct ProtocolParseResult {
 };
 
 ProtocolParseResult parseRequest(const QString& text);
-QJsonObject makeHello();
+QJsonObject makeHello(int maxBatchSamples = 64,
+                      qint64 maxBatchBytes = 32768,
+                      int maxBatchLatencyMs = 20,
+                      int snapshotIntervalMs = 100);
 QJsonObject makeReply(const QString& id,
                       const ActionResult& result,
                       const QJsonObject& data = {});
@@ -37,6 +41,8 @@ QJsonObject makeSnapshot(quint64 sequence,
 // by the WebSocket v1 JSON number contract.
 QJsonObject makeSample(quint64 sequence,
                        const ApplicationSample& sample);
+QJsonObject makeSampleBatch(quint64 firstSequence,
+                            const QVector<ApplicationSample>& samples);
 QJsonObject analysisResultObject(const AnalysisChannelProjection& projection);
 QString compactJson(const QJsonObject& object);
 

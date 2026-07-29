@@ -40,6 +40,7 @@ TEST(WebProtocolTest, AcceptsEveryVersionOneAction)
         QStringLiteral("resume"),
         QStringLiteral("setDigitalStimulus"),
         QStringLiteral("resetDigitalStimulus"),
+        QStringLiteral("setTelemetryDelivery"),
         QStringLiteral("stop"),
         QStringLiteral("disconnect"),
         QStringLiteral("quit"),
@@ -125,6 +126,16 @@ TEST(WebProtocolTest, BuildsHelloAndReplyEnvelopes)
     EXPECT_EQ(hello.value(QStringLiteral("server")).toString(),
               QStringLiteral("hwtest_web"));
     EXPECT_EQ(hello.value(QStringLiteral("protocolVersion")).toInt(), 1);
+    const QJsonObject telemetryBatch = hello.value(QStringLiteral("capabilities"))
+                                           .toObject()
+                                           .value(QStringLiteral("telemetryBatch"))
+                                           .toObject();
+    EXPECT_EQ(telemetryBatch.value(QStringLiteral("version")).toInt(), 1);
+    EXPECT_EQ(telemetryBatch.value(QStringLiteral("maxSamples")).toInt(), 64);
+    EXPECT_EQ(telemetryBatch.value(QStringLiteral("maxBytes")).toInt(), 32768);
+    EXPECT_EQ(telemetryBatch.value(QStringLiteral("maxLatencyMs")).toInt(), 20);
+    EXPECT_EQ(telemetryBatch.value(QStringLiteral("snapshotIntervalMs")).toInt(),
+              100);
 
     const QJsonObject data{{QStringLiteral("selected"), QStringLiteral("CONTROL_NETWORK")}};
     const QJsonObject success = makeReply(QStringLiteral("req-1"), ActionResult{}, data);
@@ -548,6 +559,73 @@ TEST(WebProtocolTest, OmitsUnavailableStreamTimeButPreservesZeroOrigin)
     sample.timestampUs = maxJsonSafeInteger;
     sample.streamElapsedUs = maxJsonSafeInteger + 1;
     EXPECT_TRUE(makeSample(6, sample).isEmpty());
+}
+
+TEST(WebProtocolTest, RejectsEventSequencesOutsideJavaScriptSafeIntegerRange)
+{
+    constexpr quint64 maxJsonSafeInteger = 9007199254740991ULL;
+    ApplicationSnapshot snapshot;
+    ApplicationSample sample;
+    sample.timestampUs = 1785000000123456LL;
+
+    EXPECT_FALSE(makeSnapshot(maxJsonSafeInteger, snapshot).isEmpty());
+    EXPECT_FALSE(makeSample(maxJsonSafeInteger, sample).isEmpty());
+    EXPECT_TRUE(makeSnapshot(maxJsonSafeInteger + 1, snapshot).isEmpty());
+    EXPECT_TRUE(makeSample(maxJsonSafeInteger + 1, sample).isEmpty());
+}
+
+TEST(WebProtocolTest, ProjectsOrderedApplicationSamplesAsVersionOneBatch)
+{
+    ApplicationSample first;
+    first.taskId = QStringLiteral("task-7");
+    first.stepId = QStringLiteral("SYSTEM_STATUS");
+    first.channelId = QStringLiteral("SYSTEM_STATUS");
+    first.timestampUs = 1785000000123456LL;
+    first.streamElapsedUs = 15000;
+    first.cycleIndex = 7;
+    first.values.insert(QStringLiteral("cpu_usage"), 12.5);
+    first.tags.insert(QStringLiteral("requestFrameHex"), QStringLiteral("55aa"));
+    ApplicationSample second = first;
+    second.timestampUs += 1000;
+    second.cycleIndex = 8;
+    second.values.insert(QStringLiteral("cpu_usage"), 13.5);
+
+    const QJsonObject batch = makeSampleBatch(101, {first, second});
+
+    EXPECT_EQ(batch.value(QStringLiteral("v")).toInt(), 1);
+    EXPECT_EQ(batch.value(QStringLiteral("type")).toString(),
+              QStringLiteral("sampleBatch"));
+    EXPECT_EQ(batch.value(QStringLiteral("firstSeq")).toInt(), 101);
+    EXPECT_EQ(batch.value(QStringLiteral("lastSeq")).toInt(), 102);
+    const QJsonArray samples = batch.value(QStringLiteral("samples")).toArray();
+    ASSERT_EQ(samples.size(), 2);
+    EXPECT_EQ(samples.at(0).toObject(),
+              makeSample(101, first).value(QStringLiteral("sample")).toObject());
+    EXPECT_EQ(samples.at(1).toObject(),
+              makeSample(102, second).value(QStringLiteral("sample")).toObject());
+}
+
+TEST(WebProtocolTest, RejectsInvalidApplicationSampleBatches)
+{
+    constexpr quint64 maxJsonSafeInteger = 9007199254740991ULL;
+    ApplicationSample sample;
+    sample.taskId = QStringLiteral("task-1");
+    sample.timestampUs = 1785000000123456LL;
+
+    EXPECT_TRUE(makeSampleBatch(1, {}).isEmpty());
+    EXPECT_FALSE(makeSampleBatch(maxJsonSafeInteger, {sample}).isEmpty());
+    EXPECT_TRUE(makeSampleBatch(maxJsonSafeInteger, {sample, sample}).isEmpty());
+    EXPECT_TRUE(makeSampleBatch(maxJsonSafeInteger + 1, {sample}).isEmpty());
+
+    QVector<ApplicationSample> tooMany(65, sample);
+    EXPECT_TRUE(makeSampleBatch(1, tooMany).isEmpty());
+
+    ApplicationSample otherTask = sample;
+    otherTask.taskId = QStringLiteral("task-2");
+    EXPECT_TRUE(makeSampleBatch(1, {sample, otherTask}).isEmpty());
+
+    sample.timestampUs = -1;
+    EXPECT_TRUE(makeSampleBatch(1, {sample}).isEmpty());
 }
 
 TEST(WebProtocolTest, SerializesCompactJson)
