@@ -29,67 +29,6 @@ const char sast_app_version[] __attribute__((section(".myversion"), used)) = "1.
 // 舵机程序分配的核心号
 #define SERVO_CORE 7
 
-namespace {
-
-class HelmPwmLifecycleIo final : public IHelmPwmLifecycleIo {
-public:
-    HelmPwmLifecycleIo(MB_DDF::HW::PwmDevice& pwm,
-                       MB_DDF::HW::DidoDevice& dido)
-        : pwm_(pwm), dido_(dido) {}
-
-    bool force_pwm_disabled() override {
-        auto disable_result = pwm_.disable_outputs();
-        if (!disable_result) {
-            LOG_ERROR << "PWM startup output disable failed: "
-                      << disable_result.status().message;
-            return false;
-        }
-        auto update_result = pwm_.set_update_enabled(false);
-        if (!update_result) {
-            LOG_ERROR << "PWM startup update disable failed: "
-                      << update_result.status().message;
-            return false;
-        }
-        MB_DDF::HW::PwmRawOutputs disabled_outputs{};
-        auto output_result = pwm_.apply_outputs(disabled_outputs);
-        if (!output_result) {
-            LOG_ERROR << "PWM startup zero duty write failed: "
-                      << output_result.status().message;
-            return false;
-        }
-        return true;
-    }
-
-    bool unlock_helm() override {
-        constexpr uint16_t kHelmLockDo = 0x0001u;
-        auto result = dido_.set_outputs(kHelmLockDo, kHelmLockDo);
-        if (!result) {
-            LOG_ERROR << "Helm unlock DO0 write failed: "
-                      << result.status().message;
-            return false;
-        }
-        LOG_INFO << "Helm unlocked through DIDO DO0; waiting 30 ms before PWM enable";
-        return true;
-    }
-
-    bool enable_pwm() override {
-        auto result = pwm_.set_update_enabled(true);
-        if (!result) {
-            LOG_ERROR << "PWM update enable after helm unlock failed: "
-                      << result.status().message;
-            return false;
-        }
-        LOG_INFO << "PWM enabled after helm unlock delay";
-        return true;
-    }
-
-private:
-    MB_DDF::HW::PwmDevice& pwm_;
-    MB_DDF::HW::DidoDevice& dido_;
-};
-
-} // namespace
-
 /*
  * 程序入口
  */
@@ -118,8 +57,7 @@ int main(int argc, char** argv) {
     PwmDevice pwm(pwm_transport);
     Ad7606Device adc(adc_transport);
     DidoDevice dido(dido_transport);
-    HelmPwmLifecycleIo pwm_lifecycle_io(pwm, dido);
-    HelmPwmLifecycle pwm_lifecycle;
+    HelmPwmLifecycle pwm_lifecycle(pwm, dido);
 
     {
         auto pwm_open_result = pwm_transport.open();
@@ -129,7 +67,7 @@ int main(int argc, char** argv) {
         }
     }
     {
-        if (!pwm_lifecycle.initialize(pwm_lifecycle_io)) {
+        if (!pwm_lifecycle.initialize()) {
             LOG_ERROR << "Cannot establish disabled PWM startup state";
             return 1;
         }
@@ -286,7 +224,6 @@ int main(int argc, char** argv) {
         }
 
         if (!pwm_lifecycle.update(
-                pwm_lifecycle_io,
                 cycle_unlock_requested,
                 std::chrono::steady_clock::now())) {
             LOG_ERROR << "Helm PWM lifecycle entered fault state";

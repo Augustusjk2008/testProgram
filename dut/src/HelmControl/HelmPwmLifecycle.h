@@ -1,37 +1,38 @@
 #pragma once
 
+#include "MB_DDF_HW/Device/DidoDevice.h"
+#include "MB_DDF_HW/Device/PwmDevice.h"
+
 #include <chrono>
 
+/// 舵锁解锁成功后，PWM 使能前必须等待的最短时间。
 inline constexpr std::chrono::milliseconds kHelmPwmEnableDelay{30};
 
-class IHelmPwmLifecycleIo {
-public:
-    virtual ~IHelmPwmLifecycleIo() = default;
-    virtual bool force_pwm_disabled() = 0;
-    virtual bool unlock_helm() = 0;
-    virtual bool enable_pwm() = 0;
-};
-
+/// 管理“启动关 PWM -> 舵锁解锁 -> 延时使能 PWM”的单向流程。
+/// 解锁成功后不再反向上锁，STOP/回零也不禁止 PWM。
 class HelmPwmLifecycle final {
 public:
-    enum class State {
-        Uninitialized,
-        AwaitingUnlock,
-        WaitingForPwmEnable,
-        Enabled,
-        Fault,
-    };
+    HelmPwmLifecycle(MB_DDF::HW::PwmDevice& pwm,
+                     MB_DDF::HW::DidoDevice& dido) noexcept;
 
-    bool initialize(IHelmPwmLifecycleIo& io);
-    bool update(IHelmPwmLifecycleIo& io,
-                bool unlock_requested,
+    /// 程序启动时立即关闭四路 PWM，建立安全初始态。
+    bool initialize();
+
+    /// 在控制线程中推进解锁和 30 ms 延时；函数本身不阻塞。
+    bool update(bool unlock_requested,
                 std::chrono::steady_clock::time_point now);
 
-    State state() const noexcept { return state_; }
-    bool pwm_enabled() const noexcept { return state_ == State::Enabled; }
-    bool healthy() const noexcept { return state_ != State::Fault; }
+    bool pwm_enabled() const noexcept { return pwm_enabled_; }
 
 private:
-    State state_{State::Uninitialized};
-    std::chrono::steady_clock::time_point pwm_enable_deadline_{};
+    /// 记录硬件错误并把流程锁定在故障态。
+    bool fail(const char* action, const MB_DDF::HW::Status& status);
+
+    MB_DDF::HW::PwmDevice& pwm_;
+    MB_DDF::HW::DidoDevice& dido_;
+    bool initialized_{false};       // 启动 PWM 安全态已建立。
+    bool unlock_completed_{false};  // DIDO DO0 解锁写入已成功。
+    bool pwm_enabled_{false};       // 30 ms 等待已完成，允许输出。
+    bool faulted_{false};           // 任一关键硬件操作失败后粘滞保持。
+    std::chrono::steady_clock::time_point pwm_enable_deadline_{}; // PWM 最早使能时刻。
 };

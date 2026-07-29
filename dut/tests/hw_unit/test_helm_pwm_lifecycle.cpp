@@ -1,187 +1,170 @@
 #include "HelmControl/HelmPwmLifecycle.h"
 
+#include "hw_unit/support/RecordingTransport.h"
+
 #include <gtest/gtest.h>
 
 #include <chrono>
-#include <vector>
 
 namespace {
 
 using Clock = std::chrono::steady_clock;
+using MB_DDF::HW::DidoDevice;
+using MB_DDF::HW::PwmDevice;
+using MB_DDF::HW::Test::RecordingTransport;
 
-class RecordingHelmPwmLifecycleIo final : public IHelmPwmLifecycleIo {
-public:
-    enum class Operation {
-        ForcePwmDisabled,
-        UnlockHelm,
-        EnablePwm,
-    };
-
-    bool force_pwm_disabled() override {
-        calls.push_back(Operation::ForcePwmDisabled);
-        return force_pwm_disabled_succeeds;
-    }
-
-    bool unlock_helm() override {
-        calls.push_back(Operation::UnlockHelm);
-        return unlock_helm_succeeds;
-    }
-
-    bool enable_pwm() override {
-        calls.push_back(Operation::EnablePwm);
-        return enable_pwm_succeeds;
-    }
-
-    bool force_pwm_disabled_succeeds{true};
-    bool unlock_helm_succeeds{true};
-    bool enable_pwm_succeeds{true};
-    std::vector<Operation> calls;
+struct LifecycleRig {
+    RecordingTransport pwm_transport;
+    RecordingTransport dido_transport;
+    PwmDevice pwm{pwm_transport};
+    DidoDevice dido{dido_transport};
+    HelmPwmLifecycle lifecycle{pwm, dido};
 };
 
-void expect_fault(const HelmPwmLifecycle& lifecycle) {
-    EXPECT_EQ(lifecycle.state(), HelmPwmLifecycle::State::Fault);
-    EXPECT_FALSE(lifecycle.pwm_enabled());
-    EXPECT_FALSE(lifecycle.healthy());
+void open_pwm(LifecycleRig& rig) {
+    ASSERT_TRUE(rig.pwm_transport.open());
+    rig.pwm_transport.preset(0x30, 100u);
+    rig.pwm_transport.preset(0x28, 0x0Fu);
 }
 
-TEST(HelmPwmLifecycleTest, InitializeForcesPwmDisabledAndAwaitsUnlock) {
-    RecordingHelmPwmLifecycleIo io;
-    HelmPwmLifecycle lifecycle;
-
-    EXPECT_TRUE(lifecycle.initialize(io));
-    EXPECT_EQ(io.calls, (std::vector<RecordingHelmPwmLifecycleIo::Operation>{
-                            RecordingHelmPwmLifecycleIo::Operation::ForcePwmDisabled}));
-    EXPECT_EQ(lifecycle.state(), HelmPwmLifecycle::State::AwaitingUnlock);
-    EXPECT_FALSE(lifecycle.pwm_enabled());
-    EXPECT_TRUE(lifecycle.healthy());
+void open_all(LifecycleRig& rig) {
+    open_pwm(rig);
+    ASSERT_TRUE(rig.dido_transport.open());
 }
 
-TEST(HelmPwmLifecycleTest, UpdateWithoutUnlockDoesNotIssueFurtherIo) {
-    RecordingHelmPwmLifecycleIo io;
-    HelmPwmLifecycle lifecycle;
-    ASSERT_TRUE(lifecycle.initialize(io));
+TEST(HelmPwmLifecycleTest, InitializeImmediatelyDisablesPwm) {
+    LifecycleRig rig;
+    open_pwm(rig);
 
-    EXPECT_TRUE(lifecycle.update(io, false, Clock::time_point{}));
-    EXPECT_EQ(io.calls, (std::vector<RecordingHelmPwmLifecycleIo::Operation>{
-                            RecordingHelmPwmLifecycleIo::Operation::ForcePwmDisabled}));
-    EXPECT_EQ(lifecycle.state(), HelmPwmLifecycle::State::AwaitingUnlock);
-    EXPECT_FALSE(lifecycle.pwm_enabled());
+    ASSERT_TRUE(rig.lifecycle.initialize());
+
+    const auto& accesses = rig.pwm_transport.accesses();
+    ASSERT_GE(accesses.size(), 2u);
+    EXPECT_TRUE(accesses[0].write);
+    EXPECT_EQ(accesses[0].offset, 0x28u);
+    EXPECT_EQ(accesses[0].value, 0xFFFFu);
+    EXPECT_TRUE(accesses[1].write);
+    EXPECT_EQ(accesses[1].offset, 0x24u);
+    EXPECT_EQ(accesses[1].value, 0xFFFFu);
+    EXPECT_FALSE(rig.lifecycle.pwm_enabled());
 }
 
-TEST(HelmPwmLifecycleTest, UnlockDoesNotEnablePwmBeforeThirtyMilliseconds) {
-    RecordingHelmPwmLifecycleIo io;
-    HelmPwmLifecycle lifecycle;
-    ASSERT_TRUE(lifecycle.initialize(io));
-    io.calls.clear();
+TEST(HelmPwmLifecycleTest, NoUnlockRequestDoesNotTouchDidoOrPwm) {
+    LifecycleRig rig;
+    open_all(rig);
+    ASSERT_TRUE(rig.lifecycle.initialize());
+    rig.pwm_transport.clear_accesses();
+    rig.dido_transport.clear_accesses();
+
+    EXPECT_TRUE(rig.lifecycle.update(false, Clock::time_point{}));
+
+    EXPECT_TRUE(rig.pwm_transport.accesses().empty());
+    EXPECT_TRUE(rig.dido_transport.accesses().empty());
+    EXPECT_FALSE(rig.lifecycle.pwm_enabled());
+}
+
+TEST(HelmPwmLifecycleTest, UnlockPrecedesThirtyMillisecondPwmDelay) {
+    LifecycleRig rig;
+    open_all(rig);
+    ASSERT_TRUE(rig.lifecycle.initialize());
+    rig.pwm_transport.clear_accesses();
+    rig.dido_transport.clear_accesses();
     const Clock::time_point unlock_time{};
 
-    EXPECT_TRUE(lifecycle.update(io, true, unlock_time));
-    EXPECT_TRUE(lifecycle.update(
-        io, true, unlock_time + kHelmPwmEnableDelay - std::chrono::milliseconds{1}));
+    ASSERT_TRUE(rig.lifecycle.update(true, unlock_time));
+    EXPECT_TRUE(rig.lifecycle.update(
+        true, unlock_time + kHelmPwmEnableDelay - std::chrono::milliseconds{1}));
 
-    EXPECT_EQ(io.calls, (std::vector<RecordingHelmPwmLifecycleIo::Operation>{
-                            RecordingHelmPwmLifecycleIo::Operation::UnlockHelm}));
-    EXPECT_EQ(lifecycle.state(), HelmPwmLifecycle::State::WaitingForPwmEnable);
-    EXPECT_FALSE(lifecycle.pwm_enabled());
-    EXPECT_TRUE(lifecycle.healthy());
+    const auto& dido_accesses = rig.dido_transport.accesses();
+    ASSERT_EQ(dido_accesses.size(), 1u);
+    EXPECT_EQ(dido_accesses[0].offset, 0x04u);
+    EXPECT_EQ(dido_accesses[0].value, 0xAAAAu);
+    EXPECT_TRUE(rig.pwm_transport.accesses().empty());
+    EXPECT_FALSE(rig.lifecycle.pwm_enabled());
 }
 
-TEST(HelmPwmLifecycleTest, EnablesPwmAtExactlyThirtyMillisecondsAfterUnlock) {
+TEST(HelmPwmLifecycleTest, EnablesPwmAtExactlyThirtyMilliseconds) {
     static_assert(kHelmPwmEnableDelay == std::chrono::milliseconds{30});
 
-    RecordingHelmPwmLifecycleIo io;
-    HelmPwmLifecycle lifecycle;
-    ASSERT_TRUE(lifecycle.initialize(io));
-    io.calls.clear();
+    LifecycleRig rig;
+    open_all(rig);
+    ASSERT_TRUE(rig.lifecycle.initialize());
+    rig.pwm_transport.clear_accesses();
+    rig.dido_transport.clear_accesses();
     const Clock::time_point unlock_time{};
 
-    ASSERT_TRUE(lifecycle.update(io, true, unlock_time));
-    EXPECT_TRUE(lifecycle.update(io, true, unlock_time + kHelmPwmEnableDelay));
+    ASSERT_TRUE(rig.lifecycle.update(true, unlock_time));
+    ASSERT_TRUE(rig.lifecycle.update(true, unlock_time + kHelmPwmEnableDelay));
 
-    EXPECT_EQ(io.calls, (std::vector<RecordingHelmPwmLifecycleIo::Operation>{
-                            RecordingHelmPwmLifecycleIo::Operation::UnlockHelm,
-                            RecordingHelmPwmLifecycleIo::Operation::EnablePwm}));
-    EXPECT_EQ(lifecycle.state(), HelmPwmLifecycle::State::Enabled);
-    EXPECT_TRUE(lifecycle.pwm_enabled());
-    EXPECT_TRUE(lifecycle.healthy());
+    const auto& pwm_accesses = rig.pwm_transport.accesses();
+    ASSERT_EQ(pwm_accesses.size(), 1u);
+    EXPECT_EQ(pwm_accesses[0].offset, 0x24u);
+    EXPECT_EQ(pwm_accesses[0].value, 0xAAAAu);
+    EXPECT_TRUE(rig.lifecycle.pwm_enabled());
 }
 
-TEST(HelmPwmLifecycleTest, RepeatedUnlockDoesNotResetDelayOrUnlockAgain) {
-    RecordingHelmPwmLifecycleIo io;
-    HelmPwmLifecycle lifecycle;
-    ASSERT_TRUE(lifecycle.initialize(io));
-    io.calls.clear();
+TEST(HelmPwmLifecycleTest, RepeatedUnlockDoesNotResetDelayOrWriteDidoAgain) {
+    LifecycleRig rig;
+    open_all(rig);
+    ASSERT_TRUE(rig.lifecycle.initialize());
+    rig.pwm_transport.clear_accesses();
+    rig.dido_transport.clear_accesses();
     const Clock::time_point unlock_time{};
 
-    ASSERT_TRUE(lifecycle.update(io, true, unlock_time));
-    ASSERT_TRUE(lifecycle.update(
-        io, true, unlock_time + std::chrono::milliseconds{10}));
-    EXPECT_TRUE(lifecycle.update(io, true, unlock_time + kHelmPwmEnableDelay));
+    ASSERT_TRUE(rig.lifecycle.update(true, unlock_time));
+    ASSERT_TRUE(rig.lifecycle.update(
+        true, unlock_time + std::chrono::milliseconds{10}));
+    ASSERT_TRUE(rig.lifecycle.update(true, unlock_time + kHelmPwmEnableDelay));
 
-    EXPECT_EQ(io.calls, (std::vector<RecordingHelmPwmLifecycleIo::Operation>{
-                            RecordingHelmPwmLifecycleIo::Operation::UnlockHelm,
-                            RecordingHelmPwmLifecycleIo::Operation::EnablePwm}));
-    EXPECT_EQ(lifecycle.state(), HelmPwmLifecycle::State::Enabled);
-    EXPECT_TRUE(lifecycle.pwm_enabled());
+    EXPECT_EQ(rig.dido_transport.accesses().size(), 1u);
+    EXPECT_TRUE(rig.lifecycle.pwm_enabled());
 }
 
-TEST(HelmPwmLifecycleTest, FalseAfterEnableDoesNotReversePwmState) {
-    RecordingHelmPwmLifecycleIo io;
-    HelmPwmLifecycle lifecycle;
-    ASSERT_TRUE(lifecycle.initialize(io));
-    io.calls.clear();
+TEST(HelmPwmLifecycleTest, FalseAfterEnableDoesNotReverseState) {
+    LifecycleRig rig;
+    open_all(rig);
+    ASSERT_TRUE(rig.lifecycle.initialize());
     const Clock::time_point unlock_time{};
-    ASSERT_TRUE(lifecycle.update(io, true, unlock_time));
-    ASSERT_TRUE(lifecycle.update(io, true, unlock_time + kHelmPwmEnableDelay));
+    ASSERT_TRUE(rig.lifecycle.update(true, unlock_time));
+    ASSERT_TRUE(rig.lifecycle.update(true, unlock_time + kHelmPwmEnableDelay));
+    rig.pwm_transport.clear_accesses();
+    rig.dido_transport.clear_accesses();
 
-    io.calls.clear();
-    EXPECT_TRUE(lifecycle.update(
-        io, false, unlock_time + kHelmPwmEnableDelay + std::chrono::milliseconds{1}));
+    EXPECT_TRUE(rig.lifecycle.update(
+        false, unlock_time + kHelmPwmEnableDelay + std::chrono::milliseconds{1}));
 
-    EXPECT_TRUE(io.calls.empty());
-    EXPECT_EQ(lifecycle.state(), HelmPwmLifecycle::State::Enabled);
-    EXPECT_TRUE(lifecycle.pwm_enabled());
-    EXPECT_TRUE(lifecycle.healthy());
+    EXPECT_TRUE(rig.pwm_transport.accesses().empty());
+    EXPECT_TRUE(rig.dido_transport.accesses().empty());
+    EXPECT_TRUE(rig.lifecycle.pwm_enabled());
 }
 
-TEST(HelmPwmLifecycleTest, ForcePwmDisabledFailureEntersFault) {
-    RecordingHelmPwmLifecycleIo io;
-    io.force_pwm_disabled_succeeds = false;
-    HelmPwmLifecycle lifecycle;
+TEST(HelmPwmLifecycleTest, StartupDisableFailureStopsLifecycle) {
+    LifecycleRig rig;
 
-    EXPECT_FALSE(lifecycle.initialize(io));
-    EXPECT_EQ(io.calls, (std::vector<RecordingHelmPwmLifecycleIo::Operation>{
-                            RecordingHelmPwmLifecycleIo::Operation::ForcePwmDisabled}));
-    expect_fault(lifecycle);
+    EXPECT_FALSE(rig.lifecycle.initialize());
+    EXPECT_FALSE(rig.lifecycle.update(true, Clock::time_point{}));
+    EXPECT_FALSE(rig.lifecycle.pwm_enabled());
 }
 
-TEST(HelmPwmLifecycleTest, UnlockFailureEntersFault) {
-    RecordingHelmPwmLifecycleIo io;
-    HelmPwmLifecycle lifecycle;
-    ASSERT_TRUE(lifecycle.initialize(io));
-    io.calls.clear();
-    io.unlock_helm_succeeds = false;
+TEST(HelmPwmLifecycleTest, DidoUnlockFailureStopsLifecycle) {
+    LifecycleRig rig;
+    open_pwm(rig);
+    ASSERT_TRUE(rig.lifecycle.initialize());
 
-    EXPECT_FALSE(lifecycle.update(io, true, Clock::time_point{}));
-    EXPECT_EQ(io.calls, (std::vector<RecordingHelmPwmLifecycleIo::Operation>{
-                            RecordingHelmPwmLifecycleIo::Operation::UnlockHelm}));
-    expect_fault(lifecycle);
+    EXPECT_FALSE(rig.lifecycle.update(true, Clock::time_point{}));
+    EXPECT_FALSE(rig.lifecycle.pwm_enabled());
 }
 
-TEST(HelmPwmLifecycleTest, EnablePwmFailureEntersFault) {
-    RecordingHelmPwmLifecycleIo io;
-    HelmPwmLifecycle lifecycle;
-    ASSERT_TRUE(lifecycle.initialize(io));
-    io.calls.clear();
+TEST(HelmPwmLifecycleTest, PwmEnableFailureStopsLifecycle) {
+    LifecycleRig rig;
+    open_all(rig);
+    ASSERT_TRUE(rig.lifecycle.initialize());
     const Clock::time_point unlock_time{};
-    ASSERT_TRUE(lifecycle.update(io, true, unlock_time));
-    io.enable_pwm_succeeds = false;
+    ASSERT_TRUE(rig.lifecycle.update(true, unlock_time));
+    rig.pwm_transport.close();
 
-    EXPECT_FALSE(lifecycle.update(io, true, unlock_time + kHelmPwmEnableDelay));
-    EXPECT_EQ(io.calls, (std::vector<RecordingHelmPwmLifecycleIo::Operation>{
-                            RecordingHelmPwmLifecycleIo::Operation::UnlockHelm,
-                            RecordingHelmPwmLifecycleIo::Operation::EnablePwm}));
-    expect_fault(lifecycle);
+    EXPECT_FALSE(rig.lifecycle.update(true, unlock_time + kHelmPwmEnableDelay));
+    EXPECT_FALSE(rig.lifecycle.pwm_enabled());
 }
 
 } // namespace
