@@ -13,6 +13,10 @@ namespace hwtest::algorithm::mbddf {
 class IByteTransport;
 }
 
+namespace hwtest::hal {
+class IControlChannel;
+}
+
 namespace hwtest::app {
 
 struct MbdDfAlgorithmRegistration {
@@ -29,6 +33,8 @@ const MbdDfAlgorithmRegistration* findMbdDfAlgorithm(const QString& algorithmId)
 bool isSupportedMbdDfAlgorithm(const QString& algorithmId);
 std::unique_ptr<hwtest::biz::IAlgorithmExecutor> createMbdDfExecutor(
     const QString& algorithmId,
-    std::unique_ptr<hwtest::algorithm::mbddf::IByteTransport> transport);
+    std::unique_ptr<hwtest::algorithm::mbddf::IByteTransport> transport,
+    hwtest::hal::IControlChannel* auxiliaryControlChannel = nullptr,
+    const QString& controlResourceId = {});
 
 } // namespace hwtest::app

@@ -624,18 +624,61 @@ def test_helm_stop_ack_timeout_reports_communication_failure_without_retry() -> 
     assert len(channel.sent_payloads) == 2
 
 
-def test_link_four_is_rejected_before_serial_send() -> None:
-    session, channel, _ = make_session()
+def test_bus_session_exposes_only_com1_com2_and_com4_links() -> None:
+    session, _channel, _catalog = make_session()
 
-    assert not session.run_test("bus", {"link_id": 4})
+    link_field = next(
+        field for field in session.parameter_fields("bus") if field.name == "link_id"
+    )
+
+    assert link_field.choices == (0, 1, 3)
+
+
+@pytest.mark.parametrize("link_id", (2, 4, 5, 6, 7))
+def test_control_and_unknown_bus_links_are_rejected_before_serial_send(link_id) -> None:
+    session, channel, _catalog = make_session()
+
+    assert not session.run_test("bus", {"link_id": link_id})
     assert channel.sent_payloads == []
     assert session.status_for("bus") == TestStatus.EXECUTION_FAILED
 
 
-def test_link_three_is_available_for_com2_bus_test() -> None:
+@pytest.mark.parametrize(
+    "parameters",
+    (
+        {"link_id": 1.5},
+        {"bus_mode": "invalid"},
+    ),
+)
+def test_non_integral_link_or_unknown_bus_mode_is_rejected_before_serial_send(
+    parameters,
+) -> None:
+    session, channel, _catalog = make_session()
+
+    assert not session.run_test("bus", parameters)
+    assert channel.sent_payloads == []
+    assert session.status_for("bus") == TestStatus.EXECUTION_FAILED
+
+
+@pytest.mark.parametrize("total_count", (0, 100001))
+def test_bus_loop_count_outside_protocol_range_is_rejected_before_serial_send(
+    total_count,
+) -> None:
+    session, channel, _catalog = make_session()
+
+    assert not session.run_test(
+        "bus", {"bus_mode": "loop", "link_id": 0, "total_count": total_count}
+    )
+    assert channel.sent_payloads == []
+    assert session.status_for("bus") == TestStatus.EXECUTION_FAILED
+
+
+def test_bus_loop_count_upper_boundary_is_encoded_for_com4() -> None:
     session, channel, catalog = make_session()
 
-    assert session.run_test("bus", {"link_id": 3})
+    assert session.run_test(
+        "bus", {"bus_mode": "loop", "link_id": 3, "total_count": 100000}
+    )
     assert len(channel.sent_payloads) == 1
 
     values = decode_payload(
@@ -643,6 +686,28 @@ def test_link_three_is_available_for_com2_bus_test() -> None:
         channel.sent_payloads[0],
     )
     assert values["link_id"] == 3
+    assert values["total_count"] == 100000
+
+
+def test_bus_echo_sends_one_padded_one_hundred_fourteen_byte_request() -> None:
+    session, channel, catalog = make_session()
+
+    assert session.run_test(
+        "bus", {"bus_mode": "echo", "link_id": 1, "data_hex": "4D 42 31"}
+    )
+    assert len(channel.sent_payloads) == 1
+
+    values = decode_payload(
+        catalog.get("bus_echo_test_request"), channel.sent_payloads[0]
+    )
+    assert values["link_id"] == 1
+    assert [values["data[{}]".format(index)] for index in range(3)] == [
+        0x4D,
+        0x42,
+        0x31,
+    ]
+    assert values["data[3]"] == 0
+    assert values["data[113]"] == 0
 
 
 def test_timer_mode_is_validated_before_serial_send() -> None:

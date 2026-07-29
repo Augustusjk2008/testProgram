@@ -119,6 +119,15 @@ def test_memory_parameters_match_protocol_request_fields(qtbot, catalog) -> None
 
 def test_bus_loop_and_echo_parameters_are_kept_separate(qtbot, catalog) -> None:
     page = make_page(qtbot, catalog, "bus")
+    assert [page.link_combo.itemData(index) for index in range(page.link_combo.count())] == [
+        0,
+        1,
+        3,
+    ]
+    assert page.count_spin.minimum() == 1
+    assert page.count_spin.maximum() == 100000
+    assert "仅通过 COM3 控制口" in page.bus_boundary_label.text()
+    assert "外部 ECHO 回送端" in page.bus_boundary_label.text()
     select_combo_data(page.link_combo, 3)
 
     page.bus_mode_control.set_current_data("loop")
@@ -136,6 +145,36 @@ def test_bus_loop_and_echo_parameters_are_kept_separate(qtbot, catalog) -> None:
     assert echo_parameters["bus_mode"] == "echo"
     assert echo_parameters["link_id"] == 3
     assert echo_parameters["data_hex"] == "4D 42 31 00 FF"
+
+
+def test_bus_echo_displays_all_actual_returned_bytes(qtbot, catalog) -> None:
+    page = make_page(qtbot, catalog, "bus")
+    page.bus_mode_control.set_current_data("echo")
+    page.data_input.setText("4D 42 31")
+    page.collect_parameters()
+    actual = bytes(range(114))
+
+    page.render_response(
+        response(
+            catalog,
+            "bus_echo_test_response",
+            {"data[{}]".format(index): value for index, value in enumerate(actual)},
+        )
+    )
+
+    displayed = page.received_data_edit.text().split()
+    assert len(displayed) == 114
+    assert displayed[:3] == ["00", "01", "02"]
+    assert displayed[-3:] == ["6F", "70", "71"]
+
+
+def test_bus_page_hides_legacy_repeat_control_and_points_to_root_scheduler(
+    qtbot, catalog
+) -> None:
+    page = make_page(qtbot, catalog, "bus")
+
+    assert page.continuous_button.isHidden()
+    assert "pc_periodic" in page.bus_boundary_label.text()
 
 
 def test_do_parameters_pack_sixteen_checks_and_fix_second_word_to_zero(

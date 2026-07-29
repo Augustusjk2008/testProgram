@@ -572,9 +572,8 @@ HW_TEST 画像复用同一个 COM3 物理口，接收 FPGA 已校验的 1..255 �
 错误响应回显请求序号，DH 第 `i` 帧使用 `请求序号+i`（U16 回绕），无对应请求的舵反馈
 和惯测反馈使用板端独立递增序号；惯测 `source_seq` 只是数据字段。未知命令、版本或长度
 错误走 `0xFF/0x00`；硬件执行错误写入原命令
-响应的 `status/err_code`。总线 link 2/3/4/5 分别对应
-COM1/2/3/4；COM3 作为控制口时拒绝 link 4 自测，“执行全部”只包含
-link 0/1/2/3/5/6。
+响应的 `status/err_code`。总线 link 0/1/2/3 分别对应
+COM1/2/3/4；COM3 是控制口，link 2 在打开任何硬件前拒绝，只有 link 0/1/3 可测。
 
 序号在进入发送器前确定，发送锁覆盖完整数据段的提交。若 `ComDevice::send()` 返回
 `Busy`，表示发送器尚未接收该帧：服务每隔 100 us 重交相同字节，最多 1000 次；期间
@@ -615,12 +614,16 @@ PC 只显示 `activate_bits.bit0` 并命名为“BC激活好”；该位读取 D
 
 总线处理器的边界如下：
 
-- link 0/1 分别要求本机已经配置 `192.168.1.29`、`192.168.7.29`，socket 将同一个
-  `地址:3003` 同时用于 `bind()` 和 `connect()`，数据报只经过对应板端接口的本机自环，
-  不访问推测的外部对端；本机没有该地址时返回执行错误。
-- link 6 的 LOOP 只允许在 `/dev/spidev0.0` 重复发送只读 `9Fh` JEDEC-ID 命令并检查
-  `20 BA 20`。SPI Flash 没有任意 payload 回显语义，BUS_ECHO/link 6 收到非空 payload 时
-  返回 `TASK_EXEC_FAILED`，不会把 payload 当作 opcode 发给器件。
+- BUS 只使用 link 0=COM1、1=COM2、3=COM4。link 2=COM3 控制口在打开硬件前返回
+  `CHANNEL_INVALID`，其余 link 也返回该错误；IMU_STREAM 活动时 link 3 先返回
+  `TASK_BUSY`。
+- BUS_LOOP 为内部 `loopback=true` 收发，`total_count` 只允许 `1..100000`。每轮接收
+  最多等待 5 秒，只有完成次数严格等于请求且错误数为 0 才成功。
+- BUS_ECHO 为 `loopback=false` 的单次外部回显：DUT 发送请求中的 114 字节，独立 PC/夹具
+  必须在 5 秒内原样回发。长度或任一字节不符均失败，响应保留实际接收字节。连续轮次由
+  根宿主 `pc_periodic` 调度；旧 PyQt 仅经 COM3 发令，不是外部回显端。
+- BUS 不再包含 UDP 或 SPI Flash；独立 SPI Flash 测试仍走固定隔离测试区的
+  `SPI_FLASH_TEST`。
 - DH 脉宽配置先向 `0x1E0` 写配置使能（`0xAAAA/0xFFFF`）；使能时写入并回读 23 路，
   失能时忽略请求脉宽并只失能、回读。DH 控制依次写电源使能 `0x1DC`
   （`0xAAAA/0xFFFF`）、回线使能 `0x04`（`0xA000/0x00A0`）、配置 Multiple 模式并提交
@@ -701,7 +704,7 @@ FPGA 消费 `AA 1A`、1 字节长度和 CRC；软件使用 255 字节接收缓�
 
 每个有效 payload 立即完整映射为 COM3 的 `09/01` 128 字节帧，不固定 sleep、不限频、
 不主动抽样。`09/11` 先使会话失活并关闭 COM4，再返回 STOP ACK；同一 PC 会话最多发送
-一次 STOP，ACK 异常不触发收尾重发。流活动期间 BUS link 5 返回 `TASK_BUSY (0x0204)`。
+一次 STOP，ACK 异常不触发收尾重发。流活动期间 BUS link 3 返回 `TASK_BUSY (0x0204)`。
 400 Hz 不要求软件保证无损，实际吞吐与丢帧只能由授权真机验收记录。
 
 ### 6.10 FlashDevice
@@ -922,11 +925,11 @@ target_link_libraries(my_application PRIVATE MB_DDF_HW_DDS_Adapter)
 - 产品协议 1..255 字节 payload（当前 48/123/232）布局、大小端、默认值/RESERVED、工程量 LSB 有界编码、错误响应
   和独立发送序号。
 - 产品测试服务的普通响应、DH 多帧、`07/02` 舵控板级写入与回读、DDS 舵机反馈、发送锁、
-  Busy 有界同帧流控和 link 4 拒绝。
+  Busy 有界同帧流控，以及 BUS link 映射、COM3 控制口预检、严格完成统计和实际回显保留。
 - 惯测 `09/10`/`09/01`/`09/11` 路由、COM4 921600/8E1 配置、59 字节全字段映射、全部
   12 个 F32 非有限拒绝、异常长度丢弃、空闲不消耗发送序号和终止错误反馈。
-- 系统状态的 CPU 计数解析和 XDMA sysfs BDF 事实链，以及 UDP 固定自环、SPI 安全
-  JEDEC LOOP、舵控弧度相位、可配置扫频公式、27/41 字节帧和最多五样本打包。
+- 系统状态的 CPU 计数解析和 XDMA sysfs BDF 事实链，以及 BUS 的 COM 内部回环/外部回显
+  配置、5 秒接收截止、舵控弧度相位、可配置扫频公式、27/41 字节帧和最多五样本打包。
 
 ### 9.2 真实硬件 smoke
 

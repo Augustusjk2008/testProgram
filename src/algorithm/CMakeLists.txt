@@ -1,4 +1,5 @@
 set(ALGORITHM_PUBLIC_HEADERS
+    include/algorithm/bus_echo_transport.h
     include/algorithm/di_stimulus_controller.h
     include/algorithm/elec_health_status_executor.h
     include/algorithm/imu_stream_executor.h
@@ -12,6 +13,7 @@ set(ALGORITHM_PUBLIC_HEADERS
 )
 
 set(ALGORITHM_SOURCES
+    src/bus_echo_transport.cpp
     src/di_stimulus_controller.cpp
     src/elec_health_status_executor.cpp
     src/imu_stream_executor.cpp

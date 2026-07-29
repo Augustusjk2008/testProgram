@@ -26,6 +26,7 @@ npm run dev
 - 支持深色/浅色主题切换并在浏览器本地保留选择，包含任务、曲线、性能、诊断四页。
 - WebSocket 连接后自动读取配置目录并加载默认测试项，正常操作路径为连接设备后开始测试；加载失败时可手动重试。
 - 全局运行控制条贯穿所有页面，支持单次和 PC 周期测试。PC 周期只发送一次 `start`，轮间隔可为 `0–3,600,000 ms`；`0` 表示上一轮完整收发结束后立即开始下一轮，仍由 BIZ 严格串行调度。轮数 `0` 仍表示持续运行。
+- BUS LOOP 可选择 COM1/COM2/COM4 和内部回环次数；BUS ECHO 只提供 PC 周期模式，每轮完成固定 114 字节往返。页面只消费 `echo_bytes`、`mismatch_count` 等紧凑摘要，不把 114 个字节字段加入实时曲线。
 - 连接时若 `hello.capabilities.telemetryBatch` 明确声明批传能力，浏览器会在读取配置和自动加载前协商 `setTelemetryDelivery({mode:"batch"})`；协商失败或旧服务端未声明能力时安全保持旧的单条 `sample` 模式。
 - 选择 `mbddf.di_read` 后，首页按后端 descriptor 紧凑显示 16 路 DUT DI 激励开关与 `di_state[0]` 回显状态，并保留只读 `di_state[1]` 诊断位图；快速操作会合并并串行发送带 revision 的请求，失败时回滚到后端权威状态，且可一键恢复安全态。
 - 设备主动持续回告保留独立运行语义，只有当前测试配置声明支持时才显示对应模式；当前 SYSTEM_STATUS 不支持该模式，后端算法返回 `CapabilityUnsupported`。

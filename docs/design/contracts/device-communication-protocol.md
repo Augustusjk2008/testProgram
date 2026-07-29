@@ -2,7 +2,7 @@
 
 > 适用项目：多产品通用硬件测试软件（Qt 5.15 兼容、Qt 6 Core/Network/SerialPort fallback / C++17 / Windows）
 > 本文定位：产品协议资产、当前 MB_DDF CSV 解析规则、帧编解码和算法运行期语义。
-> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/include/algorithm/run_parameter_schema.h`、`src/algorithm/src/run_parameter_schema.cpp`、`src/algorithm/src/system_status_executor.cpp`、`src/algorithm/include/algorithm/mbddf_exchange_executor.h`、`src/algorithm/src/elec_health_status_executor.cpp`、`src/algorithm/include/algorithm/imu_stream_executor.h`、`src/algorithm/src/imu_stream_executor.cpp`、`src/algorithm/include/algorithm/helm_stream_executor.h`、`src/algorithm/src/helm_stream_executor.cpp` 和 `src/algorithm/src/di_stimulus_controller.cpp`。
+> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/include/algorithm/run_parameter_schema.h`、`src/algorithm/src/run_parameter_schema.cpp`、`src/algorithm/src/system_status_executor.cpp`、`src/algorithm/include/algorithm/mbddf_exchange_executor.h`、`src/algorithm/include/algorithm/bus_echo_transport.h`、`src/algorithm/src/bus_echo_transport.cpp`、`src/algorithm/src/elec_health_status_executor.cpp`、`src/algorithm/include/algorithm/imu_stream_executor.h`、`src/algorithm/src/imu_stream_executor.cpp`、`src/algorithm/include/algorithm/helm_stream_executor.h`、`src/algorithm/src/helm_stream_executor.cpp` 和 `src/algorithm/src/di_stimulus_controller.cpp`。
 > 状态标记：**当前**表示已实现或已由用户确认的资产基线，**目标**表示已确认但尚未实现。
 
 原始建模参考来自 `H:/WorkSpace/PythonWorkspace/openEulerEnvironment/docs/protocol_modeling_workbench_definition.md`。该外部绝对路径只作来源追溯，不是本仓库可复现的发布输入；本项目当前实现与该参考不一致时，以本节明确列出的“当前规则”为准。
@@ -20,11 +20,12 @@ BIZ -> IAlgorithmExecutor -> hwtest_algorithm_mbddf -> IByteTransport
                                                    -> SystemStatusSimulator（当前成功测试）
                                                    -> ImuStreamAlgorithmExecutor（设备持续流）
                                                    -> HelmStreamAlgorithmExecutor（舵机设备持续流）
+                                                   -> BusEchoTransport（控制口 + 辅助 COM 双通道协调）
                                                    -> HalControlTransport -> hwtest_hal
                                                    -> HalSerialTransport -> hwtest_hal
 ```
 
-统一协议生产路径如下；当前九个 MB_DDF 配置均经该边界进入控制通道：
+统一协议生产路径如下；当前十一个 MB_DDF 配置均经该边界进入控制通道：
 
 ```text
 BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据）
@@ -58,6 +59,7 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 | `SystemStatusAlgorithmExecutor` | 执行 `mbddf.system_status`，并提供固定命令执行的共享生命周期 |
 | `ElecHealthStatusAlgorithmExecutor` | 执行 `mbddf.elec_health_status` 单步算法 |
 | `MbdDfExchangeAlgorithmExecutor` | 按配置执行 `MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG` 等单步请求/响应；可按配置追加一个清理请求（当前用于 `TIMER_JITTER_STOP`） |
+| `BusEchoTransport` | 在一个 5 秒事务预算内协调产品控制资源和 link 0/1/3 对应的辅助控制资源：先下发 `03/02`，再短读累积并原样回写 114 字节，最后读取产品控制响应 |
 | `ImuStreamAlgorithmExecutor` / `HelmStreamAlgorithmExecutor` | 分别执行惯测与舵机 `device_stream` 的一次 START、持续主动反馈和一次 STOP |
 | `RunParameterSchema` | 由算法 ID 声明运行期可编辑字段、默认值、显示条件和语义边界；合并配置值与本次覆盖，拒绝未知、非有限或越界值 |
 | `DiStimulusController` | 解析 `executionConfig.digitalStimulus`，按配置白名单和 revision 构造完整 DI 输出批次；不调用厂家 SDK |
@@ -65,7 +67,7 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 | `HalControlTransport` | 经 `IControlChannel` 发送原始字节，并累积短读、搜索同步字、按长度分帧及保留剩余帧 |
 | `HalSerialTransport` | 将算法字节事务桥接到现有 `ISerialBus` |
 
-当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，分别完成 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 的单次及三轮 PC 周期。舵机链路已有宿主脚本传输、DUT DDS 桥接单元测试和 AArch64 交叉构建证据，但尚未执行真实 COM3/DDS/舵机联合测试。PXI-6259 NI-DAQmx 专用 Adapter 已有源码、可选 CMake 与 Fake NIDAQmx 回归，但没有真实板端、真实 NI SDK 运行或 PXI-6259 结论。早期 SYSTEM_STATUS 实机执行每轮出现 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，两个既有测试项均再次成功，后端完整诊断未再出现该警告。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
+当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，分别完成 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 的单次及三轮 PC 周期。BUS 新路径已有协议、双传输 Fake、HAL 多控制会话、DUT 单元/主机侧 PyQt 和 AArch64 交叉构建证据，但未执行 PC COM1/2/4 与目标板的外部 ECHO 真机闭环。舵机链路已有宿主脚本传输、DUT DDS 桥接单元测试和 AArch64 交叉构建证据，但尚未执行真实 COM3/DDS/舵机联合测试。PXI-6259 NI-DAQmx 专用 Adapter 已有源码、可选 CMake 与 Fake NIDAQmx 回归，但没有真实板端、真实 NI SDK 运行或 PXI-6259 结论。早期 SYSTEM_STATUS 实机执行每轮出现 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，两个既有测试项均再次成功，后端完整诊断未再出现该警告。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
 
 ---
 
@@ -91,7 +93,7 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 因此：
 
 - `ProtocolCatalog` 按一文件一定义加载，当前期望为 37 个定义；
-- 九个当前配置所需的协议 CSV 当前存在；
+- 十一个当前配置所需的协议 CSV 当前存在；
 - 原测试源码中的 36 项断言和 `ad_read_response` 引用是相对批准基线的陈旧预期，现已按当前定义修正；
 - 后续修改该目录时，必须同步协议测试和本节清单；测试结果应记录基线路径、观测时间和实际清单。
 
@@ -184,7 +186,7 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 ## 7. MB_DDF 单步配置与执行
 
-当前应用控制器通过统一注册表接受九个算法：原七项单发单回算法，以及专用的 `mbddf.imu_stream`、`mbddf.helm_stream` 设备流执行器。每份配置只能启用其中一个步骤。`TIMER_JITTER` 的 STOP 仍只是单轮跟随清理；`IMU_STREAM` 与 `HELM_STREAM` 在一次 `executeStep()` 中产生多帧主动反馈。
+当前应用控制器通过统一注册表接受十一个算法：九项固定请求/响应算法（其中 BUS ECHO 额外协调一个辅助 COM 资源），以及专用的 `mbddf.imu_stream`、`mbddf.helm_stream` 设备流执行器。每份配置只能启用其中一个步骤。`TIMER_JITTER` 的 STOP 仍只是单轮跟随清理；BUS ECHO 的多轮由 BIZ `pc_periodic` 重复完整单轮事务；`IMU_STREAM` 与 `HELM_STREAM` 在一次 `executeStep()` 中产生多帧主动反馈。
 
 `SYSTEM_STATUS` 的 `executionConfig` 形状为：
 
@@ -221,6 +223,8 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 | 配置 | algorithmId | 请求/响应 | 当前参数和收尾语义 |
 | --- | --- | --- | --- |
+| `configs/mbddf_bus_loop.testcfg.json` | `mbddf.bus_loop` | `bus_loop_test_request/response`（`03/01`） | 只允许 link 0/1/3（COM1/COM2/COM4）和 `total_count=1..100000`；DUT 以 `loopback=true` 内部回环，响应链路、实际次数必须等于本次请求且错误数必须为 0；只支持单次 |
+| `configs/mbddf_bus_echo.testcfg.json` | `mbddf.bus_echo` | `bus_echo_test_request/response`（`03/02`） | 只允许 link 0/1/3；固定 114 字节以 `4D 42 31` 开头，其余为 0；每个 `pc_periodic` 周期由 DUT 在所选 COM 发送，PC 辅助串口短读累积后原样回写，再读取控制响应并对两个方向逐字节校验；整轮 deadline 为 5 秒 |
 | `configs/mbddf_memperf.testcfg.json` | `mbddf.memperf` | `memperf_test_request/response` | `memperf_type`、`length`、`seed` 由 `step.parameters.protocol.requestValues` 提供；响应 `error_count` 默认要求为 0 |
 | `configs/mbddf_spi_flash.testcfg.json` | `mbddf.spi_flash` | `spi_flash_test_request/response` | 空请求；DUT 擦写固定隔离 4 KiB 测试区，不备份、不恢复，配置仅支持单次 |
 | `configs/mbddf_dh_pulse_config.testcfg.json` | `mbddf.dh_pulse_config` | `dh_pulse_config_request/response` | `config_enable` 与 23 路 `pulse_width[]` 写入后逐项回读并判定 |
@@ -257,9 +261,9 @@ DDS 时间来自设备单调时钟而非 UTC。宿主保留每条原始值为 `d
 
 `executionConfig.lifecycle` 只允许在需要清理 ACK 的单步中使用：请求/响应 Profile 必须成对提供，执行器先完成主请求/响应，再以递增序号发送 follow-up 请求并校验响应命令、序号、`status` 和 `err_code`。这不是设备持续回告能力；当前定时器 START 在 DUT 端同步完成 250 us x 250 周期统计，STOP 只负责幂等清理确认。
 
-九个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes` 和 `measurements`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；设备流保存固定使用完整 descriptor 列，曲线选择不改变保存格式。可编辑运行参数不在 `reportFields` 定义，而由算法 ID 对应的 Schema 唯一声明；应用层合并配置 `requestValues` 和本次覆盖后，把规范化结果写入快照并透传 BIZ。
+十一个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes` 和 `measurements`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；设备流保存固定使用完整 descriptor 列，曲线选择不改变保存格式。BUS ECHO 的 114 个协议数据字段只在算法内部逐字节判定，公开样本和测量只包含状态、链路、字节数和不一致摘要，完整请求/响应仍以帧十六进制及数据 SHA-256 保留在结果诊断中。可编辑运行参数不在 `reportFields` 定义，而由算法 ID 对应的 Schema 唯一声明；应用层只把 Schema 字段作为本次覆盖，固定协议字段仍留在配置请求中，再将规范化结果透传 BIZ。
 
-算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。
+算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。BUS ECHO 只额外消费 `executionConfig.transport.busEcho.resourceByLink` 中的逻辑 ResourceId 映射；样例的 `BUS_ECHO_COM1/2/4` 均为 `role=auxiliary-link` 的 `qt.serial` 资源，端口名由部署配置填写，不出现在应用的主控制口选择列表。主控制资源与所选辅助资源由同一 `HalDevice` 独立打开，不能映射到同一物理串口。
 
 当前 `ProtocolProfile` 列表由 BIZ 保存和透传，但 MB_DDF 执行器仍没有把它与 `executionConfig.protocol.*ProfileId`、CSV 命令键或 HAL 资源做完整交叉校验。该绑定仍是未实现项，不能仅凭同名 Profile 宣称映射已建立。
 

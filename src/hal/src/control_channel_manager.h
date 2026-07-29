@@ -2,6 +2,8 @@
 
 #include "resource_mapper.h"
 
+#include <functional>
+#include <map>
 #include <memory>
 
 namespace hwtest::hal {
@@ -10,7 +12,10 @@ class ControlIoProvider;
 
 class ControlChannelManager {
 public:
+    using ProviderFactory = std::function<std::unique_ptr<ControlIoProvider>(const ResourceBinding&)>;
+
     ControlChannelManager();
+    explicit ControlChannelManager(ProviderFactory providerFactory);
     ~ControlChannelManager();
 
     HalStatus open(const ResourceBinding& binding,
@@ -26,14 +31,20 @@ public:
     HalStatus closeAll(const OperationOptions& options);
 
 private:
+    struct OpenControlSession {
+        ResourceBinding binding;
+        std::unique_ptr<ControlIoProvider> provider;
+    };
+
     HalStatus ensureOpenFor(const ResourceBinding& binding,
                             const QString& operation) const;
+    ResourceId openSerialPortOwner(const ResourceBinding& binding) const;
     static HalStatus withBindingContext(HalStatus status,
                                         const ResourceBinding& binding,
                                         const QString& fallbackOperation);
 
-    std::unique_ptr<ControlIoProvider> m_provider;
-    ResourceBinding m_openBinding;
+    ProviderFactory m_providerFactory;
+    std::map<ResourceId, OpenControlSession> m_openSessions;
 };
 
 } // namespace hwtest::hal

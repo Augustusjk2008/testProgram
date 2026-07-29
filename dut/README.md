@@ -1,7 +1,7 @@
 # MB_DDF_v2
 
 > 项目版本：`1.0.0`
-> 文档最后更新：`2026-07-28`
+> 文档最后更新：`2026-07-29`
 
 MB_DDF_v2 是面向 AArch64 Linux 的 C++20 工程，包含共享内存 DDS、XDMA 硬件抽象层、
 产品硬件测试服务、只读硬件 Demo，以及配套的 Windows PyQt5 串口工具。Windows 主机
@@ -142,6 +142,11 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 - 产品协议字段布局以 [`docs/design/product_protocol_csv`](docs/design/product_protocol_csv)
   下的 37 份 CSV 为准。DH 脉宽配置使用 `0x06/0x01`，控制与多帧遥测使用
   `0x06/0x02`；旧 `dh_report_response` 不再使用。
+- BUS 只测试 link 0=COM1、1=COM2、3=COM4；link 2 是 COM3 控制口，必须在打开硬件前
+  返回 `CHANNEL_INVALID`。BUS_LOOP 使用内部回环，BUS_ECHO 由独立 PC/夹具在被测 COM
+  原样回发固定 114 字节；两者每次接收最多等待 5 秒，长度、内容、次数或错误统计不符合
+  要求即失败。SPI Flash 仅保留独立 `SPI_FLASH_TEST`，不再属于 BUS。旧 PyQt 只经 COM3
+  控制口发令，不能作为 COM1/COM2/COM4 的外部 ECHO 回送端或真机验收证据。
 - 旧 PyQt 舵控页面及“执行全部”使用 `HELM_BOARD_TEST 0x07/0x02`：B9 低 4 位保留、
   高 4 位设置四路方向，B10-B13 分别设置四路整数占空比 `0..100%`，并回读
   `pwm_duty_match`、raw duty、peak、方向、使能状态及四路 AD7606。Web 主基线使用

@@ -209,10 +209,21 @@ Status SystemStatusAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
         if (runParameterSchema != nullptr) {
             for (const TestStep& configuredStep : plan.steps) {
                 if (configuredStep.algorithmId == m_algorithmId) {
-                    configuredDefaults = nestedMap(
+                    const QVariantMap configuredRequestValues = nestedMap(
                         nestedMap(configuredStep.parameters,
                                   QStringLiteral("protocol")),
                         QStringLiteral("requestValues"));
+                    // Only schema fields are browser-editable. Protocol-fixed
+                    // request values (for example BUS_ECHO's 114-byte pattern)
+                    // remain in the step but are not treated as run parameters.
+                    for (const RunParameterDescriptor& descriptor :
+                         runParameterSchema->parameters) {
+                        if (configuredRequestValues.contains(descriptor.id)) {
+                            configuredDefaults.insert(
+                                descriptor.id,
+                                configuredRequestValues.value(descriptor.id));
+                        }
+                    }
                     break;
                 }
             }
@@ -441,6 +452,12 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
                                QStringLiteral("Cannot encode %1 request: %2")
                                    .arg(m_commandName, error));
     }
+    QVariantMap effectiveRequestValues;
+    if (!decodePayload(*m_request, payload, &effectiveRequestValues, &error)) {
+        return protocolFailure(step,
+                               QStringLiteral("Cannot normalize %1 request: %2")
+                                   .arg(m_commandName, error));
+    }
     QByteArray frame;
     if (!encodeFrame(payload, &frame, &error)) {
         return protocolFailure(step,
@@ -601,6 +618,36 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
         }
     }
 
+    QVariantMap exposedValues = values;
+    int echoMismatchCount = 0;
+    int firstEchoMismatch = -1;
+    QByteArray requestedEchoData;
+    QByteArray responseEchoData;
+    if (m_algorithmId == QStringLiteral("mbddf.bus_echo")) {
+        requestedEchoData.reserve(114);
+        responseEchoData.reserve(114);
+        for (int index = 0; index < 114; ++index) {
+            const QString field = QStringLiteral("data[%1]").arg(index);
+            const quint8 requested = static_cast<quint8>(
+                effectiveRequestValues.value(field).toUInt());
+            const quint8 received = static_cast<quint8>(values.value(field).toUInt());
+            requestedEchoData.append(static_cast<char>(requested));
+            responseEchoData.append(static_cast<char>(received));
+            if (requested != received) {
+                if (firstEchoMismatch < 0) firstEchoMismatch = index;
+                ++echoMismatchCount;
+            }
+        }
+        exposedValues = {
+            {QStringLiteral("status"), values.value(QStringLiteral("status"))},
+            {QStringLiteral("err_code"), values.value(QStringLiteral("err_code"))},
+            {QStringLiteral("link_id"), values.value(QStringLiteral("link_id"))},
+            {QStringLiteral("echo_bytes"), 114},
+            {QStringLiteral("mismatch_count"), echoMismatchCount},
+            {QStringLiteral("first_mismatch_index"), firstEchoMismatch},
+        };
+    }
+
     TestResult result;
     result.stepId = step.stepId;
     result.testItemId = step.testItemId;
@@ -612,7 +659,17 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     result.endTimeUs = result.startTimeUs;
     result.rawData.insert(QStringLiteral("requestFrameHex"), QString::fromLatin1(frame.toHex()));
     result.rawData.insert(QStringLiteral("responseFrameHex"), QString::fromLatin1(transportResult.frame.toHex()));
-    result.rawData.insert(QStringLiteral("responseValues"), values);
+    result.rawData.insert(QStringLiteral("responseValues"), exposedValues);
+    if (m_algorithmId == QStringLiteral("mbddf.bus_echo")) {
+        result.rawData.insert(
+            QStringLiteral("requestDataSha256"),
+            QString::fromLatin1(QCryptographicHash::hash(
+                requestedEchoData, QCryptographicHash::Sha256).toHex()));
+        result.rawData.insert(
+            QStringLiteral("responseDataSha256"),
+            QString::fromLatin1(QCryptographicHash::hash(
+                responseEchoData, QCryptographicHash::Sha256).toHex()));
+    }
     if (m_followUpRequest != nullptr) {
         result.rawData.insert(QStringLiteral("followUpRequestFrameHex"),
                              QString::fromLatin1(followUpRequestFrame.toHex()));
@@ -620,7 +677,8 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
                              QString::fromLatin1(followUpResponseFrame.toHex()));
         result.rawData.insert(QStringLiteral("followUpResponseValues"), followUpValues);
     }
-    for (auto iterator = values.cbegin(); iterator != values.cend(); ++iterator) {
+    for (auto iterator = exposedValues.cbegin();
+         iterator != exposedValues.cend(); ++iterator) {
         if (iterator.key() == QStringLiteral("sync[0]") || iterator.key() == QStringLiteral("sync[1]") ||
             iterator.key() == QStringLiteral("len") || iterator.key() == QStringLiteral("version") ||
             iterator.key() == QStringLiteral("type_group") || iterator.key() == QStringLiteral("sub_type") ||
@@ -631,7 +689,7 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     }
 
     QString criterionError;
-    if (!evaluateCriteria(step, values, requestValues, &criterionError)) {
+    if (!evaluateCriteria(step, values, effectiveRequestValues, &criterionError)) {
         result.verdict = TestVerdict::Fail;
         result.errorCode = ErrorCode::SampleFail;
         result.message = criterionError;
@@ -651,7 +709,7 @@ Result<TestResult> SystemStatusAlgorithmExecutor::executeStep(
     hwtest::biz::RawSample sample;
     sample.timestampUs = result.endTimeUs;
     sample.channelId = m_commandName;
-    sample.values = values;
+    sample.values = exposedValues;
     sample.tags.insert(QStringLiteral("requestFrameHex"), result.rawData.value(QStringLiteral("requestFrameHex")));
     observer.onSample(step.stepId, sample);
     observer.onProgress(step.stepId, step.testItemId, 100, QStringLiteral("response decoded"));
@@ -758,6 +816,10 @@ bool SystemStatusAlgorithmExecutor::evaluateCriteria(const TestStep& step,
 {
     const bool isDhPulseConfig =
         m_algorithmId == QStringLiteral("mbddf.dh_pulse_config");
+    const bool isBusLoop =
+        m_algorithmId == QStringLiteral("mbddf.bus_loop");
+    const bool isBusEcho =
+        m_algorithmId == QStringLiteral("mbddf.bus_echo");
     const bool dhConfigurationEnabled =
         effectiveRequestValues.value(QStringLiteral("config_enable")).toInt() != 0;
     const QString readbackPrefix = QStringLiteral("pulse_width_readback[");
@@ -787,6 +849,15 @@ bool SystemStatusAlgorithmExecutor::evaluateCriteria(const TestStep& step,
             }
             criterion.ref = requestIterator.value();
         }
+        if ((isBusLoop || isBusEcho) &&
+            criterion.metric == QStringLiteral("link_id")) {
+            criterion.ref = effectiveRequestValues.value(QStringLiteral("link_id"));
+        }
+        if (isBusLoop &&
+            criterion.metric == QStringLiteral("total_count")) {
+            criterion.ref = effectiveRequestValues.value(
+                QStringLiteral("total_count"));
+        }
 
         const auto iterator = values.constFind(criterion.metric);
         if (iterator == values.cend()) {
@@ -803,6 +874,21 @@ bool SystemStatusAlgorithmExecutor::evaluateCriteria(const TestStep& step,
                                        .arg(criterion.metric);
             }
             return false;
+        }
+    }
+    if (isBusEcho) {
+        for (int index = 0; index < 114; ++index) {
+            const QString metric = QStringLiteral("data[%1]").arg(index);
+            if (!values.contains(metric) ||
+                values.value(metric).toUInt() !=
+                    effectiveRequestValues.value(metric).toUInt()) {
+                if (failureMessage != nullptr) {
+                    *failureMessage = QStringLiteral(
+                        "BUS_ECHO response '%1' does not match the transmitted payload")
+                                          .arg(metric);
+                }
+                return false;
+            }
         }
     }
     return true;

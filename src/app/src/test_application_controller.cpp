@@ -203,10 +203,21 @@ QString runParameterKindName(
     return {};
 }
 
-QVariantMap configuredRunParameterDefaults(const hwtest::biz::TestStep& step)
+QVariantMap configuredRunParameterDefaults(
+    const hwtest::biz::TestStep& step,
+    const hwtest::algorithm::mbddf::RunParameterSchema& schema)
 {
-    return step.parameters.value(QStringLiteral("protocol")).toMap()
-        .value(QStringLiteral("requestValues")).toMap();
+    const QVariantMap requestValues =
+        step.parameters.value(QStringLiteral("protocol")).toMap()
+            .value(QStringLiteral("requestValues")).toMap();
+    QVariantMap defaults;
+    for (const hwtest::algorithm::mbddf::RunParameterDescriptor& descriptor :
+         schema.parameters) {
+        if (requestValues.contains(descriptor.id)) {
+            defaults.insert(descriptor.id, requestValues.value(descriptor.id));
+        }
+    }
+    return defaults;
 }
 
 TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
@@ -490,12 +501,14 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     }
 
     QVariantMap runParameterDefaults;
-    if (hwtest::algorithm::mbddf::findRunParameterSchema(
-            selectedAlgorithmId) != nullptr) {
+    const auto* runParameterSchema =
+        hwtest::algorithm::mbddf::findRunParameterSchema(selectedAlgorithmId);
+    if (runParameterSchema != nullptr) {
         const auto normalized =
             hwtest::algorithm::mbddf::normalizeRunParameters(
                 selectedAlgorithmId,
-                configuredRunParameterDefaults(*selectedStep),
+                configuredRunParameterDefaults(*selectedStep,
+                                               *runParameterSchema),
                 {});
         if (!normalized.ok()) {
             return failure(QStringLiteral("test_config"),
@@ -546,6 +559,11 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     for (auto iterator = resources.cbegin(); iterator != resources.cend(); ++iterator) {
         const QVariantMap resource = iterator.value().toMap();
         if (resource.value(QStringLiteral("module")).toString() != QStringLiteral("control")) {
+            continue;
+        }
+        if (resource.value(QStringLiteral("properties")).toMap()
+                .value(QStringLiteral("role")).toString() ==
+            QStringLiteral("auxiliary-link")) {
             continue;
         }
         const QString providerId = resource.value(QStringLiteral("providerId")).toString().trimmed();
@@ -798,7 +816,9 @@ ActionResult TestApplicationController::prepare()
     auto transport = std::make_unique<hwtest::algorithm::mbddf::HalControlTransport>(
         m_impl->device, m_impl->snapshot.controlResourceId);
     m_impl->executor = createMbdDfExecutor(m_impl->selectedAlgorithmId,
-                                           std::move(transport));
+                                           std::move(transport),
+                                           m_impl->device->controlChannel(),
+                                           m_impl->snapshot.controlResourceId);
     if (!m_impl->executor) {
         const ActionResult result = failure(QStringLiteral("unsupported_algorithm"),
                                             QStringLiteral("Unsupported MB_DDF algorithm '%1'")

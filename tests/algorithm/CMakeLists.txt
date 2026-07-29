@@ -19,6 +19,8 @@ else()
 endif()
 
 add_executable(hwtest_algorithm_tests
+    bus_echo_transport_test.cpp
+    bus_executor_test.cpp
     di_stimulus_controller_test.cpp
     imu_stream_executor_test.cpp
     helm_stream_executor_test.cpp
@@ -57,6 +59,8 @@ file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_di.testcfg.json"
      HWTEST_MBDDF_DI_CONFIG)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/helm_performance"
      HWTEST_HELM_PERFORMANCE_FIXTURE_DIR)
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/dut/docs/design/product_protocol_csv"
+     HWTEST_MBDDF_PROTOCOL_CATALOG_DIR)
 
 target_compile_features(hwtest_algorithm_tests PRIVATE cxx_std_17)
 
@@ -67,6 +71,7 @@ target_compile_definitions(hwtest_algorithm_tests
         HWTEST_MBDDF_TIMER_JITTER_CONFIG="${HWTEST_MBDDF_TIMER_JITTER_CONFIG}"
         HWTEST_MBDDF_DI_CONFIG="${HWTEST_MBDDF_DI_CONFIG}"
         HWTEST_HELM_PERFORMANCE_FIXTURE_DIR="${HWTEST_HELM_PERFORMANCE_FIXTURE_DIR}"
+        HWTEST_MBDDF_PROTOCOL_CATALOG_DIR="${HWTEST_MBDDF_PROTOCOL_CATALOG_DIR}"
 )
 
 target_link_libraries(hwtest_algorithm_tests

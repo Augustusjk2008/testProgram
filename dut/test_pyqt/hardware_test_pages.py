@@ -284,12 +284,9 @@ class BusTestPage(BaseHardwareTestPage):
     )
 
     LINK_OPTIONS = (
-        ("link 0 · 100M 网口 1", 0),
-        ("link 1 · 100M 网口 2", 1),
-        ("link 2 · COM1", 2),
-        ("link 3 · COM2", 3),
-        ("link 5 · COM4", 5),
-        ("link 6 · SPI Flash", 6),
+        ("link 0 · COM1", 0),
+        ("link 1 · COM2", 1),
+        ("link 3 · COM4", 3),
     )
 
     def __init__(
@@ -300,6 +297,8 @@ class BusTestPage(BaseHardwareTestPage):
     ) -> None:
         self._last_echo_bytes = b""
         super().__init__(spec, catalog, parent)
+        self.action_layout.removeWidget(self.continuous_button)
+        self.continuous_button.hide()
 
     def build_parameters(self) -> None:
         self.bus_mode_control = SegmentedControl(
@@ -319,7 +318,7 @@ class BusTestPage(BaseHardwareTestPage):
 
         self.count_spin = QSpinBox(self)
         self.count_spin.setObjectName("busCountSpin")
-        self.count_spin.setRange(1, 2147483647)
+        self.count_spin.setRange(1, 100000)
         self.count_spin.setValue(int(self.spec.defaults.get("total_count", 1000)))
 
         self.data_input = QLineEdit(self)
@@ -327,10 +326,22 @@ class BusTestPage(BaseHardwareTestPage):
         self.data_input.setPlaceholderText("4D 42 31")
         self.data_input.setText(str(self.spec.defaults.get("data_hex", "4D 42 31")))
 
+        self.bus_boundary_label = QLabel(
+            "本工具仅通过 COM3 控制口发送产品协议；link 2 是控制口，始终不可测。"
+            "BUS_ECHO 的外部 ECHO 回送端必须是 COM1/COM2/COM4 上的独立 PC 或夹具，"
+            "本工具不是外部 ECHO 回送端，也不构成该链路验收。"
+            "连续轮次由根宿主 pc_periodic 管理。",
+            self,
+        )
+        self.bus_boundary_label.setObjectName("busBoundaryLabel")
+        self.bus_boundary_label.setWordWrap(True)
+        self.bus_boundary_label.setProperty("muted", True)
+
         self.add_parameter_row("测试方式", self.bus_mode_control)
         self.add_parameter_row("测试链路", self.link_combo)
         self.add_parameter_row("收发次数", self.count_spin)
         self.add_parameter_row("回显数据", self.data_input)
+        self.add_parameter_row("使用边界", self.bus_boundary_label)
 
         self.bus_mode_control.current_changed.connect(
             lambda _value: self._update_mode_controls()
@@ -348,7 +359,7 @@ class BusTestPage(BaseHardwareTestPage):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.metrics)
 
-        self.echo_comparison_group = QGroupBox("发送 / 接收数据对照", root)
+        self.echo_comparison_group = QGroupBox("发送 / 实际接收数据对照（114 字节）", root)
         comparison_form = QFormLayout(self.echo_comparison_group)
         self.sent_data_edit = QLineEdit(self.echo_comparison_group)
         self.sent_data_edit.setObjectName("busSentData")
@@ -356,8 +367,8 @@ class BusTestPage(BaseHardwareTestPage):
         self.received_data_edit = QLineEdit(self.echo_comparison_group)
         self.received_data_edit.setObjectName("busReceivedData")
         self.received_data_edit.setReadOnly(True)
-        comparison_form.addRow("发送", self.sent_data_edit)
-        comparison_form.addRow("接收", self.received_data_edit)
+        comparison_form.addRow("发送（协议 114 B）", self.sent_data_edit)
+        comparison_form.addRow("接收（实际）", self.received_data_edit)
         layout.addWidget(self.echo_comparison_group)
         layout.addStretch(1)
         self.echo_comparison_group.setVisible(False)
@@ -420,12 +431,11 @@ class BusTestPage(BaseHardwareTestPage):
                 expected = self._echo_bytes()
             except ParameterValidationError:
                 expected = b""
+        expected = expected + bytes(max(0, 114 - len(expected)))
         received = bytes(
             int(decoded.values.get("data[{}]".format(index), 0)) & 0xFF
             for index in range(114)
         )
-        if expected:
-            received = received[: len(expected)]
         self.sent_data_edit.setText(_format_bytes(expected))
         self.received_data_edit.setText(_format_bytes(received))
         for key in ("error_count", "total_count", "elapsed_ms"):

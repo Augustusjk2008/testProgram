@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-bus-loop",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF serial internal loopback",
+  "configVersion": "1.0.0",
+  "steps": [
+    {
+      "stepId": "BUS_LOOP_TEST",
+      "testItemId": "bus_loop",
+      "name": "串口内部回环测试",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.bus_loop",
+      "parameters": {
+        "protocol": {
+          "requestValues": {
+            "link_id": 0,
+            "total_count": 1000
+          }
+        }
+      },
+      "timeoutMs": 5000,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": [
+        {"metric": "status", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "err_code", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "link_id", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "error_count", "op": "Equal", "ref": 0, "tol": 0, "passIfMatched": true},
+        {"metric": "total_count", "op": "Equal", "ref": 1000, "tol": 0, "passIfMatched": true}
+      ]
+    }
+  ],
+  "hardwareRequirements": [],
+  "protocolProfiles": [
+    {"id": "bus_loop_test_request", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 5000}},
+    {"id": "bus_loop_test_response", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 5000}}
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {"requestProfileId": "bus_loop_test_request", "responseProfileId": "bus_loop_test_response"},
+    "transport": {"openTimeoutMs": 1000, "readChunkBytes": 260},
+    "initialSequence": 4660
+  },
+  "safetyPolicy": {"enterSafeStateOnStop": true, "enterSafeStateOnError": true},
+  "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 5000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
+  "reportFields": {
+    "title": "串口内部回环测试",
+    "description": "DUT 将所选 COM1、COM2 或 COM4 配置为内部 loopback=true 并执行指定次数；COM3 为控制口。",
+    "supportedRunModes": ["single"],
+    "measurements": [
+      {"id": "status", "label": "设备状态", "unit": "", "primary": false},
+      {"id": "err_code", "label": "设备错误码", "unit": "", "primary": false},
+      {"id": "link_id", "label": "串口链路", "unit": "", "primary": false},
+      {"id": "error_count", "label": "错误次数", "unit": "次", "primary": true},
+      {"id": "total_count", "label": "实际回环次数", "unit": "次", "primary": true},
+      {"id": "elapsed_ms", "label": "执行耗时", "unit": "ms", "primary": true}
+    ]
+  }
+}

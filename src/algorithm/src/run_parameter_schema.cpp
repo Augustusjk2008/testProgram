@@ -69,6 +69,49 @@ RunParameterDescriptor integerParameter(const QString& id,
     return descriptor;
 }
 
+RunParameterDescriptor busLinkParameter()
+{
+    RunParameterDescriptor descriptor;
+    descriptor.id = QStringLiteral("link_id");
+    descriptor.label = QStringLiteral("测试串口");
+    descriptor.description = QStringLiteral("COM3 为产品控制口，不参与总线测试");
+    descriptor.kind = RunParameterKind::Choice;
+    descriptor.defaultValue = 0;
+    descriptor.choices = {
+        {0, QStringLiteral("COM1")},
+        {1, QStringLiteral("COM2")},
+        {3, QStringLiteral("COM4")},
+    };
+    return descriptor;
+}
+
+const RunParameterSchema& busLoopSchema()
+{
+    static const RunParameterSchema schema = [] {
+        RunParameterSchema result;
+        result.version = QStringLiteral("1");
+        result.parameters.push_back(busLinkParameter());
+        RunParameterDescriptor count = integerParameter(
+            QStringLiteral("total_count"), QStringLiteral("内部回环次数"),
+            QStringLiteral("次"), 1000, 1, 100000);
+        count.description = QStringLiteral("DUT 将所选串口配置为内部 loopback=true");
+        result.parameters.push_back(count);
+        return result;
+    }();
+    return schema;
+}
+
+const RunParameterSchema& busEchoSchema()
+{
+    static const RunParameterSchema schema = [] {
+        RunParameterSchema result;
+        result.version = QStringLiteral("1");
+        result.parameters.push_back(busLinkParameter());
+        return result;
+    }();
+    return schema;
+}
+
 const RunParameterSchema& helmSchema()
 {
     static const RunParameterSchema schema = [] {
@@ -252,6 +295,12 @@ const RunParameterSchema* findRunParameterSchema(const QString& algorithmId)
     }
     if (algorithmId == QStringLiteral("mbddf.dh_pulse_config")) {
         return &dhSchema();
+    }
+    if (algorithmId == QStringLiteral("mbddf.bus_loop")) {
+        return &busLoopSchema();
+    }
+    if (algorithmId == QStringLiteral("mbddf.bus_echo")) {
+        return &busEchoSchema();
     }
     return nullptr;
 }

@@ -8,7 +8,6 @@
 #include "MB_DDF_HW/Device/Registers/Ad7606Registers.h"
 #include "MB_DDF_HW/Device/Registers/PwmRegisters.h"
 #include "hw_unit/support/RecordingTransport.h"
-#include "hw_unit/support/RecordingSpiTransport.h"
 
 #include <gtest/gtest.h>
 
@@ -19,6 +18,7 @@
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <vector>
 
 using MB_DDF::HWTest::HardwareTestProvider;
 using MB_DDF::HWTest::ProductErrorCode;
@@ -273,25 +273,90 @@ TEST(HardwareTestProviderTest, BusStatisticsCountOnlyCompletedIterations) {
     EXPECT_FALSE(MB_DDF::HWTest::Detail::bus_payload_matches(expected, too_long));
 }
 
-TEST(HardwareTestProviderTest, UdpLinksUseDocumentedLocalSelfLoopEndpoints) {
-    EXPECT_EQ(MB_DDF::HWTest::Detail::udp_self_loop_address(0),
-              "192.168.1.29");
-    EXPECT_EQ(MB_DDF::HWTest::Detail::udp_self_loop_address(1),
-              "192.168.7.29");
-    EXPECT_TRUE(MB_DDF::HWTest::Detail::udp_self_loop_address(2).empty());
-    EXPECT_EQ(MB_DDF::HWTest::Detail::kUdpSelfLoopPort, 3003u);
+TEST(HardwareTestProviderTest, MapsOnlyBusComLinksAndReservesCom3) {
+    EXPECT_EQ(MB_DDF::HWTest::Detail::com_index_for_bus_link(0).value_or(99),
+              0u);
+    EXPECT_EQ(MB_DDF::HWTest::Detail::com_index_for_bus_link(1).value_or(99),
+              1u);
+    EXPECT_EQ(MB_DDF::HWTest::Detail::com_index_for_bus_link(2).value_or(99),
+              2u);
+    EXPECT_EQ(MB_DDF::HWTest::Detail::com_index_for_bus_link(3).value_or(99),
+              3u);
+    for (const uint8_t link_id : {uint8_t{4}, uint8_t{5}, uint8_t{6}}) {
+        EXPECT_FALSE(MB_DDF::HWTest::Detail::com_index_for_bus_link(link_id));
+    }
+    EXPECT_EQ(MB_DDF::HWTest::Detail::kControlBusLinkId, 2u);
 }
 
-TEST(HardwareTestProviderTest, MapsBusLinksToComPortsAndReservesCom3) {
-    EXPECT_EQ(MB_DDF::HWTest::Detail::com_index_for_bus_link(2).value_or(99),
-              0u);
-    EXPECT_EQ(MB_DDF::HWTest::Detail::com_index_for_bus_link(3).value_or(99),
-              1u);
-    EXPECT_EQ(MB_DDF::HWTest::Detail::com_index_for_bus_link(4).value_or(99),
-              2u);
-    EXPECT_EQ(MB_DDF::HWTest::Detail::com_index_for_bus_link(5).value_or(99),
-              3u);
-    EXPECT_EQ(MB_DDF::HWTest::Detail::kControlBusLinkId, 4u);
+TEST(HardwareTestProviderTest, PreflightRejectsUnsupportedLinksAndImuOwnedCom4) {
+    using MB_DDF::HWTest::Detail::bus_link_preflight;
+
+    EXPECT_EQ(bus_link_preflight(0, false), ProductErrorCode::Ok);
+    EXPECT_EQ(bus_link_preflight(1, false), ProductErrorCode::Ok);
+    EXPECT_EQ(bus_link_preflight(3, false), ProductErrorCode::Ok);
+    EXPECT_EQ(bus_link_preflight(2, false), ProductErrorCode::ChannelInvalid);
+    EXPECT_EQ(bus_link_preflight(4, false), ProductErrorCode::ChannelInvalid);
+    EXPECT_EQ(bus_link_preflight(5, false), ProductErrorCode::ChannelInvalid);
+    EXPECT_EQ(bus_link_preflight(6, false), ProductErrorCode::ChannelInvalid);
+    EXPECT_EQ(bus_link_preflight(3, true), ProductErrorCode::TaskBusy);
+}
+
+TEST(HardwareTestProviderTest, BusConfigurationSelectsInternalLoopbackOnlyForLoop) {
+    const auto loop_config = MB_DDF::HWTest::Detail::bus_com_config(true);
+    const auto echo_config = MB_DDF::HWTest::Detail::bus_com_config(false);
+
+    EXPECT_TRUE(loop_config.loopback);
+    EXPECT_FALSE(echo_config.loopback);
+    EXPECT_TRUE(loop_config.receive_enabled);
+    EXPECT_TRUE(echo_config.receive_enabled);
+    EXPECT_EQ(loop_config.interrupt_mode, MB_DDF::HW::ComInterruptMode::Level);
+    EXPECT_EQ(echo_config.interrupt_mode, MB_DDF::HW::ComInterruptMode::Level);
+    EXPECT_EQ(MB_DDF::HWTest::Detail::kBusReceiveTimeoutUs, 5'000'000u);
+}
+
+TEST(HardwareTestProviderTest, BusCompletionRequiresEveryRequestedExchangeToMatch) {
+    MB_DDF::HWTest::Detail::BusIterationCounts complete{};
+    for (size_t index = 0; index < 3; ++index) {
+        MB_DDF::HWTest::Detail::record_bus_iteration(complete, true);
+    }
+    EXPECT_EQ(MB_DDF::HWTest::Detail::bus_completion_error(3, complete),
+              ProductErrorCode::Ok);
+
+    MB_DDF::HWTest::Detail::BusIterationCounts mismatched{};
+    MB_DDF::HWTest::Detail::record_bus_iteration(mismatched, true);
+    MB_DDF::HWTest::Detail::record_bus_iteration(mismatched, false);
+    EXPECT_EQ(MB_DDF::HWTest::Detail::bus_completion_error(2, mismatched),
+              ProductErrorCode::TaskExecFailed);
+
+    MB_DDF::HWTest::Detail::BusIterationCounts incomplete{};
+    MB_DDF::HWTest::Detail::record_bus_iteration(incomplete, true);
+    EXPECT_EQ(MB_DDF::HWTest::Detail::bus_completion_error(2, incomplete),
+              ProductErrorCode::TaskExecFailed);
+}
+
+TEST(HardwareTestProviderTest, ShortEchoIsRetainedAndFailsStrictCompletion) {
+    const std::array<uint8_t, 3> sent{0x4D, 0x42, 0x31};
+    const std::array<uint8_t, 2> received{0x4D, 0x42};
+    MB_DDF::HWTest::Detail::BusIterationCounts counts{};
+    std::vector<uint8_t> last_received;
+
+    EXPECT_FALSE(MB_DDF::HWTest::Detail::record_bus_exchange(
+        counts, sent, received, last_received));
+    EXPECT_EQ(last_received,
+              (std::vector<uint8_t>{received.begin(), received.end()}));
+    EXPECT_EQ(MB_DDF::HWTest::Detail::bus_completion_error(1, counts),
+              ProductErrorCode::TaskExecFailed);
+
+    const std::array<uint8_t, 3> wrong_contents{0x4D, 0x42, 0x30};
+    MB_DDF::HWTest::Detail::BusIterationCounts wrong_content_counts{};
+    std::vector<uint8_t> wrong_content_received;
+    EXPECT_FALSE(MB_DDF::HWTest::Detail::record_bus_exchange(
+        wrong_content_counts, sent, wrong_contents, wrong_content_received));
+    EXPECT_EQ(wrong_content_received,
+              (std::vector<uint8_t>{wrong_contents.begin(), wrong_contents.end()}));
+    EXPECT_EQ(MB_DDF::HWTest::Detail::bus_completion_error(
+                  1, wrong_content_counts),
+              ProductErrorCode::TaskExecFailed);
 }
 
 TEST(HardwareTestProviderTest, HelmCommandUsesStartAsRadianPhase) {
@@ -325,73 +390,53 @@ TEST(HardwareTestProviderTest, HelmSweepUsesReferenceTwentyFiveSecondPhaseIntegr
               0.0);
 }
 
-TEST(HardwareTestProviderTest, SafeSpiLoopSendsOnlyJedecReadCommands) {
-    MB_DDF::HW::Test::RecordingSpiTransport transport;
-    ASSERT_TRUE(transport.open());
-    transport.queue_response({0x00, 0x20, 0xBA, 0x20});
-    transport.queue_response({0x00, 0x00, 0x00, 0x00});
-    transport.queue_response({0x00, 0x20, 0xBA, 0x20});
-    MB_DDF::HWTest::Detail::BusIterationCounts counts{};
-
-    EXPECT_EQ(MB_DDF::HWTest::Detail::run_safe_spi_loop(
-                  transport, 3, counts),
-              ProductErrorCode::Ok);
-    EXPECT_EQ(counts.error_count, 1u);
-    EXPECT_EQ(counts.total_count, 3u);
-    EXPECT_EQ(transport.transfers(),
-              (std::vector<std::vector<uint8_t>>{
-                  {0x9F, 0xFF, 0xFF, 0xFF},
-                  {0x9F, 0xFF, 0xFF, 0xFF},
-                  {0x9F, 0xFF, 0xFF, 0xFF}}));
-}
-
-TEST(HardwareTestProviderTest, SafeSpiLoopReportsOnlyCompletedIterationsOnFailure) {
-    MB_DDF::HW::Test::RecordingSpiTransport transport;
-    ASSERT_TRUE(transport.open());
-    transport.queue_response({0x00, 0x20, 0xBA, 0x20});
-    transport.queue_response({0x00, 0x00, 0x00, 0x00});
-    transport.queue_failure(MB_DDF::HW::Status::error(
-        MB_DDF::HW::StatusCode::IoError, 0, "scripted SPI failure"));
-    MB_DDF::HWTest::Detail::BusIterationCounts counts{};
-
-    EXPECT_EQ(MB_DDF::HWTest::Detail::run_safe_spi_loop(
-                  transport, 4, counts),
-              ProductErrorCode::TaskExecFailed);
-    EXPECT_EQ(counts.total_count, 2u);
-    EXPECT_EQ(counts.error_count, 1u);
-}
-
-TEST(HardwareTestProviderTest, SpiEchoPolicyRejectsArbitraryPayload) {
-    static_assert(!MB_DDF::HWTest::Detail::spi_echo_payload_allowed());
-    EXPECT_FALSE(MB_DDF::HWTest::Detail::spi_echo_payload_allowed());
-}
-
 TEST(HardwareTestProviderTest, RejectsCom3BusLoopWithoutOpeningHardware) {
     ProductProtocol protocol;
     auto request = protocol.create_message("bus_loop_test_request", false);
     auto response = protocol.create_message("bus_loop_test_response", false);
-    ASSERT_TRUE(request.set_unsigned("link_id", 4));
+    ASSERT_TRUE(request.set_unsigned("link_id", 2));
     ASSERT_TRUE(request.set_unsigned("total_count", 1));
 
     HardwareTestProvider provider;
     EXPECT_EQ(provider.handle(request, response), ProductErrorCode::ChannelInvalid);
-    EXPECT_EQ(response.get_unsigned("link_id").value_or(0), 4u);
+    EXPECT_EQ(response.get_unsigned("link_id").value_or(0), 2u);
 }
 
-TEST(HardwareTestProviderTest, InvalidLinkIsConsistentForLoopAndEcho) {
+TEST(HardwareTestProviderTest, RejectsBusLoopCountsOutsideOneToOneHundredThousandBeforeIo) {
     ProductProtocol protocol;
     HardwareTestProvider provider;
-    auto loop_request = protocol.create_message("bus_loop_test_request", false);
-    auto loop_response = protocol.create_message("bus_loop_test_response", false);
-    auto echo_request = protocol.create_message("bus_echo_test_request", false);
-    auto echo_response = protocol.create_message("bus_echo_test_response", false);
-    ASSERT_TRUE(loop_request.set_unsigned("link_id", 7));
-    ASSERT_TRUE(echo_request.set_unsigned("link_id", 7));
+    for (const uint32_t total_count : {uint32_t{0}, uint32_t{100'001}}) {
+        auto request = protocol.create_message("bus_loop_test_request", false);
+        auto response = protocol.create_message("bus_loop_test_response", false);
+        ASSERT_TRUE(request.set_unsigned("link_id", 0));
+        ASSERT_TRUE(request.set_unsigned("total_count", total_count));
 
-    EXPECT_EQ(provider.handle(loop_request, loop_response),
-              ProductErrorCode::ChannelInvalid);
-    EXPECT_EQ(provider.handle(echo_request, echo_response),
-              ProductErrorCode::ChannelInvalid);
+        EXPECT_EQ(provider.handle(request, response),
+                  ProductErrorCode::ParamOutOfRange)
+            << "total_count=" << total_count;
+    }
+}
+
+TEST(HardwareTestProviderTest, UnsupportedLinksAreRejectedBeforeLoopOrEchoHardwareAccess) {
+    ProductProtocol protocol;
+    HardwareTestProvider provider;
+    for (const uint8_t link_id : {uint8_t{2}, uint8_t{4}, uint8_t{5}, uint8_t{6},
+                                  uint8_t{7}}) {
+        auto loop_request = protocol.create_message("bus_loop_test_request", false);
+        auto loop_response = protocol.create_message("bus_loop_test_response", false);
+        auto echo_request = protocol.create_message("bus_echo_test_request", false);
+        auto echo_response = protocol.create_message("bus_echo_test_response", false);
+        ASSERT_TRUE(loop_request.set_unsigned("link_id", link_id));
+        ASSERT_TRUE(loop_request.set_unsigned("total_count", 1));
+        ASSERT_TRUE(echo_request.set_unsigned("link_id", link_id));
+
+        EXPECT_EQ(provider.handle(loop_request, loop_response),
+                  ProductErrorCode::ChannelInvalid)
+            << "link=" << static_cast<unsigned>(link_id);
+        EXPECT_EQ(provider.handle(echo_request, echo_response),
+                  ProductErrorCode::ChannelInvalid)
+            << "link=" << static_cast<unsigned>(link_id);
+    }
 }
 
 TEST(HardwareTestProviderTest, ElectricalHealthIncludesValueYxAndActivationBit) {

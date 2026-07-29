@@ -11,28 +11,23 @@
 #include "MB_DDF_HW/Device/SpiFlashDevice.h"
 #include "MB_DDF_HW/Device/XadcDevice.h"
 #include "MB_DDF_HW/Device/Registers/XadcRegisters.h"
-#include "MB_DDF_HW/Os/Fd.h"
 #include "MB_DDF_HW/Transport/SpiDevTransport.h"
 #include "MB_DDF_HW/Transport/XdmaTransport.h"
 #include "MB_DDF_HW_Test/ComEchoRunner.h"
 
 #include <algorithm>
 #include <array>
-#include <arpa/inet.h>
 #include <atomic>
 #include <bit>
 #include <chrono>
 #include <cmath>
-#include <cerrno>
 #include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <poll.h>
 #include <span>
 #include <string>
 #include <string_view>
-#include <sys/socket.h>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -163,73 +158,23 @@ ProductErrorCode run_bus_iterations(uint32_t count,
             }
             transmitted = std::span<const uint8_t>(generated);
         }
-        // 多给一个字节，使正常 recv/read 能显式检测“比期望多1字节”；
-        // UDP 另配合 MSG_TRUNC 检测更长数据报。
+        // 多给一个字节，使 COM 接收能显式检测“比期望多 1 字节”。
         std::vector<uint8_t> received(transmitted.size() + 1u);
         const auto error = exchange(transmitted, received);
         if (error != ProductErrorCode::Ok) {
             commit_stats();
             return error;
         }
-        Detail::record_bus_iteration(
-            counts, Detail::bus_payload_matches(transmitted, received));
-        stats.last_received = std::move(received);
+        Detail::record_bus_exchange(counts, transmitted, received,
+                                    stats.last_received);
     }
     commit_stats();
     return ProductErrorCode::Ok;
 }
 
-ProductErrorCode run_udp_bus(std::string_view address, uint32_t count,
-                             std::span<const uint8_t> payload, BusStats& stats) {
-    HW::Os::Fd socket_fd(::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0));
-    if (!socket_fd.valid()) {
-        return ProductErrorCode::TaskExecFailed;
-    }
-    sockaddr_in peer{};
-    peer.sin_family = AF_INET;
-    peer.sin_port = htons(Detail::kUdpSelfLoopPort);
-    const std::string address_text(address);
-    if (::inet_pton(AF_INET, address_text.c_str(), &peer.sin_addr) != 1) {
-        return ProductErrorCode::TaskExecFailed;
-    }
-    // 方案定义的是板端两个接口各自的本机UDP自环，必须先绑定固定本地端点；
-    // 否则临时源端口向本机3003发送不会回到当前socket。
-    if (::bind(socket_fd.get(), reinterpret_cast<const sockaddr*>(&peer),
-               sizeof(peer)) != 0 ||
-        ::connect(socket_fd.get(), reinterpret_cast<const sockaddr*>(&peer),
-                  sizeof(peer)) != 0) {
-        return ProductErrorCode::TaskExecFailed;
-    }
-
-    return run_bus_iterations(
-        count, payload,
-        [&](std::span<const uint8_t> transmitted,
-            std::vector<uint8_t>& received) -> ProductErrorCode {
-            const auto sent = ::send(socket_fd.get(), transmitted.data(), transmitted.size(), 0);
-            if (sent != static_cast<ssize_t>(transmitted.size())) {
-                return ProductErrorCode::TaskExecFailed;
-            }
-            pollfd descriptor{socket_fd.get(), POLLIN, 0};
-            int ready = -1;
-            do {
-                ready = ::poll(&descriptor, 1, 60'000);
-            } while (ready < 0 && errno == EINTR);
-            if (ready <= 0 || (descriptor.revents & POLLIN) == 0) {
-                return ProductErrorCode::TaskExecFailed;
-            }
-            const auto size = ::recv(socket_fd.get(), received.data(), received.size(),
-                                     MSG_TRUNC);
-            if (size < 0) {
-                return ProductErrorCode::TaskExecFailed;
-            }
-            received.resize(std::min(static_cast<size_t>(size), received.size()));
-            return ProductErrorCode::Ok;
-        },
-        stats);
-}
-
 ProductErrorCode run_com_bus(unsigned com_index, uint32_t count,
-                             std::span<const uint8_t> payload, BusStats& stats) {
+                             std::span<const uint8_t> payload, bool loopback,
+                             BusStats& stats) {
     static constexpr std::array<uint64_t, 4> offsets{
         0x40000, 0x80000, 0xC0000, 0x100000};
     if (com_index >= offsets.size() ||
@@ -244,10 +189,7 @@ ProductErrorCode run_com_bus(unsigned com_index, uint32_t count,
         return status_error(opened.status());
     }
     HW::ComDevice device(transport);
-    auto config = HW::ComDevice::default_config();
-    config.loopback = false;
-    config.receive_enabled = true;
-    config.interrupt_mode = HW::ComInterruptMode::Level;
+    const auto config = Detail::bus_com_config(loopback);
     const auto configured = device.configure(config);
     if (!configured) {
         return status_error(configured.status());
@@ -270,9 +212,13 @@ ProductErrorCode run_com_bus(unsigned com_index, uint32_t count,
                 return sent ? ProductErrorCode::TaskExecFailed : status_error(sent.status());
             }
             const auto result = device.receive(
-                {received.data(), received.size()}, HW::Timeout::after_us(60'000'000));
+                {received.data(), received.size()},
+                HW::Timeout::after_us(Detail::kBusReceiveTimeoutUs));
             if (!result) {
                 return status_error(result.status());
+            }
+            if (result.value() == 0) {
+                return ProductErrorCode::TaskExecFailed;
             }
             received.resize(result.value());
             return ProductErrorCode::Ok;
@@ -280,52 +226,13 @@ ProductErrorCode run_com_bus(unsigned com_index, uint32_t count,
         stats);
 }
 
-ProductErrorCode run_spi_bus(uint32_t count, std::span<const uint8_t> payload,
-                             BusStats& stats) {
-    if (!payload.empty()) {
-        return ProductErrorCode::TaskExecFailed;
-    }
-    HW::SpidevTransport transport({"/dev/spidev0.0", 1'000'000, 0, 8});
-    const auto opened = transport.open();
-    if (!opened) {
-        return ProductErrorCode::TaskExecFailed;
-    }
-    const auto start = Clock::now();
-    Detail::BusIterationCounts counts{};
-    const auto error = Detail::run_safe_spi_loop(transport, count, counts);
-    stats.error_count = counts.error_count;
-    stats.total_count = counts.total_count;
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        Clock::now() - start).count();
-    stats.elapsed_ms = static_cast<uint32_t>(std::min<int64_t>(
-        elapsed, std::numeric_limits<uint32_t>::max()));
-    return error;
-}
-
 ProductErrorCode run_bus(uint8_t link_id, uint32_t count,
-                         std::span<const uint8_t> payload, BusStats& stats) {
-    switch (link_id) {
-    case 0:
-        return run_udp_bus(Detail::udp_self_loop_address(0), count, payload, stats);
-    case 1:
-        return run_udp_bus(Detail::udp_self_loop_address(1), count, payload, stats);
-    case 2:
-    case 3:
-    case 4:
-    case 5: {
-        if (link_id == Detail::kControlBusLinkId) {
-            return ProductErrorCode::ChannelInvalid;
-        }
-        const auto com_index = Detail::com_index_for_bus_link(link_id);
-        return com_index
-                   ? run_com_bus(*com_index, count, payload, stats)
-                   : ProductErrorCode::ChannelInvalid;
-    }
-    case 6:
-        return run_spi_bus(count, payload, stats);
-    default:
-        return ProductErrorCode::ChannelInvalid;
-    }
+                          std::span<const uint8_t> payload, bool loopback,
+                          BusStats& stats) {
+    const auto com_index = Detail::com_index_for_bus_link(link_id);
+    return com_index
+               ? run_com_bus(*com_index, count, payload, loopback, stats)
+               : ProductErrorCode::ChannelInvalid;
 }
 
 volatile std::sig_atomic_t g_hardware_test_stop = 0;
@@ -335,6 +242,14 @@ void request_hardware_test_stop(int) noexcept {
 }
 
 } // namespace
+
+HW::ComConfig Detail::bus_com_config(bool loopback) {
+    auto config = HW::ComDevice::default_config();
+    config.loopback = loopback;
+    config.receive_enabled = true;
+    config.interrupt_mode = HW::ComInterruptMode::Level;
+    return config;
+}
 
 HW::ComConfig Detail::imu_stream_com_config() {
     auto config = HW::ComDevice::default_config();
@@ -539,26 +454,6 @@ ProductErrorCode Detail::run_helm_board_test(const ProductMessage& request,
         ad_state.value().config.filter_enabled;
     return readback_matches ? ProductErrorCode::Ok
                             : ProductErrorCode::RegReadWriteFailed;
-}
-
-ProductErrorCode Detail::run_safe_spi_loop(HW::ISpiTransport& transport,
-                                           uint32_t count,
-                                           BusIterationCounts& counts) {
-    counts = {};
-    if (count == 0 || !transport.is_open()) {
-        return count == 0 ? ProductErrorCode::ParamOutOfRange
-                          : ProductErrorCode::TaskExecFailed;
-    }
-    HW::SpiFlashDevice flash(transport);
-    for (uint32_t iteration = 0; iteration < count; ++iteration) {
-        const auto id = flash.read_jedec_id();
-        if (!id) {
-            return ProductErrorCode::TaskExecFailed;
-        }
-        record_bus_iteration(counts,
-                             id.value() == HW::SpiFlashDevice::ExpectedJedecId);
-    }
-    return ProductErrorCode::Ok;
 }
 
 double Detail::helm_command(uint32_t waveform, double frequency,
@@ -1013,38 +908,42 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
                                      ProductMessage& response) {
         const auto link = request.get_unsigned("link_id");
         const auto total = request.get_unsigned("total_count");
-        if (!link || *link > 6) {
+        if (!link || *link > std::numeric_limits<uint8_t>::max()) {
             return ProductErrorCode::ChannelInvalid;
         }
-        if (*link == 5 && imu_active) {
-            return ProductErrorCode::TaskBusy;
+        const auto link_id = static_cast<uint8_t>(*link);
+        (void)response.set_unsigned("link_id", link_id);
+        const auto preflight = Detail::bus_link_preflight(link_id, imu_active);
+        if (preflight != ProductErrorCode::Ok) {
+            return preflight;
         }
         if (!total || *total == 0 || *total > 100'000) {
             return ProductErrorCode::ParamOutOfRange;
         }
         BusStats stats{};
-        const auto error = run_bus(static_cast<uint8_t>(*link),
-                                   static_cast<uint32_t>(*total), {}, stats);
-        (void)response.set_unsigned("link_id", *link);
+        const auto requested_count = static_cast<uint32_t>(*total);
+        const auto error = run_bus(link_id, requested_count, {}, true, stats);
         (void)response.set_unsigned("error_count", stats.error_count);
         (void)response.set_unsigned("total_count", stats.total_count);
         (void)response.set_unsigned("elapsed_ms", stats.elapsed_ms);
-        return error;
+        if (error != ProductErrorCode::Ok) {
+            return error;
+        }
+        return Detail::bus_completion_error(
+            requested_count, {stats.error_count, stats.total_count});
     }
 
     ProductErrorCode handle_bus_echo(const ProductMessage& request,
                                      ProductMessage& response) {
         const auto link = request.get_unsigned("link_id");
-        if (!link || *link > 6) {
+        if (!link || *link > std::numeric_limits<uint8_t>::max()) {
             return ProductErrorCode::ChannelInvalid;
         }
-        if (*link == 5 && imu_active) {
-            return ProductErrorCode::TaskBusy;
-        }
-        if (*link == 6 && !Detail::spi_echo_payload_allowed()) {
-            LOG_ERROR << "[HW-TEST] SPI Flash 不具备任意 payload 回显语义；"
-                         "拒绝向 /dev/spidev0.0 发送用户数据";
-            return ProductErrorCode::TaskExecFailed;
+        const auto link_id = static_cast<uint8_t>(*link);
+        (void)response.set_unsigned("link_id", link_id);
+        const auto preflight = Detail::bus_link_preflight(link_id, imu_active);
+        if (preflight != ProductErrorCode::Ok) {
+            return preflight;
         }
         std::array<uint8_t, kBusEchoBytes> payload{};
         for (size_t index = 0; index < payload.size(); ++index) {
@@ -1055,8 +954,7 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
             payload[index] = static_cast<uint8_t>(*value);
         }
         BusStats stats{};
-        const auto error = run_bus(static_cast<uint8_t>(*link), 1, payload, stats);
-        (void)response.set_unsigned("link_id", *link);
+        const auto error = run_bus(link_id, 1, payload, false, stats);
         if (!stats.last_received.empty()) {
             for (size_t index = 0;
                  index < std::min(payload.size(), stats.last_received.size()); ++index) {
@@ -1064,7 +962,11 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
                                             stats.last_received[index]);
             }
         }
-        return error;
+        if (error != ProductErrorCode::Ok) {
+            return error;
+        }
+        return Detail::bus_completion_error(
+            1, {stats.error_count, stats.total_count});
     }
 
     ProductErrorCode handle_di(ProductMessage& response) {

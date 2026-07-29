@@ -149,5 +149,72 @@ TEST(RunParameterSchemaTest, DhSchemaExposesEnableAndEveryPulseWidth)
     }
 }
 
+TEST(RunParameterSchemaTest, BusLoopExposesOnlyTestableComLinksAndBoundedCount)
+{
+    const RunParameterSchema* schema = findRunParameterSchema(
+        QStringLiteral("mbddf.bus_loop"));
+    ASSERT_NE(schema, nullptr);
+    EXPECT_EQ(schema->version, QStringLiteral("1"));
+    ASSERT_EQ(schema->parameters.size(), 2);
+
+    const RunParameterDescriptor* link = parameter(*schema, QStringLiteral("link_id"));
+    ASSERT_NE(link, nullptr);
+    ASSERT_EQ(link->kind, RunParameterKind::Choice);
+    ASSERT_EQ(link->choices.size(), 3);
+    EXPECT_EQ(link->choices.at(0).value.toInt(), 0);
+    EXPECT_EQ(link->choices.at(1).value.toInt(), 1);
+    EXPECT_EQ(link->choices.at(2).value.toInt(), 3);
+
+    const RunParameterDescriptor* count = parameter(
+        *schema, QStringLiteral("total_count"));
+    ASSERT_NE(count, nullptr);
+    EXPECT_EQ(count->kind, RunParameterKind::Integer);
+    EXPECT_EQ(count->minimum.toInt(), 1);
+    EXPECT_EQ(count->maximum.toInt(), 100000);
+
+    EXPECT_TRUE(normalizeRunParameters(
+                    QStringLiteral("mbddf.bus_loop"), {},
+                    {{QStringLiteral("link_id"), 3},
+                     {QStringLiteral("total_count"), 100000}})
+                    .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.bus_loop"), {},
+                     {{QStringLiteral("link_id"), 2}})
+                     .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.bus_loop"), {},
+                     {{QStringLiteral("total_count"), 0}})
+                     .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.bus_loop"), {},
+                     {{QStringLiteral("total_count"), 100001}})
+                     .ok());
+}
+
+TEST(RunParameterSchemaTest, BusEchoExposesOnlyTheSelectedComLink)
+{
+    const RunParameterSchema* schema = findRunParameterSchema(
+        QStringLiteral("mbddf.bus_echo"));
+    ASSERT_NE(schema, nullptr);
+    EXPECT_EQ(schema->version, QStringLiteral("1"));
+    ASSERT_EQ(schema->parameters.size(), 1);
+    const RunParameterDescriptor* link = parameter(*schema, QStringLiteral("link_id"));
+    ASSERT_NE(link, nullptr);
+    EXPECT_EQ(link->kind, RunParameterKind::Choice);
+
+    EXPECT_TRUE(normalizeRunParameters(
+                    QStringLiteral("mbddf.bus_echo"), {},
+                    {{QStringLiteral("link_id"), 0}})
+                    .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.bus_echo"), {},
+                     {{QStringLiteral("link_id"), 2}})
+                     .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.bus_echo"), {},
+                     {{QStringLiteral("payload_hex"), QStringLiteral("4D4231")}})
+                     .ok());
+}
+
 } // namespace
 } // namespace hwtest::algorithm::mbddf

@@ -30,6 +30,7 @@ endif()
 
 add_executable(hwtest_app_tests
     analysis_result_store_test.cpp
+    bus_configuration_test.cpp
     frontend_launch_options_test.cpp
     post_run_analysis_coordinator_test.cpp
     test_application_controller_test.cpp
@@ -48,6 +49,10 @@ file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_imu_stream.testcfg.json"
      HWTEST_APP_IMU_STREAM_CONFIG)
 file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_helm_stream.testcfg.json"
      HWTEST_APP_HELM_STREAM_CONFIG)
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_bus_loop.testcfg.json"
+     HWTEST_APP_BUS_LOOP_CONFIG)
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_bus_echo.testcfg.json"
+     HWTEST_APP_BUS_ECHO_CONFIG)
 
 target_compile_features(hwtest_app_tests PRIVATE cxx_std_17)
 
@@ -59,6 +64,8 @@ target_compile_definitions(hwtest_app_tests
         HWTEST_APP_DI_CONFIG="${HWTEST_APP_DI_CONFIG}"
         HWTEST_APP_IMU_STREAM_CONFIG="${HWTEST_APP_IMU_STREAM_CONFIG}"
         HWTEST_APP_HELM_STREAM_CONFIG="${HWTEST_APP_HELM_STREAM_CONFIG}"
+        HWTEST_APP_BUS_LOOP_CONFIG="${HWTEST_APP_BUS_LOOP_CONFIG}"
+        HWTEST_APP_BUS_ECHO_CONFIG="${HWTEST_APP_BUS_ECHO_CONFIG}"
         HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH="$<TARGET_FILE:hal_adapter_digital_fixture>"
         HWTEST_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )

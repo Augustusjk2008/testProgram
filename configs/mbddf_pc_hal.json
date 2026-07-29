@@ -120,6 +120,54 @@
           "flowControl": "None"
         }
       },
+      "BUS_ECHO_COM1": {
+        "device": "mbddf_dut",
+        "module": "control",
+        "direction": "bidirectional",
+        "providerId": "qt.serial",
+        "physicalIndex": 2,
+        "properties": {
+          "role": "auxiliary-link",
+          "portName": "COM_CHANGE_ME_BUS_ECHO_COM1",
+          "baudRate": 614400,
+          "dataBits": 8,
+          "parity": "Even",
+          "stopBits": 1,
+          "flowControl": "None"
+        }
+      },
+      "BUS_ECHO_COM2": {
+        "device": "mbddf_dut",
+        "module": "control",
+        "direction": "bidirectional",
+        "providerId": "qt.serial",
+        "physicalIndex": 3,
+        "properties": {
+          "role": "auxiliary-link",
+          "portName": "COM_CHANGE_ME_BUS_ECHO_COM2",
+          "baudRate": 614400,
+          "dataBits": 8,
+          "parity": "Even",
+          "stopBits": 1,
+          "flowControl": "None"
+        }
+      },
+      "BUS_ECHO_COM4": {
+        "device": "mbddf_dut",
+        "module": "control",
+        "direction": "bidirectional",
+        "providerId": "qt.serial",
+        "physicalIndex": 4,
+        "properties": {
+          "role": "auxiliary-link",
+          "portName": "COM_CHANGE_ME_BUS_ECHO_COM4",
+          "baudRate": 614400,
+          "dataBits": 8,
+          "parity": "Even",
+          "stopBits": 1,
+          "flowControl": "None"
+        }
+      },
       "CONTROL_NETWORK": {
         "device": "mbddf_dut",
         "module": "control",

@@ -154,10 +154,16 @@ Provider 是 HAL 内部后端分类，不是新的业务层，也不向 BIZ 暴�
 ResourceId
   -> ResourceBinding(module = control, device alias, properties)
   -> providerId = qt.serial | qt.udp
-  -> HAL 持有的 QSerialPort | QUdpSocket
+  -> HAL 按 ResourceId 持有的独立 QSerialPort | QUdpSocket 会话
 ```
 
-可运行配置见 `configs/mbddf_pc_hal.json`。PC 端通过 `control.resourceId` 在同一份配置中的串口和 UDP 资源之间选择；这只是 PC 每次运行前的选择，不向 DUT 发送“切换控制口”命令。远端 IP/端口属于部署事实，不从 MB_DDF 板端网口自环测试地址推断。
+同一 `HalDevice` 可以同时打开多个不同 `ResourceId` 的控制资源；每个资源持有独立 Provider 会话，读、写和单资源关闭只作用于该资源。已打开的同一 `ResourceId` 再次打开返回 `Busy`。管理器直接在调用线程同步调用 Provider，不建立工作线程、排队转发或跨资源 I/O 复用。
+
+`HalDevice::close()` 会按 `ResourceId` 的升序逐个关闭所有仍打开的控制会话；即使某个 Provider 关闭失败，也会消费该会话并继续尝试其余会话，最终返回第一个关闭失败。这样关闭顺序可复现，且单个失败不会阻止其余资源收尾。
+
+对于同一 manager 内已经成功打开的 `qt.serial` 会话，新的不同资源若解析出相同非空 `properties.portName`，会在打开第二个 Provider 前返回 `Busy`，错误 detail 包含请求的 `portName` 和 `conflictingResourceId`。端口名先去首尾空白；Windows 上再做大小写折叠，其他平台保持大小写。该检查不跨 `HalDevice`，也不把 `\\.\COM3`、`COM03` 等未经 Qt 明确规范化的别名擅自视为同一端口；空 `portName` 仍由 `qt.serial` Provider 返回既有的 `InvalidArgument`。
+
+可运行配置见 `configs/mbddf_pc_hal.json`。PC 端通过 `control.resourceId` 选择同一份配置中的串口或 UDP 资源；可按运行需要同时使用多个已声明资源，这不向 DUT 发送“切换控制口”命令。远端 IP/端口属于部署事实，不从 MB_DDF 板端网口自环测试地址推断。
 
 控制通道的通用 Router、Provider 级设备扫描、`Mock Provider`、TCP 和其他厂家 SDK Provider 仍是目标能力。当前设备 `adapterId` 已用于选择惰性多 Adapter 后端，仍不能与控制资源 `providerId` 混为一谈；`ni.daqmx` 已有可选原生 Adapter，其他厂家 SDK Provider 仍未实现。
 

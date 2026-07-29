@@ -259,7 +259,7 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
    sleep、不主动抽样。400 Hz 不要求软件保证无损；COM3 614400/8E1 的理论占用约 91.7%。
 5. PC 对同一会话最多发送一次 `IMU_STREAM_STOP 09/11`。板端停止读取并关闭 COM4 后再回
    STOP ACK；ACK 超时或错误只影响本次结果，PC 收尾不得再次发送 STOP。COM4 流活动时，
-   使用同一硬件的 BUS link 5 返回 `TASK_BUSY`。
+   使用同一硬件的 BUS link 3 返回 `TASK_BUSY`。
 6. 宿主配置只声明 `device_stream`，不得以 `pc_periodic` 重复 START；停止时 0 个有效
    `09/01` 判 `SampleFail`，1 帧及以上判通过。可选保存固定使用完整字段，曲线选择不改变列。
 
@@ -272,7 +272,7 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
 | 1 | 系统状态 | `system_status_request/response` | 无 |
 | 2 | 内存 | `memperf_test_request/response` | 类型 0-6；`length=65536 KB`, `seed=0x5A5A5A5A` |
 | 3 | SPI Flash | `spi_flash_test_request/response` | 固定隔离测试区，见 7.4 |
-| 4 | 总线 | `bus_loop_test_*` 或 `bus_echo_test_*` | link 0/1/2/3/5/6；`total_count=1000`；echo `4D 42 31` |
+| 4 | 总线 | `bus_loop_test_*` 或 `bus_echo_test_*` | 可选 link 0/1/3；默认 link 0，`total_count=1000`；echo `4D 42 31` |
 | 5 | DI | `di_read_request/response` | 无 |
 | 6 | DO | `do_write_request/response` | 两组位图默认 0，仅 bit 0-15 有效 |
 | 7 | 电气健康 | `elec_health_status_request/response` | 无 |
@@ -297,8 +297,10 @@ UTF-8-SIG TSV 长表：用户指定目录，文件名固定为 `DH_data_YYYYMMDD
 `delay_us + (report_index-1)*interval_us` 计算的计划采样时刻，协议未携带实测时间戳。
 舵机连续实测由 Web 主基线进入，旧 PyQt 导航和“执行全部”仍只包含舵控板级测试。
 
-PC 页面“连续”是用户显式开启的重复执行，不属于协议层失败自动重试：每轮普通请求完成
-后等待 200 ms 才发送同一参数的下一轮，用户可再次点击“连续”或顶部“停止”取消后续轮次。
+除 BUS 外，PC 页面“连续”是用户显式开启的重复执行，不属于协议层失败自动重试：每轮普通
+请求完成后等待 200 ms 才发送同一参数的下一轮，用户可再次点击“连续”或顶部“停止”取消
+后续轮次。BUS_ECHO 的连续轮次由根宿主 `pc_periodic` 调度；旧 PyQt 只经 COM3 控制口
+发送单次请求，不能作为 COM1/COM2/COM4 的外部回送端。
 电气健康连续采集由 PC 在用户指定目录保存完整响应，采用
 `ElectricalHealth_data_YYYYMMDD_HHMMSS_ffffff.txt` 的 UTF-8-SIG TSV 格式；每行包含一轮
 响应的序号、PC 接收相对时间、状态、错误码、10 路已解码电压、`activate_bits` 和 bit0。
@@ -309,23 +311,22 @@ PC 页面“连续”是用户显式开启的重复执行，不属于协议层�
 
 | link_id | 链路 | 固定参数/行为 |
 |---:|---|---|
-| 0 | 100M 网口 1 | 板端以 `192.168.1.29:3003` 同时 bind/connect 后本机自环 |
-| 1 | 100M 网口 2 | 板端以 `192.168.7.29:3003` 同时 bind/connect 后本机自环 |
-| 2 | COM1 | 可测试：板端 COM1 |
-| 3 | COM2 | 可测试：板端 COM2 |
-| 4 | COM3 | 控制口占用，必须返回 `CHANNEL_INVALID`，执行全部不得选择 |
-| 5 | COM4 | 可测试：板端 COM4 |
-| 6 | SPI Flash | `/dev/spidev0.0`；LOOP 仅重复安全 JEDEC-ID 读取，ECHO 不支持任意 payload |
+| 0 | COM1 | 可测试；BUS_LOOP 使用内部 `loopback=true`，BUS_ECHO 使用外部原样回送 |
+| 1 | COM2 | 可测试；BUS_LOOP 使用内部 `loopback=true`，BUS_ECHO 使用外部原样回送 |
+| 2 | COM3 | 产品协议控制口；在打开任何硬件前返回 `CHANNEL_INVALID` |
+| 3 | COM4 | 可测试；IMU_STREAM 活动时先返回 `TASK_BUSY`，不打开该硬件 |
+| 其他 | - | 返回 `CHANNEL_INVALID` |
 
-上述两个 IP 是当前板端接口地址，并由本实现同时用作自回环目标，不代表已确认的外部
-对端地址。本实现固定使用本地 UDP 端口 3003；参考实现
-`Upgrade_And_Test/src/UpgradeAndTest/AppMain.cpp` 中的 `UdpControlPort("3003", 60000)`
-只能证明本地绑定参数，不能据此推断外部对端地址或端口。本工程不引入该工程的编译依赖。
+BUS_LOOP 的 `total_count` 只允许 `1..100000`。每轮发送后均以 5 秒作为接收截止时间；
+只有实际完成次数严格等于请求且 `error_count=0` 才返回成功，否则命令失败。
 
-link 6 后端是 SPI Flash，不具备 MOSI/MISO 回显语义。BUS_LOOP 只发送只读 `0x9F` JEDEC
-命令并统计 ID 不匹配次数；BUS_ECHO 对 link 6 的非空 payload 返回
-`TASK_EXEC_FAILED`，绝不把用户数据作为 Flash opcode 发送，避免越过固定 4 KiB 测试区
-的破坏。
+BUS_ECHO 每个请求只执行一次：DUT 在所选 COM 以 `loopback=false` 发送请求中的全部 114
+字节，独立外部 PC/夹具必须在 5 秒内原样回发。DUT 严格比较接收长度和每一个字节；任何
+不一致都失败，响应中的 `data[114]` 回传实际接收字节供宿主核对。连续轮次由根宿主的
+`pc_periodic` 处理；旧 PyQt 仅经 COM3 控制口下发这一次请求，不能充当外部 ECHO 对端。
+
+BUS 不再包含网口或 SPI Flash 路径。SPI Flash 仅由独立 `SPI_FLASH_TEST` 在固定隔离测试区
+执行，不承载任意 BUS payload。
 
 ### 7.2 系统状态事实源
 
@@ -415,7 +416,7 @@ link 6 后端是 SPI Flash，不具备 MOSI/MISO 回显语义。BUS_LOOP 只发�
 | `0x0201` | REG_RW_FAILED | 寄存器访问或硬件回读异常 |
 | `0x0202` | MEM_ACCESS_FAILED | 存储器不可访问 |
 | `0x0203` | TASK_EXEC_FAILED | 任务流程、超时或数据编码失败 |
-| `0x0204` | TASK_BUSY | 同一连续流重复 START、定时器/DH 任务忙；IMU 活动时 BUS link 5 返回该错误；舵机连续流不限制 `07/02` |
+| `0x0204` | TASK_BUSY | 同一连续流重复 START、定时器/DH 任务忙；IMU 活动时 BUS link 3 返回该错误；舵机连续流不限制 `07/02` |
 | `0x0301` | HELM_DDS_FAILED | 舵机 DDS 端点建立或指令发布失败 |
 
 ## 9. CSV 资产

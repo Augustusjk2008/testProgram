@@ -1,5 +1,6 @@
 #include "mbddf_algorithm_registry.h"
 
+#include <algorithm/bus_echo_transport.h>
 #include <algorithm/elec_health_status_executor.h>
 #include <algorithm/imu_stream_executor.h>
 #include <algorithm/helm_stream_executor.h>
@@ -22,6 +23,14 @@ const QVector<MbdDfAlgorithmRegistration>& mbddfAlgorithmRegistry()
          QStringLiteral("elec_health_status_request"),
          QStringLiteral("elec_health_status_response"),
          QStringLiteral("ELEC_HEALTH_STATUS")},
+        {QStringLiteral("mbddf.bus_loop"),
+         QStringLiteral("bus_loop_test_request"),
+         QStringLiteral("bus_loop_test_response"),
+         QStringLiteral("BUS_LOOP_TEST")},
+        {QStringLiteral("mbddf.bus_echo"),
+         QStringLiteral("bus_echo_test_request"),
+         QStringLiteral("bus_echo_test_response"),
+         QStringLiteral("BUS_ECHO_TEST")},
         {QStringLiteral("mbddf.memperf"),
          QStringLiteral("memperf_test_request"),
          QStringLiteral("memperf_test_response"),
@@ -73,7 +82,9 @@ bool isSupportedMbdDfAlgorithm(const QString& algorithmId)
 
 std::unique_ptr<hwtest::biz::IAlgorithmExecutor> createMbdDfExecutor(
     const QString& algorithmId,
-    std::unique_ptr<hwtest::algorithm::mbddf::IByteTransport> transport)
+    std::unique_ptr<hwtest::algorithm::mbddf::IByteTransport> transport,
+    hwtest::hal::IControlChannel* auxiliaryControlChannel,
+    const QString& controlResourceId)
 {
     using namespace hwtest::algorithm::mbddf;
     if (algorithmId == QStringLiteral("mbddf.system_status")) {
@@ -87,6 +98,10 @@ std::unique_ptr<hwtest::biz::IAlgorithmExecutor> createMbdDfExecutor(
     }
     if (algorithmId == QStringLiteral("mbddf.helm_stream")) {
         return std::make_unique<HelmStreamAlgorithmExecutor>(std::move(transport));
+    }
+    if (algorithmId == QStringLiteral("mbddf.bus_echo")) {
+        transport = std::make_unique<BusEchoTransport>(
+            std::move(transport), auxiliaryControlChannel, controlResourceId);
     }
     const MbdDfAlgorithmRegistration* registration = findMbdDfAlgorithm(algorithmId);
     if (registration == nullptr) return {};

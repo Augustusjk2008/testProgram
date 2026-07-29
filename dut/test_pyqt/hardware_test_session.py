@@ -127,7 +127,7 @@ TEST_SPECS = (
         BUS_TIMEOUT_MS,
         (
             ParameterSpec("bus_mode", "测试方式", "str", "loop", ("loop", "echo")),
-            ParameterSpec("link_id", "链路", "int", 0, (0, 1, 2, 3, 5, 6)),
+            ParameterSpec("link_id", "链路", "int", 0, (0, 1, 3)),
             ParameterSpec("total_count", "总次数", "int", 1000),
             ParameterSpec("data_hex", "回显数据", "hex", "4D 42 31"),
         ),
@@ -332,11 +332,30 @@ class HardwareTestSession(QObject):
             merged.update(dict(parameters))
         if key == "bus":
             try:
-                link_id = int(merged.get("link_id", 0))
-            except (TypeError, ValueError):
-                return self._reject_before_send(key, "link_id 不是整数")
-            if link_id == 4 or link_id not in (0, 1, 2, 3, 5, 6):
-                return self._reject_before_send(key, "COM3 控制口不执行 link 4")
+                link_id = self._bounded_integer(
+                    merged.get("link_id", 0), "link_id", 0, 3
+                )
+            except ValueError as exc:
+                return self._reject_before_send(key, str(exc))
+            if link_id == 2:
+                return self._reject_before_send(
+                    key, "link 2 是 COM3 控制口，不能执行总线测试"
+                )
+            if link_id not in (0, 1, 3):
+                return self._reject_before_send(
+                    key, "总线仅支持 link 0/1/3（COM1/COM2/COM4）"
+                )
+            bus_mode = str(merged.get("bus_mode", "loop"))
+            if bus_mode not in ("loop", "echo"):
+                return self._reject_before_send(key, "总线测试方式必须是 loop 或 echo")
+            merged["bus_mode"] = bus_mode
+            if bus_mode == "loop":
+                try:
+                    merged["total_count"] = self._bounded_integer(
+                        merged.get("total_count", 1000), "总线收发次数", 1, 100000
+                    )
+                except ValueError as exc:
+                    return self._reject_before_send(key, str(exc))
         if key == "helm_board":
             try:
                 for index in range(4):
