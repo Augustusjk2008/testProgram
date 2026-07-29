@@ -77,6 +77,72 @@ struct TestRunParameterDescriptor {
     QVariant visibleWhenEquals;
 };
 
+struct PostRunAnalysisCapability {
+    bool supported = false;
+    QString analyzerId;
+    QString schemaVersion;
+};
+
+struct AnalysisMetric {
+    QString key;
+    QString label;
+    QString unit;
+    QString status;
+    bool hasValue = false;
+    double value = 0.0;
+    QString detail;
+};
+
+struct AnalysisChannelSummary {
+    int channel = 0;
+    bool enabled = false;
+    QString status = QStringLiteral("not_applicable");
+    QVector<QString> warnings;
+    int omittedWarningCount = 0;
+    QVector<AnalysisMetric> commonMetrics;
+    QVector<AnalysisMetric> waveformMetrics;
+    bool bodeAvailable = false;
+    int bodePointCount = 0;
+    QString reasonCode;
+    QString message;
+};
+
+struct PostRunAnalysisSnapshot {
+    bool supported = false;
+    QString analyzerId;
+    QString schemaVersion;
+    QString taskId;
+    quint64 analysisGeneration = 0;
+    QString state = QStringLiteral("none");
+    int progress = 0;
+    QString stage;
+    QString message;
+    QString reasonCode;
+    QString resultFilePath;
+    QString diagnosticInputFilePath;
+    QVariantMap sourceSummary;
+    QVector<AnalysisChannelSummary> channelSummaries;
+};
+
+struct AnalysisResultQuery {
+    QString taskId;
+    quint64 analysisGeneration = 0;
+    int channel = 0;
+};
+
+struct AnalysisNullableNumber {
+    bool hasValue = false;
+    double value = 0.0;
+};
+
+struct AnalysisChannelProjection {
+    AnalysisChannelSummary channelSummary;
+    QVector<double> frequencyHz;
+    QVector<AnalysisNullableNumber> magnitudeDb;
+    QVector<AnalysisNullableNumber> phaseDeg;
+    QVector<QString> pointStatus;
+};
+
 struct TestDescriptor {
     QString configId;
     QString productModel;
@@ -92,6 +158,7 @@ struct TestDescriptor {
     QString runParameterSchemaVersion;
     QVector<TestRunParameterDescriptor> runParameters;
     QVariantMap runParameterDefaults;
+    PostRunAnalysisCapability postRunAnalysis;
 };
 
 struct DigitalSwitchDescriptor {
@@ -142,6 +209,7 @@ struct ApplicationSnapshot {
     bool dataSaveEnabled = false;
     QString dataFilePath;
     QString dataSaveError;
+    PostRunAnalysisSnapshot analysis;
 };
 
 class TestApplicationController final : public QObject {
@@ -173,6 +241,8 @@ public:
                                     quint64 expectedRevision);
     ActionResult resetDigitalStimulus();
     ActionResult shutdown();
+    ActionResult analysisResult(const AnalysisResultQuery& query,
+                                AnalysisChannelProjection* output) const;
     ApplicationSnapshot snapshot() const;
 
 signals:
@@ -195,6 +265,13 @@ Q_DECLARE_METATYPE(hwtest::app::TestDescriptor)
 Q_DECLARE_METATYPE(hwtest::app::TestMeasurementDescriptor)
 Q_DECLARE_METATYPE(hwtest::app::TestRunParameterChoice)
 Q_DECLARE_METATYPE(hwtest::app::TestRunParameterDescriptor)
+Q_DECLARE_METATYPE(hwtest::app::PostRunAnalysisCapability)
+Q_DECLARE_METATYPE(hwtest::app::AnalysisMetric)
+Q_DECLARE_METATYPE(hwtest::app::AnalysisChannelSummary)
+Q_DECLARE_METATYPE(hwtest::app::PostRunAnalysisSnapshot)
+Q_DECLARE_METATYPE(hwtest::app::AnalysisResultQuery)
+Q_DECLARE_METATYPE(hwtest::app::AnalysisNullableNumber)
+Q_DECLARE_METATYPE(hwtest::app::AnalysisChannelProjection)
 Q_DECLARE_METATYPE(hwtest::app::TestRunOptions)
 Q_DECLARE_METATYPE(hwtest::app::DigitalSwitchDescriptor)
 Q_DECLARE_METATYPE(hwtest::app::DigitalStimulusSnapshot)

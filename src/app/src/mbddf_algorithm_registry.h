@@ -20,6 +20,8 @@ struct MbdDfAlgorithmRegistration {
     QString requestProfileId;
     QString responseProfileId;
     QString commandName;
+    QString postRunAnalyzerId;
+    QString postRunAnalysisSchemaVersion;
 };
 
 const QVector<MbdDfAlgorithmRegistration>& mbddfAlgorithmRegistry();

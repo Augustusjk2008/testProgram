@@ -15,12 +15,12 @@
 | tests/hal/ | hwtest_hal_tests | 10 | 51 | HAL 接口、资源、安全、Mock、多 Adapter 路由、真实 C ABI 调用、宿主串口枚举、Qt 控制 Provider、版本化设备投影与可选任务 ABI |
 | tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
 | tests/biz/ | hwtest_biz_tests | 6 | 43 | 配置、计划、单次/PC 周期/设备流调度、设备流禁用步骤重试、不透明运行参数透传、Qt 工作线程、样本、报告和架构边界 |
-| tests/algorithm/ | hwtest_algorithm_tests | 6 | 56 | MB_DDF CSV、1..255 payload、F32 来源类型、流式控制传输、运行参数 Schema/归一化、任务范围控制连接与同 worker 停止收尾、BIZ requestId 到 HAL 操作传播、默认帧日志脱敏与显式完整帧调试、陈旧 RX bank 错误的精确重发、固定命令、配置驱动单步交换、惯测固定时间轴/重入重新锚定、舵机 DDS 时间轴/重入重新锚定与 U16 半环连续性、START/主动反馈/STOP、异常 STOP 不重发、DI stimulus 和定时器清理 |
-| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 8 | 104 | 共享启动/控制器、TUI/GUI/WebSocket、Web v1 低 16 位 DI 投影与安全整数时间、DI 安全态、九项配置发现、运行参数 descriptor/覆盖/拒绝、三种运行能力边界、两类连续运行后端 TXT 保存、F32 最短文本、单次禁止保存、惯测 Qt UDP START/两帧反馈/STOP 与固定列、异步停止和跨前端等价性 |
+| tests/algorithm/ | hwtest_algorithm_tests | 11 | 93 | MB_DDF CSV、1..255 payload、F32 来源类型、流式控制传输、运行参数 Schema/归一化、任务范围控制连接与同 worker 停止收尾、固定命令、惯测/舵机设备流、DI stimulus；以及后处理公共端口、版本化捕获、五种舵机波形、扫频局部同步估计、状态归约、取消、有限 JSON 和可追溯 fixture |
+| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 10 | 134 | 共享启动/控制器、TUI/GUI/WebSocket、DI 与运行能力、连续 TXT 保存、惯测/舵机 Qt UDP；以及分析资源配置、pending/原子存储、诊断保留、STOP 双栅栏、身份/迟到回告、线程取消/join、关键频点投影、完整舵机捕获—分析—查询链、Web v1 capability/摘要/只读结果和出站 16 KiB 边界 |
 | src/adapters/ni_daqmx/tests/ | hwtest_ni_daqmx_adapter_fake_tests | 1 | 0 | 原生 NI-DAQmx Adapter 与 Fake NIDAQmx API 的自定义 main/CTest |
-| 合计 | 7 个 GoogleTest + 1 个 Fake CTest | 34 | 261 | 33 个含 GoogleTest 定义的源文件及一个非 GoogleTest 测试源 |
+| 合计 | 7 个 GoogleTest + 1 个 Fake CTest | 41 | 328 | 40 个含 GoogleTest 定义的源文件及一个非 GoogleTest 测试源 |
 
-261 是当前测试源码中的 GoogleTest 定义数。Windows 完整构建并完成测试发现后的当前 CTest 清单为 272 条：261 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试和 1 条 `NiDaqmxAdapterFakeTest`。清单数量本身不表示通过，执行证据见下述按时间记录。
+328 是当前测试源码中的 GoogleTest 定义数。Windows 完整构建并完成测试发现后的当前 CTest 清单为 339 条：328 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试和 1 条 `NiDaqmxAdapterFakeTest`。清单数量本身不表示通过，执行证据见下述按时间记录。
 
 2026-07-27 在 Windows/Visual Studio 2022 x64 构建树中设置已批准的 `MB_DDF_PROTOCOL_CSV_DIR` 后，Debug 与 Release 完整构建均成功，两个配置的 CTest 均为 232/232 通过。该结果包含仓库 Fake NIDAQmx、动态 Adapter fixture 和自退出的应用进程测试；证据等级仍按下文分类。
 
@@ -36,9 +36,11 @@
 
 2026-07-28 完成本轮审阅修复与连续流双时间轴收敛后，宿主使用仓库内 37 份协议快照分别完成 Debug、Release 全量构建；两个配置的 272 条 CTest 注册项均为 271 项执行通过、1 项条件跳过、0 失败。跳过项仍是缺少外部同事导入附件的 `TestConfigManagerTest.ImportedColleagueSampleLoadsAndBuildsThroughMigrationBoundary`，不计为通过证据。新增自动化覆盖 IMU 已发布样本固定 `2500 us` 相对轴、流执行器重入重新锚定、HELM DDS 实际相对轴/倒退/JSON 安全整数上限、U16 重复/反向/半环/自然回绕、`device_stream` 启动前拒绝步骤重试、可选相对时间 Web 投影及非法时间服务端拒绝、TXT `sample_time_us=0/2500` 与负哨兵回退、F32 最短可往返文本和必填运行参数前端拦截。浏览器前端 10 个文件、46/46 Vitest 通过，TypeScript/Vite 单文件生产构建成功；构建仅出现既有 Qt 5/MSVC `C4996/STL4043` 弃用警告。本轮未运行 DUT 协议生成器、PyQt 主机侧套件、AArch64 交叉构建或目标板测试，不能据此增加 COM、DDS、舵机或板端证据等级。
 
-33 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 261。
+2026-07-29 落地舵机停止后性能 sidecar 后，使用仓库内 37 份协议快照执行 `hwtest.ps1 test` Debug 及显式 Release 全量构建/CTest；两个配置各有 339 条注册项，均为 338 项执行通过、1 项条件跳过、0 失败。跳过项仍是缺少外部同事导入附件的 `TestConfigManagerTest.ImportedColleagueSampleLoadsAndBuildsThroughMigrationBoundary`，不计为通过。Release 首轮发现 Origin 白名单测试把客户端断开误当作异步 `DropCleanup` 已结束的竞态；测试按独立服务实例隔离后在 Release 连续 20 次通过，随后 Debug/Release 全量均通过。新增证据覆盖 DDS bool 写入契约、版本化流式捕获、五种波形、正反/截断/纯时延扫频、资源限制、尾样本双栅栏、分析身份、协作取消与 join 超时、诊断保留、TXT SHA-256、确定性关键点投影、抽样前全序列有限值校验、最终发布摘要的完整 8 KiB 预检、完整出站 16 KiB、真实 Qt UDP 舵机捕获—分析—结果查询链，以及分析结果不修改采集 verdict/error。浏览器前端为 15 个文件、61/61 Vitest 通过，TypeScript/Vite 构建生成仅含 `dist/index.html` 的 520,792 字节单文件。DUT 主机侧 `dut/tools/tests` 为 20/20 pytest 通过，AArch64 Debug `hw_tests` 画像交叉构建 `MB_DDF_HW_Tests`/`MB_DDF_HW_Smoke` 等目标成功；未部署或运行目标板，也未启动真实舵机台架，不能据此增加真机性能证据等级。
 
-浏览器前端当前有 10 个 `*.test.ts` 文件、46 条 Vitest，用于协议解析/请求、可选流相对时间的旧消息兼容与安全整数边界、两类连续模式的 `saveData` 透传、设备持续模式清除 PC 周期参数与单次强制关闭保存、配置 descriptor 与测试配置白名单目录校验、算法运行参数 Schema/必填/条件显示/范围校验/按配置版本持久化、默认配置选择、配置测量标签/单位、按配置隔离的曲线工作区 key、50,000 点有界缓冲、时间窗、min/max 降采样和同图/分图/自定义分组，以及 DI WebSocket payload 严格解析、命令队列合并、revision、失败回滚、复位串行、active-low、回读位和 settling。它们由 `npm test` 独立运行，不计入上述 272 条 CTest。
+40 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 328。
+
+浏览器前端当前有 15 个 `*.test.ts` 文件、61 条 Vitest。除既有协议、参数、遥测缓冲/图组和 DI 行为外，新增覆盖后处理旧服务端回退、安全身份与有限数组解析、只读 action、四通道缓存隔离、迟到 reply 丢弃、自动导航一次、分析阶段文案、伯德 `null` 空洞、叠加对齐和 Hz/rad/s 纯显示转换。它们由 `npm test` 独立运行，不计入上述 339 条 CTest。
 
 ## 2. 当前覆盖与条件资产
 
@@ -48,9 +50,9 @@
 | 原生 NI-DAQmx Adapter | 同一生产源码和独立 `ni_daqmx_config.*` 的 Fake 构建；PXI-6259 identity/open projection/占位 serial/topology/速率边界，按需 AI/AO/DI/DO，有限/连续任务路径，内部/外部时钟、start/reference/pause 触发、边沿计数/频率脉冲、短读、overflow/underflow、错误注入、任务状态、安全态/stop/clear 顺序；Vendor C ABI driver-only 初始化与单设备 open projection 交接；默认关闭的真实 SDK 构建路径 | `NiDaqmxAdapterFakeTest` 链接仓库 Fake `NIDAQmx`；独立可选 DLL 构建也使用 Fake 头/导入库。两者均不代表已安装 NI SDK、实际 PXI-6259、MAX 身份、接线、电平兼容、物理输出、触发时序或安全态验收 |
 | 日志 | LogService、JsonLineFileSink、HalLogEvent 到 LogEvent 桥接 | 不覆盖 UI 或真实设备日志链 |
 | BIZ | FakeAlgorithmExecutor 下的配置、计划、调度、重试、三种运行模式、不透明运行参数从 `RunOptions` 到 `TestContext` 的原样透传、专用 QThread 的 event dispatcher/计时器注册、同线程 `finishRun()`、可中断轮间等待、轮次/样本标记、状态、报告和架构扫描 | BIZ 不构造 HAL 假对象、Socket、codec 或硬件执行对象，也不解释运行参数；Qt 线程回归只证明同步任务具备 Qt dispatcher，不证明算法调用期间持续泵送事件、HAL actor 或跨线程取消；设备流测试只证明 BIZ 单次调用边界，不证明某产品支持主动回告 |
-| 算法 | 帧编解码、CSV 无效输入、1..255 payload、F32 来源类型、流式短读/粘包/噪声/超时、任务内控制通道复用、陈旧 RX bank 精确重发、运行参数 Schema/default/覆盖/未知/非有限/范围校验、固定命令与配置驱动交换、惯测与舵机一次 START/持续反馈/一次 STOP、IMU 固定 2500 微秒相对轴、舵机五样本拆分/DDS 相对时间/一次 UTC 锚定/DDS 倒退、U16 重复/反向/回绕连续性、生效参数、至少一帧通过、零帧 `SampleFail`、拒绝 `pc_periodic`、STOP ACK/写失败后收尾不重发、DI stimulus 和定时器清理 | IMU/舵机使用脚本化传输，DI stimulus 使用 `IHalDevice` Fake；IMU 相对轴按宿主已发布样本生成，不证明丢帧空洞或设备绝对时钟；本机模拟不能证明 COM3/COM4、DDS、真实舵机、921600、400 Hz/1 kHz、NI/PXI-6259 或目标板行为 |
-| 应用/TUI/GUI/WebSocket | 共享启动参数、九项配置目录发现、控制资源/串口选择、算法参数 descriptor/默认合并/生效快照/未知拒绝、DI 安全收尾、运行代次、GUI/Web 非阻塞关闭、Web 协议、可选 `streamElapsedUs` 投影、三种运行能力门禁、PC 周期保存、惯测 Qt UDP START ACK/两帧完整反馈/STOP ACK、`sample_time_us=0/2500`、F32 最短文本、固定 23 列 UTF-8-SIG/TSV、单次禁止保存和跨前端等价性 | IMU 应用测试加载真实配置和协议 CSV，但 DUT 是本机 Qt UDP 隔离目标；舵机执行器测试为脚本传输。它们证明宿主执行/保存链，不等于 COM4、DDS 或真实板端主动回告。默认自动化不能外推到真实网口、真实舵机、NI/PXI-6259、其他 DUT 或长期稳定性 |
-| 浏览器前端 | Vitest 下的类型化协议、测试目录与 descriptor 校验、算法运行参数表单模型、条件显示、校验、`configId + schemaVersion` 持久化、运行期锁定、默认配置选择、两类连续模式的 `saveData` 透传、设备持续模式清除 PC 周期参数和单次强制关闭保存、字段标签/单位、有界数据结构、字段发现、时间窗、降采样和图组；DI WebSocket snapshot/reply 严格解析，以及 16 路面板所复用的 32 ms 合并、revision、失败回滚、reset 串行、active-low、`di_state[0]`/`di_state[1]` 回读和 settling；TypeScript/Vite 单文件生产构建 | SessionProvider/总览页已由源码接线，但没有真实 WebSocket/COM4/DDS/舵机/PXI-6259 端到端验收；Vitest 不证明真实硬件或长期浏览器稳定性 |
+| 算法 | 帧编解码、CSV 无效输入、控制传输、运行参数 Schema、固定命令与配置驱动交换、惯测/舵机设备流和 DI stimulus；后处理公共 API 不泄露产品字段，捕获按小端版本化格式保存 DDS 时间、数值与诊断，封存后不可变；独立 fixture/manifest 覆盖恒值、正弦、方波、三角波、一阶/二阶/纯时延扫频、正反向与提前停止，另覆盖激励阈值、相位符号、尾段、状态归约、取消和有限 JSON | fixture 由不调用 C++ 分析器的 Python 标准库脚本生成并记录 SHA-256；合成曲线只能证明数值和边界实现。IMU/舵机设备流仍以脚本化传输为主，本机模拟不能证明 COM3/COM4、DDS、真实舵机、921600、400 Hz/1 kHz、NI/PXI-6259 或目标板行为 |
+| 应用/TUI/GUI/WebSocket | 既有共享启动、控制资源、DI、三种运行模式、TXT 保存及 GUI/Web 非阻塞收尾；后处理增加 start 前存储预检、成功 start 才递增身份、TXT→捕获→公开样本顺序、STOP 封存/硬件收尾双栅栏、queued 写门禁、工作线程进度/取消/join、资源/结果/摘要限制、QSaveFile、诊断保留、原始 TXT 哈希、按关键频点抽样、当前身份只读查询；Web v1 覆盖 capability、摘要、严格 action 参数、有限等长数组、null 空洞和完整 reply 16 KiB | 完整控制器用例加载真实舵机配置和协议 CSV，经本机 Qt UDP 产生 HELM 样本并完成捕获—分析—文件—查询，证明宿主软件组合链；它不等于 DDS、真实舵机或目标板主动回告。默认自动化不能外推到真实网口、真实舵机、NI/PXI-6259、其他 DUT 或长期稳定性 |
+| 浏览器前端 | 既有类型化协议、参数表单、遥测有界缓冲/图组和 DI 面板；性能扩展覆盖旧服务端回退、capability 导航、`taskId:generation` 四通道缓存、旧 reply 丢弃、STOP 后自动导航一次、分析阶段/终态模型、只读请求不占全局 busy、伯德对数轴/null 空洞/多通道对齐及 Hz/rad/s 纯显示转换；TypeScript/Vite 单文件生产构建 | 性能页只消费后端 `snapshot.analysis`/`analysisResult`，不以 `SampleBuffer` 计算；Vitest 和构建不证明真实 WebSocket/DDS/舵机/PXI-6259、视觉效果、长期浏览器稳定性或真机性能，视觉 smoke 仍需用户授权启动服务后执行 |
 
 下列测试依赖条件资产，缺失时可调用 GTEST_SKIP。跳过只表示该次没有执行断言，不能证明任何协议、配置迁移、SYSTEM_STATUS、HAL 或硬件能力。
 

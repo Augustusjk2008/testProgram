@@ -44,8 +44,8 @@ public:
             if (error != nullptr) *error = "helm command writer is closed";
             return false;
         }
-        const size_t written = command_writer_->write(bytes.data(), bytes.size());
-        if (written != bytes.size()) {
+        const bool written = command_writer_->write(bytes.data(), bytes.size());
+        if (!written) {
             if (error != nullptr) *error = "helm DDS command write was incomplete";
             return false;
         }

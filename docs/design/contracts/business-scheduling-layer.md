@@ -20,7 +20,7 @@ BIZ 负责：
 - 报告编排，以及 `LogEvent` 的生产和转发。
 - 向算法端口传递 `TestPlan`、`TestContext`、不透明的 `executionConfig` 和本次运行参数覆盖。
 
-BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作测试设备/DUT 的硬件、通讯、连接、deadline 或物理安全态。它的公开头、目标链接和运行期对象不得直接出现 HAL、Adapter、Socket、codec、测量工厂或安全输出执行接口。
+BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作测试设备/DUT 的硬件、通讯、连接、deadline 或物理安全态。舵机 STOP 后的性能分析是应用层编排、算法层计算的 sidecar：BIZ 不缓存其输入样本、不解释五种波形/伯德结果、不把它们写入 `TestResult`、`MeasurementRecord`、报告输入或 verdict。它的公开头、目标链接和运行期对象不得直接出现 HAL、Adapter、Socket、codec、测量工厂、后处理协调器或安全输出执行接口。
 
 ## 2. 公共类型和配置模型
 
@@ -34,7 +34,7 @@ BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作�
 | `TestPlan` | 由已规范化配置生成的有序步骤和相关业务模型；不包含 `executionConfig` |
 | `TestContext` | 一次任务的 `runId`、`requestId`、产品、操作者、工位、tags 和不透明 `runParameters`；不得扩展为设备句柄或通讯对象 |
 | `RunMode`、`RunOptions` | 单次、PC 周期和设备持续回告三种通用运行语义，以及轮间隔、最大轮数和不透明 `parameters` |
-| `TestResult`、`MeasurementRecord`、`RawSample` | 单步结果、测量记录和算法回传样本；BIZ 聚合结果、标记并转发样本，但不改变产品判定语义 |
+| `TestResult`、`MeasurementRecord`、`RawSample` | 单步结果、测量记录和算法回传样本；BIZ 聚合结果、标记并转发样本，但不改变产品判定语义，也不承载 post-run 性能 sidecar |
 | `ProtocolProfile`、`HardwareRequirement`、`SafetyPolicy` | 兼容和透传模型；BIZ 保存/校验结构，不解释协议或实施安全动作；`enterSafeStateOnStop/Error` 当前不驱动运行期分支 |
 | `RuntimeConfig`、`ReportOptions` | 业务调度与报告选项；文件 I/O 不属于生产硬件/通讯 I/O 边界 |
 
@@ -151,6 +151,7 @@ void destroyReportGenerator(IReportGenerator* generator);
 - `DeviceStream` 不允许步骤重试。BIZ 在启动 worker 和调用算法 `prepare()` 前检查经过默认值继承及步骤筛选后的计划；任一选中步骤 `retryCount > 0` 都以 `ParameterRangeError` 拒绝，避免重复 START/STOP 建立第二条设备流。`Single` 与 `PcPeriodic` 保持既有类型化重试语义。
 - `PcPeriodic` 只接受 `10..3600000` ms 的整数间隔，有限轮数不超过 `1000000000`。轮间等待可被暂停、恢复和停止唤醒。
 - 每轮开始先发出 `cycleStarted`；结果和样本均标记当前 `cycleIndex`。算法未给 `timestampUs` 时，BIZ 使用当前 UTC epoch 微秒补齐，再发出 `sampleProduced`；这只服务于未提供相对轴的兼容样本，`streamElapsedUs >= 0` 的算法必须自行提供一次锚定后的非零 `timestampUs`。BIZ 不生成、重写或解释可选的 `streamElapsedUs`，只原样转发。当前服务不额外长期缓存样本，避免无限周期会话在 BIZ 内形成无界样本副本。
+- `HELM_STREAM` 的 `sampleProduced` 可以是应用后处理捕获的输入来源，但 BIZ 对此没有额外端口或状态：它仍只发出通用 `RawSample`。尾样本封存、`{taskId, analysisGeneration}`、后台计算、`queued` 起写门禁、按通道投影和取消属于应用/Web 控制面；它们不得改变本节三种运行模式、BIZ `TestState` 或停止收敛语义。
 - BIZ 把 `runMode`、`intervalMs` 和 `maxCycles` 写入 `TestContext::tags`，把 `RunOptions::parameters` 原样写入 `TestContext::runParameters`，但不据此解释产品命令。`intervalMs`/`maxCycles` 只对 `PcPeriodic` 有调度含义；应用层对 `Single`/`DeviceStream` 使用固定兼容值 `1000/1`，不会据此重复请求。设备是否支持 `DeviceStream` 由算法决定；当前 `mbddf.system_status` 没有设备流启动/停止命令，准备阶段返回 `CapabilityUnsupported`。
 - PC 周期会话中的硬件或协议执行错误结束整个会话；普通判定失败是否中止同轮后续步骤仍由 `RuntimeConfig::stopOnFirstFailure` 控制。
 - `[当前实现]` 每个任务在一个专用 `QThread` 中同步执行 `prepare()`、各轮 `executeStep()`、轮间等待和 `finishRun()`；该线程提供 Qt event dispatcher，测试锁定同一任务的准备、执行和运行收尾均位于同一非应用线程且能够注册 Qt 计时器。这里不承诺在同步算法调用期间持续泵送事件，也不改变 `requestStop()` 由调用线程发起的既有语义；不得据此宣称 HAL 连接已实现 actor 化或跨线程取消。
@@ -199,13 +200,19 @@ public:
 
 生产 I/O 的目标归属由总览定义：算法组织协议/流程/判定并请求 HAL，HAL 执行生产 I/O。BIZ 对此不增加设备、Provider 或网络接口。
 
+### 4.1 STOP 后性能 sidecar 边界
+
+`[当前实现]` 当 `mbddf.helm_stream` 正常停止或完成后，应用层在 BIZ 的既有 `finishRun()`/STOP 收敛之外封存分析输入，再调算法层的通用 post-run 端口。算法层使用 DDS 相对时间、指令回显和反馈计算正弦、方波、三角波、恒值与连续对数扫频；扫频可生成伯德曲线。该工作不延长 BIZ 的 `stopTest()`/Web STOP 硬件时限，不把 `AnalysisResult` 塞入 `TestResult`，BIZ 报告也不会把“数据不足/分析失败”误报为采集不合格。
+
+`[当前实现]` BIZ 本身保持上述无感边界；应用控制器已接通样本 append/seal、双栅栏和后台 analyzer，但这些能力没有增加 BIZ 公共 API。完整身份、动作门禁和 Web 投影以 [WebSocket 前端协议契约](websocket-frontend-protocol.md) 为准。
+
 ## 5. 计划、调度、日志和报告
 
 - `TestPlanBuilder` 过滤禁用步骤、合并默认超时和重试、拒绝缺失依赖和依赖环，并产生稳定拓扑顺序。
 - `[当前实现]` 每一轮按拓扑顺序串行调度；`PcPeriodic` 在轮外重复该稳定顺序。`parallelEnabled`、`maxParallel` 和 `Permission` 仅保留为配置/兼容扩展面，尚不形成并行组或授权服务。
 - `getResourceStatus()` 当前返回 BIZ 只读快照；它不锁定、释放、复位或观察硬件资源。
 - BIZ 只生产或转发 `logProduced(const hwtest::logging::LogEvent&)`。`LogEvent` 的来源、字段、追踪和 HAL/Adapter 映射以 `log-interface-protocol.md` 为唯一主定义。
-- 报告只消费 BIZ 已编排的 `TestResult` 快照，并由这些结果派生摘要；报告文件 I/O 不触发日志服务、执行器或设备操作。
+- 报告只消费 BIZ 已编排的 `TestResult` 快照，并由这些结果派生摘要；post-run 性能 sidecar 不进入该输入，报告文件 I/O 不触发日志服务、执行器或设备操作。
 
 ## 6. 当前验证与扩展
 

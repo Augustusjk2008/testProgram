@@ -399,6 +399,18 @@ public:
                                              "Another command is still in progress"))));
             return;
         }
+        if (analysisBlocksWrites(cachedSnapshot.analysis.state) &&
+            !isReadAction(request.action) &&
+            request.action != QStringLiteral("stop") &&
+            request.action != QStringLiteral("disconnect") &&
+            request.action != QStringLiteral("quit")) {
+            send(socket,
+                 makeReply(request.id,
+                           protocolError(
+                               QStringLiteral("command_in_progress"),
+                               QStringLiteral("Post-run analysis is still running"))));
+            return;
+        }
 
         ActionResult validation;
         if (!validateAction(request, &validation)) {
@@ -429,9 +441,19 @@ public:
     static bool isReadAction(const QString& action)
     {
         return action == QStringLiteral("snapshot") ||
+            action == QStringLiteral("analysisResult") ||
             action == QStringLiteral("testConfigs") ||
             action == QStringLiteral("controls") ||
             action == QStringLiteral("ports");
+    }
+
+    static bool analysisBlocksWrites(const QString& state)
+    {
+        return state == QStringLiteral("queued") ||
+            state == QStringLiteral("validating") ||
+            state == QStringLiteral("preprocessing") ||
+            state == QStringLiteral("calculating") ||
+            state == QStringLiteral("persisting");
     }
 
     static bool validateRequiredString(const WebRequest& request,
@@ -638,6 +660,71 @@ public:
         if (request.action == QStringLiteral("start")) {
             return parseStartOptions(request, nullptr, error);
         }
+        if (request.action == QStringLiteral("analysisResult")) {
+            static const QSet<QString> allowed{
+                QStringLiteral("taskId"),
+                QStringLiteral("analysisGeneration"),
+                QStringLiteral("channel"),
+            };
+            if (request.params.size() != allowed.size()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("analysisResult only accepts taskId, analysisGeneration and channel"));
+                }
+                return false;
+            }
+            for (auto it = request.params.constBegin();
+                 it != request.params.constEnd(); ++it) {
+                if (!allowed.contains(it.key())) {
+                    if (error != nullptr) {
+                        *error = protocolError(
+                            QStringLiteral("invalid_envelope"),
+                            QStringLiteral("Unknown analysisResult parameter '%1'")
+                                .arg(it.key()));
+                    }
+                    return false;
+                }
+            }
+            const QJsonValue taskId = request.params.value(
+                QStringLiteral("taskId"));
+            if (!taskId.isString() || taskId.toString().trimmed().isEmpty()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'taskId' must be a non-empty string"));
+                }
+                return false;
+            }
+            const QJsonValue generation = request.params.value(
+                QStringLiteral("analysisGeneration"));
+            const double generationValue = generation.toDouble();
+            if (!generation.isDouble() || !std::isfinite(generationValue) ||
+                std::floor(generationValue) != generationValue ||
+                generationValue < 1.0 ||
+                generationValue > 9007199254740991.0) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'analysisGeneration' must be a positive safe integer"));
+                }
+                return false;
+            }
+            const QJsonValue channel = request.params.value(
+                QStringLiteral("channel"));
+            const double channelValue = channel.toDouble();
+            if (!channel.isDouble() || !std::isfinite(channelValue) ||
+                std::floor(channelValue) != channelValue ||
+                channelValue < 0.0 || channelValue > 3.0) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'channel' must be an integer in 0..3"));
+                }
+                return false;
+            }
+            return true;
+        }
         if (request.action == QStringLiteral("setDigitalStimulus")) {
             static const QSet<QString> allowed{
                 QStringLiteral("switchId"),
@@ -775,6 +862,30 @@ public:
                         });
                     }
                     data.insert(QStringLiteral("ports"), ports);
+                } else if (request.action == QStringLiteral("analysisResult")) {
+                    AnalysisChannelProjection projection;
+                    result = controllerGuard->analysisResult(
+                        AnalysisResultQuery{
+                            request.params.value(QStringLiteral("taskId"))
+                                .toString().trimmed(),
+                            static_cast<quint64>(request.params
+                                                     .value(QStringLiteral("analysisGeneration"))
+                                                     .toDouble()),
+                            static_cast<int>(request.params
+                                                 .value(QStringLiteral("channel"))
+                                                 .toDouble()),
+                        },
+                        &projection);
+                    if (result.ok) {
+                        const QJsonObject projected = analysisResultObject(projection);
+                        if (projected.isEmpty()) {
+                            result = protocolError(
+                                QStringLiteral("analysis_projection_invalid"),
+                                QStringLiteral("The stored analysis projection is invalid"));
+                        } else {
+                            data.insert(QStringLiteral("analysisResult"), projected);
+                        }
+                    }
                 } else if (request.action == QStringLiteral("selectControl")) {
                     result = controllerGuard->selectControl(
                         request.params.value(QStringLiteral("resourceId")).toString());
@@ -836,6 +947,7 @@ public:
                     [owner,
                      socketGuard,
                      id = request.id,
+                     action = request.action,
                      result,
                      data,
                      selectedConfigPath] {
@@ -849,7 +961,10 @@ public:
                         if (socketGuard == nullptr) {
                             return;
                         }
-                        send(socketGuard, makeReply(id, result, data));
+                        send(socketGuard,
+                             action == QStringLiteral("analysisResult")
+                                 ? makeAnalysisResultReply(id, result, data)
+                                 : makeReply(id, result, data));
                     },
                     Qt::QueuedConnection);
             },
@@ -1011,6 +1126,17 @@ public:
                     owner.data(),
                     [owner, result] {
                         if (owner == nullptr || owner->m_impl == nullptr) {
+                            return;
+                        }
+                        if (!result.ok &&
+                            result.code == QStringLiteral("analysis_shutdown_timeout")) {
+                            QTimer::singleShot(100, owner.data(), [owner] {
+                                if (owner != nullptr && owner->m_impl != nullptr &&
+                                    owner->m_impl->pendingOperation !=
+                                        PendingOperation::None) {
+                                    owner->m_impl->scheduleShutdown();
+                                }
+                            });
                             return;
                         }
                         owner->m_impl->finishCleanup(result);

@@ -2,6 +2,8 @@
 
 #include "continuous_data_recorder.h"
 #include "mbddf_algorithm_registry.h"
+#include "post_run_analysis_config.h"
+#include "post_run_analysis_coordinator.h"
 #include "run_mode_capabilities.h"
 
 #include <algorithm/elec_health_status_executor.h>
@@ -57,6 +59,12 @@ ActionResult affinityFailure()
 {
     return failure(QStringLiteral("wrong_thread"),
                    QStringLiteral("Application controller actions must run on its affinity thread"));
+}
+
+ActionResult analysisCommandInProgressFailure()
+{
+    return failure(QStringLiteral("command_in_progress"),
+                   QStringLiteral("Post-run analysis must finish or be cancelled before another write action"));
 }
 
 struct BoolReset {
@@ -227,6 +235,14 @@ TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
         presentation.value(QStringLiteral("description")).toString().trimmed();
 
     descriptor.supportedRunModes = supportedRunModes;
+    if (const MbdDfAlgorithmRegistration* registration =
+            findMbdDfAlgorithm(step.algorithmId);
+        registration != nullptr && !registration->postRunAnalyzerId.isEmpty()) {
+        descriptor.postRunAnalysis.supported = true;
+        descriptor.postRunAnalysis.analyzerId = registration->postRunAnalyzerId;
+        descriptor.postRunAnalysis.schemaVersion =
+            registration->postRunAnalysisSchemaVersion;
+    }
 
     QSet<QString> seenMeasurements;
     for (const QVariant& measurementValue :
@@ -354,6 +370,7 @@ public:
     QString testConfigPath;
     QString halConfigPath;
     QString dataStorageDirectory;
+    PostRunAnalysisConfig analysisConfig;
     QVariantMap halConfig;
     QVariantMap executionConfig;
     QVariantMap runParameterDefaults;
@@ -373,6 +390,7 @@ public:
     hwtest::logging::LogService logService;
     std::unique_ptr<hwtest::logging::JsonLineFileSink> fileSink;
     ContinuousDataRecorder dataRecorder;
+    PostRunAnalysisCoordinator analysisCoordinator;
     ActionResult latchedShutdownFailure;
     QString suppressedResultTaskId;
     quint64 generation = 0;
@@ -393,10 +411,21 @@ TestApplicationController::TestApplicationController(QObject* parent)
     qRegisterMetaType<TestMeasurementDescriptor>();
     qRegisterMetaType<TestRunParameterChoice>();
     qRegisterMetaType<TestRunParameterDescriptor>();
+    qRegisterMetaType<PostRunAnalysisCapability>();
+    qRegisterMetaType<AnalysisMetric>();
+    qRegisterMetaType<AnalysisChannelSummary>();
+    qRegisterMetaType<PostRunAnalysisSnapshot>();
+    qRegisterMetaType<AnalysisResultQuery>();
+    qRegisterMetaType<AnalysisNullableNumber>();
+    qRegisterMetaType<AnalysisChannelProjection>();
     qRegisterMetaType<TestRunOptions>();
     qRegisterMetaType<DigitalSwitchDescriptor>();
     qRegisterMetaType<DigitalStimulusSnapshot>();
     qRegisterMetaType<QVector<SerialPortInfo>>();
+    m_impl->analysisCoordinator.setUpdateCallback([this] {
+        m_impl->snapshot.analysis = m_impl->analysisCoordinator.snapshot();
+        emit snapshotChanged(m_impl->snapshot);
+    });
 }
 
 TestApplicationController::~TestApplicationController()
@@ -414,6 +443,9 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
 {
     if (!onAffinityThread(this)) {
         return affinityFailure();
+    }
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
     }
     if (m_impl->snapshot.phase != QStringLiteral("empty") &&
         m_impl->snapshot.phase != QStringLiteral("configured")) {
@@ -486,6 +518,12 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
         dataStorageDirectory = QStringLiteral("../data");
     }
     dataStorageDirectory = resolvedPath(absoluteHalPath, dataStorageDirectory);
+    PostRunAnalysisConfig analysisConfig;
+    QString analysisConfigError;
+    if (!parsePostRunAnalysisConfig(halConfig, &analysisConfig,
+                                    &analysisConfigError)) {
+        return failure(QStringLiteral("analysis_config"), analysisConfigError);
+    }
     if (selectedAlgorithmId == QStringLiteral("mbddf.di_read")) {
         const ActionResult safeState = validateDigitalStimulusSafeState(
             testConfig.value.executionConfig, halConfig);
@@ -527,10 +565,13 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     m_impl->testConfigPath = absoluteTestPath;
     m_impl->halConfigPath = absoluteHalPath;
     m_impl->dataStorageDirectory = dataStorageDirectory;
+    m_impl->analysisConfig = analysisConfig;
     m_impl->selectedAlgorithmId = selectedAlgorithmId;
     m_impl->descriptor = makeTestDescriptor(
         testConfig.value, *selectedStep, supportedRunModes,
         runParameterDefaults);
+    m_impl->analysisCoordinator.configureCapability(
+        m_impl->descriptor.postRunAnalysis);
     m_impl->halConfig = halConfig;
     m_impl->executionConfig = testConfig.value.executionConfig;
     m_impl->runParameterDefaults = runParameterDefaults;
@@ -540,6 +581,7 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     m_impl->suppressedResultTaskId.clear();
     m_impl->snapshot.phase = QStringLiteral("configured");
     m_impl->snapshot.descriptor = m_impl->descriptor;
+    m_impl->snapshot.analysis = m_impl->analysisCoordinator.snapshot();
     m_impl->snapshot.digitalStimulus = digitalStimulusDescriptor(m_impl->executionConfig);
     m_impl->snapshot.controlResourceId = selected->resourceId;
     m_impl->snapshot.providerId = selected->providerId;
@@ -587,6 +629,9 @@ ActionResult TestApplicationController::selectControl(const QString& resourceId)
     if (!onAffinityThread(this)) {
         return affinityFailure();
     }
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
+    }
     if (m_impl->snapshot.phase != QStringLiteral("configured")) {
         return failure(QStringLiteral("invalid_state"),
                        QStringLiteral("Control resource can only be selected while configured and disconnected"));
@@ -616,6 +661,9 @@ ActionResult TestApplicationController::selectSerialPort(const QString& portName
 {
     if (!onAffinityThread(this)) {
         return affinityFailure();
+    }
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
     }
     if (m_impl->snapshot.phase != QStringLiteral("configured")) {
         return failure(QStringLiteral("invalid_state"),
@@ -653,6 +701,9 @@ ActionResult TestApplicationController::prepare()
 {
     if (!onAffinityThread(this)) {
         return affinityFailure();
+    }
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
     }
     if (m_impl->snapshot.phase != QStringLiteral("configured")) {
         return failure(QStringLiteral("invalid_state"),
@@ -830,6 +881,7 @@ ActionResult TestApplicationController::prepare()
                                  emit snapshotChanged(m_impl->snapshot);
                              }
                          }
+                         m_impl->analysisCoordinator.append(sample);
                          if (taskId == m_impl->suppressedResultTaskId) {
                              return;
                          }
@@ -926,6 +978,32 @@ ActionResult TestApplicationController::prepare()
                                  m_impl->snapshot.dataSaveError = saved.message;
                              }
                          }
+                         if (terminal &&
+                             m_impl->descriptor.postRunAnalysis.supported &&
+                             m_impl->snapshot.analysis.taskId == taskId) {
+                             hwtest::algorithm::mbddf::AnalysisTermination termination;
+                             if (m_impl->snapshot.phase == QStringLiteral("finished")) {
+                                 termination.kind = hwtest::algorithm::mbddf::
+                                     AnalysisTerminationKind::Finished;
+                             } else if (m_impl->snapshot.phase ==
+                                        QStringLiteral("error")) {
+                                 termination.kind = hwtest::algorithm::mbddf::
+                                     AnalysisTerminationKind::Error;
+                             } else {
+                                 termination.kind = hwtest::algorithm::mbddf::
+                                     AnalysisTerminationKind::Stopped;
+                             }
+                             termination.reasonCode = m_impl->snapshot.errorCode;
+                             termination.message = m_impl->snapshot.message;
+                             const QString sourceArtifact =
+                                 m_impl->snapshot.dataSaveError.isEmpty()
+                                 ? m_impl->snapshot.dataFilePath
+                                 : QString{};
+                             m_impl->analysisCoordinator.requestTerminal(
+                                 termination,
+                                 m_impl->snapshot.phase == QStringLiteral("stopped"),
+                                 sourceArtifact);
+                         }
                          emit snapshotChanged(m_impl->snapshot);
                      });
     QObject::connect(m_impl->runner.get(),
@@ -997,6 +1075,9 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     if (!onAffinityThread(this)) {
         return affinityFailure();
     }
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
+    }
     if (!m_impl->runner ||
         (m_impl->snapshot.phase != QStringLiteral("ready") &&
          m_impl->snapshot.phase != QStringLiteral("finished") &&
@@ -1049,6 +1130,20 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     }
     runOptions.parameters = normalizedParameters.value;
 
+    if (m_impl->descriptor.postRunAnalysis.supported) {
+        PostRunAnalysisStartSpec analysisSpec;
+        analysisSpec.algorithmId = m_impl->selectedAlgorithmId;
+        analysisSpec.configId = m_impl->descriptor.configId;
+        analysisSpec.sourceStepId = m_impl->descriptor.stepId;
+        analysisSpec.dataStorageDirectory = m_impl->dataStorageDirectory;
+        analysisSpec.effectiveRunParameters = normalizedParameters.value;
+        analysisSpec.metadata.insert(QStringLiteral("runMode"), runMode);
+        analysisSpec.resources = m_impl->analysisConfig;
+        const ActionResult analysisPrepared =
+            m_impl->analysisCoordinator.preparePending(analysisSpec);
+        if (!analysisPrepared.ok) return analysisPrepared;
+    }
+
     m_impl->snapshot.progress = 0;
     m_impl->snapshot.progressStep.clear();
     m_impl->snapshot.hasResult = false;
@@ -1082,6 +1177,7 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
             effectiveIntervalMs,
             effectiveMaxCycles);
         if (!recording.ok) {
+            m_impl->analysisCoordinator.discardPrepared();
             m_impl->snapshot.dataSaveError = recording.message;
             emit snapshotChanged(m_impl->snapshot);
             return recording;
@@ -1091,6 +1187,7 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     }
     const auto started = m_impl->runner->startTestWithOptions(runOptions);
     if (!started.ok()) {
+        m_impl->analysisCoordinator.discardPrepared();
         m_impl->dataRecorder.cancel();
         m_impl->snapshot.dataSaveEnabled = false;
         m_impl->snapshot.dataFilePath.clear();
@@ -1098,6 +1195,16 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     }
     m_impl->dataRecorder.setTaskId(started.value);
     m_impl->snapshot.taskId = started.value;
+    if (m_impl->descriptor.postRunAnalysis.supported) {
+        const ActionResult bound =
+            m_impl->analysisCoordinator.bindSuccessfulTask(started.value);
+        m_impl->snapshot.analysis = m_impl->analysisCoordinator.snapshot();
+        if (!bound.ok) {
+            m_impl->snapshot.analysis.state = QStringLiteral("unavailable");
+            m_impl->snapshot.analysis.reasonCode = bound.code;
+            m_impl->snapshot.analysis.message = bound.message;
+        }
+    }
     m_impl->snapshot.phase = QStringLiteral("running");
     m_impl->snapshot.testState = QStringLiteral("Running");
     emit snapshotChanged(m_impl->snapshot);
@@ -1108,6 +1215,9 @@ ActionResult TestApplicationController::pause()
 {
     if (!onAffinityThread(this)) {
         return affinityFailure();
+    }
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
     }
     if (m_impl->asyncStopInProgress) {
         return failure(QStringLiteral("stop_in_progress"),
@@ -1124,6 +1234,9 @@ ActionResult TestApplicationController::resume()
 {
     if (!onAffinityThread(this)) {
         return affinityFailure();
+    }
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
     }
     if (m_impl->asyncStopInProgress) {
         return failure(QStringLiteral("stop_in_progress"),
@@ -1181,6 +1294,7 @@ ActionResult TestApplicationController::stop(int timeoutMs)
             safe,
             QStringLiteral("Test stopped but digital stimulus could not return to safe state"));
     }
+    m_impl->analysisCoordinator.notifyStopCompleted();
     return {};
 }
 
@@ -1247,6 +1361,9 @@ ActionResult TestApplicationController::stopAsync(int timeoutMs)
                                 }
                             }
                             emit stopCompleted(completion);
+                            if (completion.ok) {
+                                m_impl->analysisCoordinator.notifyStopCompleted();
+                            }
                         }
                     },
                     Qt::QueuedConnection);
@@ -1351,6 +1468,9 @@ ActionResult TestApplicationController::setDigitalStimulus(const QString& switch
                                                             quint64 expectedRevision)
 {
     if (!onAffinityThread(this)) return affinityFailure();
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
+    }
     if (!stimulusActionPhase(m_impl->snapshot.phase) ||
         !m_impl->stimulusController) {
         return failure(QStringLiteral("invalid_state"),
@@ -1373,6 +1493,9 @@ ActionResult TestApplicationController::setDigitalStimulus(const QString& switch
 ActionResult TestApplicationController::resetDigitalStimulus()
 {
     if (!onAffinityThread(this)) return affinityFailure();
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
+    }
     if (!stimulusActionPhase(m_impl->snapshot.phase) ||
         !m_impl->stimulusController) {
         return failure(QStringLiteral("invalid_state"),
@@ -1402,6 +1525,29 @@ ActionResult TestApplicationController::shutdown()
     }
     if (!m_impl->latchedShutdownFailure.ok && !m_impl->runner && !m_impl->hal &&
         !m_impl->executor && !m_impl->stimulusController) {
+        if (m_impl->latchedShutdownFailure.code ==
+            QStringLiteral("analysis_shutdown_timeout")) {
+            const ActionResult retried = m_impl->analysisCoordinator.cancelAndWait(
+                m_impl->analysisConfig.analysisShutdownTimeoutMs);
+            if (!retried.ok) {
+                m_impl->latchedShutdownFailure = retried;
+                m_impl->snapshot.errorCode = retried.code;
+                m_impl->snapshot.message = retried.message;
+                emit snapshotChanged(m_impl->snapshot);
+                return retried;
+            }
+            m_impl->latchedShutdownFailure = {};
+            m_impl->snapshot.phase = m_impl->testConfigPath.isEmpty()
+                ? QStringLiteral("empty")
+                : QStringLiteral("configured");
+            m_impl->snapshot.errorCode.clear();
+            m_impl->snapshot.message.clear();
+            m_impl->analysisCoordinator.configureCapability(
+                m_impl->descriptor.postRunAnalysis);
+            m_impl->snapshot.analysis = m_impl->analysisCoordinator.snapshot();
+            emit snapshotChanged(m_impl->snapshot);
+            return {};
+        }
         return m_impl->latchedShutdownFailure;
     }
     ++m_impl->generation;
@@ -1426,6 +1572,12 @@ ActionResult TestApplicationController::shutdown()
         if (!saved.ok && firstFailure.ok) {
             firstFailure = saved;
         }
+    }
+    const ActionResult analysisShutdown =
+        m_impl->analysisCoordinator.cancelAndWait(
+            m_impl->analysisConfig.analysisShutdownTimeoutMs);
+    if (!analysisShutdown.ok && firstFailure.ok) {
+        firstFailure = analysisShutdown;
     }
     m_impl->runner.reset();
     m_impl->executor.reset();
@@ -1477,6 +1629,9 @@ ActionResult TestApplicationController::shutdown()
     m_impl->snapshot = {};
     if (configured) {
         m_impl->snapshot.descriptor = m_impl->descriptor;
+        m_impl->analysisCoordinator.configureCapability(
+            m_impl->descriptor.postRunAnalysis);
+        m_impl->snapshot.analysis = m_impl->analysisCoordinator.snapshot();
         m_impl->snapshot.digitalStimulus = digitalStimulusDescriptor(
             m_impl->executionConfig);
     }
@@ -1508,6 +1663,43 @@ ApplicationSnapshot TestApplicationController::snapshot() const
         return {};
     }
     return m_impl->snapshot;
+}
+
+ActionResult TestApplicationController::analysisResult(
+    const AnalysisResultQuery& query,
+    AnalysisChannelProjection* output) const
+{
+    if (!onAffinityThread(this)) return affinityFailure();
+    if (output == nullptr || query.taskId.trimmed().isEmpty() ||
+        query.analysisGeneration == 0 || query.channel < 0 || query.channel > 3) {
+        return failure(QStringLiteral("invalid_analysis_query"),
+                       QStringLiteral("A valid analysis identity and channel are required"));
+    }
+    const PostRunAnalysisSnapshot& analysis = m_impl->snapshot.analysis;
+    if (analysis.taskId != query.taskId ||
+        analysis.analysisGeneration != query.analysisGeneration) {
+        return failure(QStringLiteral("stale_analysis_result"),
+                       QStringLiteral("The requested analysis identity is not current"));
+    }
+    if (analysis.state != QStringLiteral("completed") &&
+        analysis.state != QStringLiteral("partial")) {
+        return failure(QStringLiteral("analysis_not_ready"),
+                       QStringLiteral("The analysis result is not ready"));
+    }
+    const QVector<AnalysisChannelProjection> projections =
+        m_impl->analysisCoordinator.projections();
+    const auto projection = std::find_if(
+        projections.cbegin(),
+        projections.cend(),
+        [&query](const AnalysisChannelProjection& item) {
+            return item.channelSummary.channel == query.channel;
+        });
+    if (projection == projections.cend()) {
+        return failure(QStringLiteral("analysis_not_ready"),
+                       QStringLiteral("The requested channel result is unavailable"));
+    }
+    *output = *projection;
+    return {};
 }
 
 } // namespace hwtest::app

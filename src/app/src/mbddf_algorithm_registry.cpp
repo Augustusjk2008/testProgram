@@ -49,7 +49,9 @@ const QVector<MbdDfAlgorithmRegistration>& mbddfAlgorithmRegistry()
         {QStringLiteral("mbddf.helm_stream"),
          QStringLiteral("helm_start_request"),
          QStringLiteral("helm_feedback_response"),
-         QStringLiteral("HELM_STREAM")},
+         QStringLiteral("HELM_STREAM"),
+         QStringLiteral("mbddf.helm.performance"),
+         QStringLiteral("1")},
     };
     return registry;
 }

@@ -4,7 +4,10 @@ set(APP_CORE_PUBLIC_HEADERS
 )
 
 set(APP_CORE_SOURCES
+    src/analysis_result_store.cpp
     src/continuous_data_recorder.cpp
+    src/post_run_analysis_config.cpp
+    src/post_run_analysis_coordinator.cpp
     src/run_mode_capabilities.cpp
     src/test_application_controller.cpp
     src/frontend_launch_options.cpp
@@ -13,7 +16,10 @@ set(APP_CORE_SOURCES
 
 add_library(hwtest_app_core STATIC
     ${APP_CORE_PUBLIC_HEADERS}
+    src/analysis_result_store.h
     src/continuous_data_recorder.h
+    src/post_run_analysis_config.h
+    src/post_run_analysis_coordinator.h
     src/mbddf_algorithm_registry.h
     src/run_mode_capabilities.h
     ${APP_CORE_SOURCES}

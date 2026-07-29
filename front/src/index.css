@@ -232,6 +232,17 @@ code,
   color: var(--text-soft);
 }
 
+.nav-item:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+.nav-item:disabled:hover {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
 .nav-item.is-active {
   border-color: var(--line-bright);
   background: var(--surface-active);
@@ -686,6 +697,32 @@ code,
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.analysis-run-state {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--cyan);
+  font: 10px "Geist Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysis-run-hint {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+  padding: 4px 0 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.analysis-run-hint strong {
+  color: var(--cyan);
+  font: 10px "Geist Mono", monospace;
 }
 
 .run-console__error {
@@ -1496,6 +1533,367 @@ code,
   color: var(--text);
 }
 
+.performance-page {
+  align-content: start;
+}
+
+.performance-summary {
+  display: grid;
+  grid-template-columns: minmax(230px, .7fr) minmax(0, 1.3fr);
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+}
+
+.performance-summary__eyebrow {
+  color: var(--lime);
+  font: 10px "Geist Mono", monospace;
+  letter-spacing: .08em;
+}
+
+.performance-summary h2 {
+  margin: 3px 0 4px;
+  color: var(--text);
+  font-size: 21px;
+}
+
+.performance-summary p {
+  margin: 0;
+  color: var(--amber);
+  font-size: 11px;
+}
+
+.performance-summary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.performance-summary dl > div {
+  min-width: 0;
+  padding: 7px 9px;
+  background: var(--surface-muted);
+}
+
+.performance-summary dt,
+.performance-source small {
+  display: block;
+  color: var(--muted);
+  font: 9px "Geist Mono", monospace;
+}
+
+.performance-summary dd {
+  overflow: hidden;
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font: 11px "Geist Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysis-progress__body {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.analysis-state {
+  color: var(--cyan);
+  font: 11px "Geist Mono", monospace;
+}
+
+.analysis-state--partial,
+.analysis-state--unavailable {
+  color: var(--amber);
+}
+
+.analysis-state--failed,
+.analysis-state--cancelled {
+  color: var(--red);
+}
+
+.analysis-progress__bar {
+  height: 4px;
+  overflow: hidden;
+  background: var(--progress-track);
+}
+
+.analysis-progress__bar i {
+  display: block;
+  height: 100%;
+  background: var(--cyan);
+  transition: width 180ms linear;
+}
+
+.analysis-outcome,
+.performance-fetch-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--amber);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.performance-fetch-error {
+  padding: 9px 10px;
+  border: 1px solid var(--alert-line);
+  color: var(--red);
+}
+
+.performance-source__body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  border-top: 1px solid var(--line);
+  background: var(--line);
+}
+
+.performance-source__body > span {
+  display: grid;
+  min-width: 130px;
+  flex: 1 1 160px;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--surface-muted);
+}
+
+.performance-source__body strong,
+.performance-source__body code {
+  overflow: hidden;
+  color: var(--text-soft);
+  font: 10px "Geist Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.performance-channel-picker__body {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 1px;
+  border-top: 1px solid var(--line);
+  background: var(--line);
+}
+
+.performance-channel-picker__body > label {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  gap: 6px;
+  align-items: center;
+  min-height: 42px;
+  padding: 7px 9px;
+  background: var(--surface-muted);
+  color: var(--text-soft);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.performance-channel-picker__body > label.is-disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.performance-channel-picker__body input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--lime);
+}
+
+.performance-channel-picker__body i {
+  color: var(--cyan);
+  font: 9px "Geist Mono", monospace;
+  font-style: normal;
+}
+
+.performance-channel-picker__body small {
+  grid-column: 2 / -1;
+  color: var(--muted);
+  font: 9px "Geist Mono", monospace;
+}
+
+.performance-unit-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+}
+
+.performance-unit-toggle button {
+  min-height: 25px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font: 10px "Geist Mono", monospace;
+  cursor: pointer;
+}
+
+.performance-unit-toggle button:last-child {
+  border-right: 0;
+}
+
+.performance-unit-toggle button.is-active {
+  background: var(--surface-selected);
+  color: var(--lime);
+}
+
+.performance-metrics__body {
+  display: grid;
+  gap: 1px;
+  border-top: 1px solid var(--line);
+  background: var(--line);
+}
+
+.performance-channel-metrics {
+  padding: 10px;
+  background: var(--panel);
+}
+
+.performance-channel-metrics > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.performance-channel-metrics > header strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.performance-channel-status {
+  color: var(--cyan);
+  font: 10px "Geist Mono", monospace;
+}
+
+.performance-channel-status--partial,
+.performance-channel-status--unavailable {
+  color: var(--amber);
+}
+
+.performance-metric-group {
+  margin-top: 10px;
+}
+
+.performance-metric-group h4 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font: 10px "Geist Mono", monospace;
+}
+
+.performance-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+
+.performance-metric {
+  min-width: 0;
+  padding: 8px;
+  background: var(--surface-muted);
+}
+
+.performance-metric > span,
+.performance-metric i,
+.performance-metric p {
+  display: block;
+}
+
+.performance-metric > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.performance-metric strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text);
+  font: 16px "Geist Mono", monospace;
+}
+
+.performance-metric strong small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.performance-metric i {
+  margin-top: 4px;
+  color: var(--cyan);
+  font: 9px "Geist Mono", monospace;
+  font-style: normal;
+}
+
+.performance-metric p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.performance-warnings {
+  display: grid;
+  gap: 3px;
+  margin: 8px 0 0;
+  padding: 7px 10px 7px 24px;
+  border: 1px solid var(--alert-line);
+  color: var(--amber);
+  font-size: 10px;
+}
+
+.performance-loading {
+  padding: 10px;
+  color: var(--cyan);
+  font: 11px "Geist Mono", monospace;
+}
+
+.bode-plot {
+  display: grid;
+  gap: 8px;
+}
+
+.bode-chart {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.bode-chart__canvas {
+  width: 100%;
+  min-height: 270px;
+  padding: 8px 6px 2px;
+}
+
+.bode-chart .uplot {
+  font-family: "Geist Mono", monospace;
+}
+
+.bode-chart .u-legend {
+  padding: 4px 8px 2px;
+  font-size: 11px;
+}
+
+.bode-chart .u-legend .u-label {
+  color: var(--text-soft);
+}
+
+.bode-chart .u-legend .u-value {
+  color: var(--text);
+}
+
+.performance-empty {
+  min-height: 150px;
+}
+
 .diagnostics-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(360px, .9fr);
@@ -1686,6 +2084,18 @@ code,
 }
 
 @media (max-width: 760px) {
+  .performance-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .performance-summary dl {
+    grid-template-columns: 1fr;
+  }
+
+  .performance-channel-picker__body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .digital-stimulus__grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }

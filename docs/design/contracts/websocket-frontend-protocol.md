@@ -6,7 +6,9 @@
 
 `[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；前端既可使用开发服务器，也可使用构建后的单文件 HTML，二者都与 `hwtest_web` 分开运行，浏览器仍只连接回环 WebSocket。
 
-`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider、`DigitalStimulusPanel` 和通用运行参数编辑器接入总览页。参数编辑器只消费后端 descriptor 中由算法层提供的 Schema，按 `configId + runParameterSchemaVersion` 在浏览器保存编辑值，并把覆盖值放入本次 `start.algorithmParameters`；它不写回测试配置。数字刺激面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。此浏览器控制面实现不等价于 PXI-6259 或舵机真机已连接或已验收。
+`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider、`DigitalStimulusPanel` 和通用运行参数编辑器接入总览页。参数编辑器只消费后端 descriptor 中由算法层提供的 Schema，按 `configId + runParameterSchemaVersion` 在浏览器保存编辑值，并把覆盖值放入本次 `start.algorithmParameters`；它不写回测试配置。数字刺激面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。浏览器也已接入性能导航、`snapshot.analysis`、四通道身份缓存和 uPlot 伯德图输入；性能页只消费后端 `analysisResult`，不从实时 `SampleBuffer` 重算。此浏览器控制面实现不等价于 PXI-6259 或舵机真机已连接或已验收。
+
+`[当前实现]` 服务器投影后处理 capability/摘要并接受只读 `analysisResult` 请求；应用控制器已接通 STOP 尾样本封存、硬件收尾双栅栏、`queued` 到终态的后台分析、分析期间写门禁及运行中 worker 协作取消。算法层提供五种波形与扫频伯德计算端口。`capturing` 只表示输入正在采集，只有带匹配 `{taskId, analysisGeneration}` 的分析终态才表示该轮结果可查询。
 
 ## 2. 连接规则
 
@@ -29,7 +31,7 @@
 - 字段名区分大小写。协议未定义的顶层字段应被忽略，以便尾部扩展；已定义字段的类型必须严格符合本文。
 - 服务器发送紧凑 JSON，不依赖空白或对象成员顺序。
 - 每个有效请求恰好产生一个相同 `id` 的 reply。快照和样本是独立异步事件，可以出现在请求与 reply 之间。
-- `setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData` 和快照中的数据保存状态是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。
+- `setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、descriptor 中的 `postRunAnalysis`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。新客户端收到旧服务端缺失的后处理字段时，安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。
 
 ## 4. 消息结构
 
@@ -92,6 +94,7 @@
 | `dataSaveEnabled` | boolean；当前任务是否启用了后端连续数据保存 |
 | `dataFilePath`、`dataSaveError` | string；后端目标/完成文件路径与保存错误，未启用或无错误时为空 |
 | `digitalStimulus` | object；当前数字刺激状态，字段见下表 |
+| `analysis` | object；后处理 capability、当前分析身份、进度和通道摘要，字段与可用性见 4.4.1；不含完整伯德数组 |
 
 `rawData` 使用 Qt 的 JSON-compatible QVariant 转换规则；其嵌套 map/list、布尔值、数值、字符串和空值保持对应 JSON 类型。
 
@@ -107,6 +110,7 @@
 | `runParameterSchemaVersion` | string | 算法层运行参数 Schema 版本；无可编辑参数时为空 |
 | `runParameters` | object[] | 参数定义；每项包含 `id`、`label`、`description`、`kind`、`unit`、`required`、独占边界标志和 `choices`，可选 `minimum`、`maximum`、`visibleWhen` |
 | `runParameterDefaults` | object | 当前配置值覆盖算法 Schema 默认值后得到的完整默认参数 |
+| `postRunAnalysis` | object | `{supported, analyzerId, schemaVersion}`；仅当前测试支持后处理时 `supported=true`，旧服务端/非支持配置安全回退为 false 和空字符串 |
 
 `measurements` 只描述展示标签、单位和首页主指标候选，不改变算法判定或硬件安全语义。`runParameters` 由算法层定义语义，`kind` 只能是 `integer`、`number`、`boolean` 或 `choice`；`visibleWhen` 只控制界面显示，隐藏字段仍按 Schema 校验并随完整参数传递。首条样本可能包含 descriptor 未列出的数值字段，前端仍应自动发现并显示该字段；descriptor 缺失时，兼容客户端可以使用空 descriptor 和样本字段回退。
 
@@ -121,6 +125,28 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `appliedMask`、`revision` | number | WebSocket v1 只承载低 16 位逻辑激活位图和 JavaScript 安全整数 revision；写入成功后 revision 递增 |
 | `lastWriteTimestampUs`、`settlingMs` | number | 最近一次成功写入的 UTC epoch 微秒与配置的稳定等待毫秒 |
 | `errorCode`、`message` | string | 最近一次刺激操作的 HAL 归一化错误或诊断；成功时为空 |
+
+### 4.4.1 舵机后处理 capability 与摘要
+
+`descriptor.postRunAnalysis` 是 `mbddf.helm_stream` 的后处理能力声明。当前注册的 analyzer 为 `mbddf.helm.performance`，schema 为 `"1"`；其他配置的 `supported=false`。客户端不得从算法 ID、中文标题或配置路径推断该能力。
+
+`snapshot.analysis` 使用以下追加式对象，所有整数必须位于 JavaScript 安全整数范围；`analysisGeneration` 为协调器私有的单调身份，不能复用控制器已有 lifecycle generation：
+
+| 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `supported`、`analyzerId`、`schemaVersion` | boolean、string、string | 复制当前 descriptor 的后处理能力 |
+| `taskId`、`analysisGeneration` | string、non-negative integer | 当前分析身份 `{taskId, analysisGeneration}`；只有启动成功获得新 taskId 后才可创建新身份和清空旧投影 |
+| `state` | string | `none`、`capturing`、`queued`、`validating`、`preprocessing`、`calculating`、`persisting`、`completed`、`partial`、`unavailable`、`failed` 或 `cancelled` |
+| `progress`、`stage`、`message`、`reasonCode` | integer、string、string、string | 小型进度、阶段、用户可读诊断和稳定原因码 |
+| `resultFilePath`、`diagnosticInputFilePath` | string | 已原子提交的结果路径或保留的诊断输入路径；浏览器只读，不能覆盖 |
+| `sourceSummary` | object | 固定 Schema 的小型输入/时序摘要；不承载原始样本或完整性能 JSON |
+| `channelSummaries` | object[] | 四个最多通道的小型摘要；字段见下表 |
+
+每个 `channelSummaries[]` 元素为 `{channel, enabled, status, warnings, omittedWarningCount, commonMetrics, waveformMetrics, bodeAvailable, bodePointCount}`。`channel` 只能是 `0..3`；通道状态只能为 `not_applicable`、`completed`、`partial` 或 `unavailable`。metric 统一为 `{key,label,unit,status,value,detail}`，其中 `value` 是有限 number 或 `null`，绝不以字符串、`NaN`、`Inf` 或伪造的 `0` 表示无效结果。
+
+摘要不携带完整伯德数组，避免每次快照或重连重复广播大载荷。摘要在结果提交前按 `maxAnalysisSummaryBytes` 验证，每通道警告最多 16 条、单条 UTF-8 最多 512 字节，超出部分只反映为 `omittedWarningCount`；无法满足限制时整体进入 `failed`。`failed`/`cancelled` 只能是整体基础设施终态，不得携带半成品曲线。
+
+分析状态独立于 `snapshot.phase` 和 BIZ `TestState`：性能结果不改变采集 `verdict`、`errorCode`、`TestResult` 或 STOP 硬件语义。`[当前实现]` DTO 可以投影 `capturing` 和查询接口；完整的 STOP 尾样本封存、`queued` 到终态状态机和投影填充尚未在控制器中接通。
 
 ### 4.5 样本事件
 
@@ -141,12 +167,16 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `missing_field` | 必填字段缺失、字符串为空，或动作必需参数缺失 | 是 |
 | `server_busy` | 已有活跃客户端 | 否，关闭码 `1008` |
 | `message_too_large` | UTF-8 文本超过 `16384` 字节 | 否，关闭码 `1009` |
-| `command_in_progress` | 正在异步停止或安全收尾时又收到写动作 | 是 |
+| `command_in_progress` | `[当前实现]` 正在异步停止、安全收尾，或分析处于 `queued` 到终态之间时又收到新会话写动作 | 是 |
 | `test_config_not_found` | `selectTest.configId` 不在后端启动时发现的配置白名单中 | 是 |
 | `invalid_run_mode` | `start.mode` 不是固定三种模式之一 | 是 |
 | `CapabilityUnsupported` | `start.mode` 未在当前配置的 `supportedRunModes` 中声明，或刺激快照超出 WebSocket v1 的 16 位投影 | 是 |
 | `capability_unsupported` | `setDigitalStimulus`/`resetDigitalStimulus` 面对超出 v1 范围的刺激配置 | 是 |
 | `ParameterRangeError` | `start.intervalMs`、`start.maxCycles` 或算法运行参数缺失、未知、非有限、类型/范围不合法 | 是 |
+| `analysis_not_ready` | 请求身份是当前分析，但状态尚非 `completed`/`partial`，或该通道尚无可读投影 | 是 |
+| `stale_analysis_result` | `analysisResult` 的 taskId 或 analysisGeneration 不是当前身份 | 是 |
+| `analysis_projection_invalid` | 后端保存的投影不满足点数、数组、有限数或空洞编码不变量 | 是 |
+| `analysis_projection_too_large` | 成功 `analysisResult` 的完整紧凑 reply 超过独立 16 KiB 限制 | 是 |
 
 能够安全读取请求 `id` 时，协议错误 reply 使用该 id；否则使用空字符串。错误输入不得触发控制器动作。
 
@@ -160,6 +190,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `testConfigs` | `{}` | 返回后端固定 `configs/` 目录中已验证的测试配置摘要；`data` 为 `{ "selectedConfigId": "...", "configs": [{"configId":"...","title":"...","description":"...","algorithmId":"..."}] }`，不返回本地路径 |
 | `selectTest` | `{"configId":"mbddf-elec-health"}` | 只接受 `testConfigs` 返回的白名单 `configId`；服务器映射到本地路径并重新加载配置，若当前处于可运行终态则先安全关闭当前会话；运行中或停止中拒绝切换 |
 | `snapshot` | `{}` | 从 Web 层缓存读取；`data` 为 `{ "seq": n, "snapshot": { ... } }`，其中包含当前配置 descriptor |
+| `analysisResult` | `{"taskId":"...","analysisGeneration":3,"channel":0}` | 只读；参数必须且只能为这三个字段，taskId 非空，generation 为 `1..9007199254740991` 的安全整数，channel 为 `0..3`。只允许读取当前身份且 `completed`/`partial` 的通道；不匹配返回 `stale_analysis_result`，未就绪返回 `analysis_not_ready`。成功 `data` 为 `{ "analysisResult": { "channelSummary": { ... }, "bode": { "frequencyHz": [], "magnitudeDb": [], "phaseDeg": [], "pointStatus": [] } } }` |
 | `controls` | `{}` | 在控制器亲和线程读取；`data.controls` 为 `{resourceId, providerId}` 数组 |
 | `ports` | `{}` | 在控制器亲和线程读取；`data.ports` 为完整 `SerialPortInfo` 对象数组 |
 | `selectControl` | `{"resourceId":"CONTROL_SERIAL"}` | 调用 `selectControl`；`resourceId` 必须是非空字符串 |
@@ -198,15 +229,23 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 
 运行期数据逐样本刷新到同目录的 `.partial` 文件，避免不限 PC 周期或设备持续回告在内存累积；正常完成、用户停止或错误终态时，后端使用 `QSaveFile` 把元数据和 TSV 原子提交为最终 TXT，再删除 `.partial`。提交失败时保留 `.partial` 供恢复。未勾选或 `single` 均不创建数据文件。
 
+### 6.2 `analysisResult` 投影不变量
+
+`analysisResult` 不触发重新计算、不接受客户端路径、分辨率、历史身份或任意筛选条件；它只读取后端已完成的当前 sidecar artifact。成功投影的 `bode.frequencyHz`、`magnitudeDb`、`phaseDeg`、`pointStatus` 四个数组必须等长，最多 256 点：频率为正有限 Hz；幅值/相位为有限 number 或 `null`；无效点以 `null + pointStatus` 表示且不得跨空洞连线。`pointStatus` 使用稳定状态字符串（当前算法端口包括 `valid`、`upper_bound`、`indeterminate`、`not_covered`、`weak_excitation`、`invalid`）；前端不得用 `0 dB/0°` 代替缺失值。
+
+该 action 有独立的出站限制：服务端先校验内层投影的紧凑 JSON 不超过 `16384` 字节，再校验包含标准 reply envelope 的完整紧凑 JSON 仍不超过 `16384` 字节；超限回复 `analysis_projection_too_large`。这不能由第 2 节的入站消息限制替代。点数、数组、有限数、空洞和双重 16 KiB 校验在协议投影层执行；配置中的 `maxProjectedPoints`/`maxProjectedBytes` 也在分析发布终态和提交结果前参与实际投影边界验证，无法满足时不静默截断为完整结果。
+
+浏览器按 `{taskId,analysisGeneration}` 缓存四个通道，身份变化时整体清空并丢弃迟到回复；`analysisResult` 不占全局硬件动作 busy。性能页只使用此只读投影，连续遥测 `SampleBuffer` 只服务实时曲线。Hz/rad/s 是显示切换，不能改变协议/结果文件中的 Hz、指标计算或后端数组。
+
 ## 7. 异步、线程与安全收尾
 
 - WebSocket 回调不得直接跨线程调用控制器。所有控制器动作和读取都通过 queued invocation 投递到控制器的 QObject 亲和线程；禁止 `BlockingQueuedConnection`。
 - Web 层不得调用 `waitForTerminal()`。运行进度和终态只通过 `snapshotChanged` 观察。
-- `sampleReceived` 直接形成 sample 事件；Web 层不解释、聚合或绘制字段，也不为连续测试建立定时器或写文件。连续数据文件由共享应用控制器在形成应用 DTO 后记录，TUI/GUI/WebSocket 适配器都不持有 recorder。
+- `sampleReceived` 直接形成 sample 事件；Web 层不解释、聚合或绘制字段，也不为连续测试建立定时器或写文件。连续数据文件由共享应用控制器在形成应用 DTO 后记录，TUI/GUI/WebSocket 适配器都不持有 recorder。`analysis` 不进入 sample 事件；伯德数组只能经 `analysisResult` 读取，避免每个样本重复携带大载荷。
 - `setDigitalStimulus` 和 `resetDigitalStimulus` 只在控制器处于 `ready`、`running`、`paused`、`finished` 或 `stopped`，且 DI 已准备时才会执行；Web 层不持有或传递物理资源/Adapter 参数。
 - `stop` 保存请求 id，调用 `stopAsync()` 后保持事件循环运行；发起成功后收到 `stopCompleted` 才回复。若 `stopAsync()` 因状态、超时参数或已有停止而立即失败，则直接返回该控制器错误并清除 Web 层 pending 状态。
-- 异步停止或断开收尾期间，`snapshot`、`controls` 和 `ports` 三个只读动作仍允许；其他新动作回复 `command_in_progress`，不得再次触发控制器写动作。
-- `disconnect`、`quit` 和异常掉线在状态为 `running` 或 `paused` 时按 `stopAsync -> stopCompleted -> shutdown` 顺序执行；其他状态直接尝试 `shutdown`。DI 配置的停止/收尾会在 BIZ 停止后尽力 `resetDigitalStimulus`，随后按刺激设备会话、DUT 会话、HAL 的顺序释放；这不是进程崩溃、主机掉电或未验证台架的物理安全保证。
+- `[当前实现]` 异步停止、断开收尾或后处理处于 `queued` 到终态期间，`snapshot`、`analysisResult`、`testConfigs`、`controls` 和 `ports` 等只读动作仍允许；其他新会话写动作回复 `command_in_progress`，不得再次触发控制器写动作。当前捕获任务 STOP 和所有 cleanup 始终允许。
+- `disconnect`、`quit`、异常掉线和服务器内部 `DropCleanup` 在状态为 `running` 或 `paused` 时按 `stopAsync -> stopCompleted -> shutdown` 顺序执行；其他状态直接尝试 `shutdown`。DI 配置的停止/收尾会在 BIZ 停止后尽力 `resetDigitalStimulus`，随后按刺激设备会话、DUT 会话、HAL 的顺序释放；这不是进程崩溃、主机掉电或未验证台架的物理安全保证。shutdown 同时请求后处理协作取消并在配置时限内 join，不使用 `terminate()` 或 detach；join 超时返回 `analysis_shutdown_timeout` 并保留仍被线程引用的对象，服务器继续保持 cleanup 门禁并重试。SPA 页面内导航不等于断线，不取消分析。
 - `shutdown` 的失败必须通过对应 reply 返回；异常掉线时没有 reply，但服务器仍清理会话并恢复到可接纳下一客户端的状态。
 - 服务器停止监听或客户端对象销毁，不得先于已经排队的安全收尾。
 
@@ -217,3 +256,4 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 3. `snapshotChanged` 和 `sampleReceived` 分别立即形成完整 snapshot/sample 消息，因此它们可以先于触发该变化的动作 reply 到达；`setDigitalStimulus`/`resetDigitalStimulus` 的 reply 也携带当时的 `data.digitalStimulus`。客户端必须按 `type` 分流，不能假定 reply 先于相应 snapshot，且应以序号更高的后续完整 snapshot 更新状态。
 4. `stop`、`disconnect`、`quit` 的 reply 必须晚于 `stopCompleted`（若需要停止）和 `shutdown`（若需要收尾）。
 5. `disconnect`/`quit` 的最终 reply 必须先于正常关闭帧；`quit` 的关闭帧必须先于进程退出。
+6. `[当前实现]` `HELM_STREAM` 的成功 STOP reply 不等待性能计算：捕获封存先发布 `analysis.state=queued` 以建立写门禁，`stopCompleted` 硬件收尾完成后再排队启动分析线程，随后发布 validating/preprocessing/calculating/persisting/终态摘要；浏览器收到终态摘要后再按通道请求 `analysisResult`。旧身份的进度、文件提交和 reply 不得覆盖新 `{taskId,analysisGeneration}`。

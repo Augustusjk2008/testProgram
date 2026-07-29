@@ -1,0 +1,3657 @@
+{
+  "fixtureSchemaVersion": "1",
+  "analyzerVersion": "mbddf.helm.performance/1;cyclesPerEstimate=4;maxDelayMs=100;frequencyPointCount=96;candidateSamples=2048;candidateSampling=time_stratified;minCommandCorrelation=0.95;absoluteExcitationFloor=1e-6;relativeExcitationRatio=0.01",
+  "name": "constant",
+  "parameters": {
+    "waveform": 3,
+    "freq": 1.0,
+    "ampl": 5.0,
+    "offset": 0.0,
+    "start": 0.0,
+    "max_freq": 8.0,
+    "sweep_duration_s": 8.0,
+    "enable": 1
+  },
+  "samples": [
+    {
+      "tUs": 0,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1,
+        0.1,
+        0.1,
+        0.1
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 0,
+      "serialA": 0,
+      "serialB": 0,
+      "ddsSequence": 1000000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 10000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584947,
+        0.11175570504584947,
+        0.11175570504584947,
+        0.11175570504584947
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 1,
+      "serialA": 1,
+      "serialB": 1,
+      "ddsSequence": 1010000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 20000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 2,
+      "serialA": 2,
+      "serialB": 2,
+      "ddsSequence": 1020000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 30000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 3,
+      "serialA": 3,
+      "serialB": 3,
+      "ddsSequence": 1030000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 40000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584947,
+        0.11175570504584947,
+        0.11175570504584947,
+        0.11175570504584947
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 4,
+      "serialA": 4,
+      "serialB": 4,
+      "ddsSequence": 1040000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 50000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1,
+        0.1,
+        0.1,
+        0.1
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 5,
+      "serialA": 5,
+      "serialB": 5,
+      "ddsSequence": 1050000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 60000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415054,
+        0.08824429495415054,
+        0.08824429495415054,
+        0.08824429495415054
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 6,
+      "serialA": 6,
+      "serialB": 6,
+      "ddsSequence": 1060000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 70000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 7,
+      "serialA": 7,
+      "serialB": 7,
+      "ddsSequence": 1070000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 80000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 8,
+      "serialA": 8,
+      "serialB": 8,
+      "ddsSequence": 1080000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 90000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415054,
+        0.08824429495415054,
+        0.08824429495415054,
+        0.08824429495415054
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 9,
+      "serialA": 9,
+      "serialB": 9,
+      "ddsSequence": 1090000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 100000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1,
+        0.1,
+        0.1,
+        0.1
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 10,
+      "serialA": 10,
+      "serialB": 10,
+      "ddsSequence": 1100000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 110000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584946,
+        0.11175570504584946,
+        0.11175570504584946,
+        0.11175570504584946
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 11,
+      "serialA": 11,
+      "serialB": 11,
+      "ddsSequence": 1110000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 120000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 12,
+      "serialA": 12,
+      "serialB": 12,
+      "ddsSequence": 1120000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 130000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 13,
+      "serialA": 13,
+      "serialB": 13,
+      "ddsSequence": 1130000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 140000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584947,
+        0.11175570504584947,
+        0.11175570504584947,
+        0.11175570504584947
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 14,
+      "serialA": 14,
+      "serialB": 14,
+      "ddsSequence": 1140000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 150000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.10000000000000002,
+        0.10000000000000002,
+        0.10000000000000002,
+        0.10000000000000002
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 15,
+      "serialA": 15,
+      "serialB": 15,
+      "ddsSequence": 1150000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 160000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415055,
+        0.08824429495415055,
+        0.08824429495415055,
+        0.08824429495415055
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 16,
+      "serialA": 16,
+      "serialB": 16,
+      "ddsSequence": 1160000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 170000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409694,
+        0.08097886967409694,
+        0.08097886967409694,
+        0.08097886967409694
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 17,
+      "serialA": 17,
+      "serialB": 17,
+      "ddsSequence": 1170000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 180000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 18,
+      "serialA": 18,
+      "serialB": 18,
+      "ddsSequence": 1180000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 190000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415054,
+        0.08824429495415054,
+        0.08824429495415054,
+        0.08824429495415054
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 19,
+      "serialA": 19,
+      "serialB": 19,
+      "ddsSequence": 1190000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 200000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999999,
+        0.09999999999999999,
+        0.09999999999999999,
+        0.09999999999999999
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 20,
+      "serialA": 20,
+      "serialB": 20,
+      "ddsSequence": 1200000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 210000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584946,
+        0.11175570504584946,
+        0.11175570504584946,
+        0.11175570504584946
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 21,
+      "serialA": 21,
+      "serialB": 21,
+      "ddsSequence": 1210000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 220000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 22,
+      "serialA": 22,
+      "serialB": 22,
+      "ddsSequence": 1220000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 230000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 23,
+      "serialA": 23,
+      "serialB": 23,
+      "ddsSequence": 1230000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 240000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584947,
+        0.11175570504584947,
+        0.11175570504584947,
+        0.11175570504584947
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 24,
+      "serialA": 24,
+      "serialB": 24,
+      "ddsSequence": 1240000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 250000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.10000000000000002,
+        0.10000000000000002,
+        0.10000000000000002,
+        0.10000000000000002
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 25,
+      "serialA": 25,
+      "serialB": 25,
+      "ddsSequence": 1250000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 260000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415055,
+        0.08824429495415055,
+        0.08824429495415055,
+        0.08824429495415055
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 26,
+      "serialA": 26,
+      "serialB": 26,
+      "ddsSequence": 1260000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 270000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409694,
+        0.08097886967409694,
+        0.08097886967409694,
+        0.08097886967409694
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 27,
+      "serialA": 27,
+      "serialB": 27,
+      "ddsSequence": 1270000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 280000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 28,
+      "serialA": 28,
+      "serialB": 28,
+      "ddsSequence": 1280000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 290000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415054,
+        0.08824429495415054,
+        0.08824429495415054,
+        0.08824429495415054
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 29,
+      "serialA": 29,
+      "serialB": 29,
+      "ddsSequence": 1290000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 300000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999999,
+        0.09999999999999999,
+        0.09999999999999999,
+        0.09999999999999999
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 30,
+      "serialA": 30,
+      "serialB": 30,
+      "ddsSequence": 1300000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 310000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584946,
+        0.11175570504584946,
+        0.11175570504584946,
+        0.11175570504584946
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 31,
+      "serialA": 31,
+      "serialB": 31,
+      "ddsSequence": 1310000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 320000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 32,
+      "serialA": 32,
+      "serialB": 32,
+      "ddsSequence": 1320000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 330000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 33,
+      "serialA": 33,
+      "serialB": 33,
+      "ddsSequence": 1330000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 340000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 34,
+      "serialA": 34,
+      "serialB": 34,
+      "ddsSequence": 1340000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 350000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999995,
+        0.09999999999999995,
+        0.09999999999999995,
+        0.09999999999999995
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 35,
+      "serialA": 35,
+      "serialB": 35,
+      "ddsSequence": 1350000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 360000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415055,
+        0.08824429495415055,
+        0.08824429495415055,
+        0.08824429495415055
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 36,
+      "serialA": 36,
+      "serialB": 36,
+      "ddsSequence": 1360000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 370000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409694,
+        0.08097886967409694,
+        0.08097886967409694,
+        0.08097886967409694
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 37,
+      "serialA": 37,
+      "serialB": 37,
+      "ddsSequence": 1370000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 380000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 38,
+      "serialA": 38,
+      "serialB": 38,
+      "ddsSequence": 1380000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 390000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415052,
+        0.08824429495415052,
+        0.08824429495415052,
+        0.08824429495415052
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 39,
+      "serialA": 39,
+      "serialB": 39,
+      "ddsSequence": 1390000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 400000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999999,
+        0.09999999999999999,
+        0.09999999999999999,
+        0.09999999999999999
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 40,
+      "serialA": 40,
+      "serialB": 40,
+      "ddsSequence": 1400000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 410000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1117557050458495,
+        0.1117557050458495,
+        0.1117557050458495,
+        0.1117557050458495
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 41,
+      "serialA": 41,
+      "serialB": 41,
+      "ddsSequence": 1410000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 420000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 42,
+      "serialA": 42,
+      "serialB": 42,
+      "ddsSequence": 1420000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 430000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 43,
+      "serialA": 43,
+      "serialB": 43,
+      "ddsSequence": 1430000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 440000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 44,
+      "serialA": 44,
+      "serialB": 44,
+      "ddsSequence": 1440000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 450000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.10000000000000003,
+        0.10000000000000003,
+        0.10000000000000003,
+        0.10000000000000003
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 45,
+      "serialA": 45,
+      "serialB": 45,
+      "ddsSequence": 1450000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 460000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415057,
+        0.08824429495415057,
+        0.08824429495415057,
+        0.08824429495415057
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 46,
+      "serialA": 46,
+      "serialB": 46,
+      "ddsSequence": 1460000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 470000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 47,
+      "serialA": 47,
+      "serialB": 47,
+      "ddsSequence": 1470000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 480000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 48,
+      "serialA": 48,
+      "serialB": 48,
+      "ddsSequence": 1480000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 490000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415052,
+        0.08824429495415052,
+        0.08824429495415052,
+        0.08824429495415052
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 49,
+      "serialA": 49,
+      "serialB": 49,
+      "ddsSequence": 1490000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 500000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999998,
+        0.09999999999999998,
+        0.09999999999999998,
+        0.09999999999999998
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 50,
+      "serialA": 50,
+      "serialB": 50,
+      "ddsSequence": 1500000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 510000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1117557050458495,
+        0.1117557050458495,
+        0.1117557050458495,
+        0.1117557050458495
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 51,
+      "serialA": 51,
+      "serialB": 51,
+      "ddsSequence": 1510000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 520000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 52,
+      "serialA": 52,
+      "serialB": 52,
+      "ddsSequence": 1520000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 530000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 53,
+      "serialA": 53,
+      "serialB": 53,
+      "ddsSequence": 1530000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 540000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 54,
+      "serialA": 54,
+      "serialB": 54,
+      "ddsSequence": 1540000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 550000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999996,
+        0.09999999999999996,
+        0.09999999999999996,
+        0.09999999999999996
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 55,
+      "serialA": 55,
+      "serialB": 55,
+      "ddsSequence": 1550000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 560000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415057,
+        0.08824429495415057,
+        0.08824429495415057,
+        0.08824429495415057
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 56,
+      "serialA": 56,
+      "serialB": 56,
+      "ddsSequence": 1560000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 570000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 57,
+      "serialA": 57,
+      "serialB": 57,
+      "ddsSequence": 1570000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 580000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 58,
+      "serialA": 58,
+      "serialB": 58,
+      "ddsSequence": 1580000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 590000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415047,
+        0.08824429495415047,
+        0.08824429495415047,
+        0.08824429495415047
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 59,
+      "serialA": 59,
+      "serialB": 59,
+      "ddsSequence": 1590000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 600000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999998,
+        0.09999999999999998,
+        0.09999999999999998,
+        0.09999999999999998
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 60,
+      "serialA": 60,
+      "serialB": 60,
+      "ddsSequence": 1600000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 610000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584939,
+        0.11175570504584939,
+        0.11175570504584939,
+        0.11175570504584939
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 61,
+      "serialA": 61,
+      "serialB": 61,
+      "ddsSequence": 1610000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 620000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 62,
+      "serialA": 62,
+      "serialB": 62,
+      "ddsSequence": 1620000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 630000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 63,
+      "serialA": 63,
+      "serialB": 63,
+      "ddsSequence": 1630000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 640000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 64,
+      "serialA": 64,
+      "serialB": 64,
+      "ddsSequence": 1640000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 650000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999996,
+        0.09999999999999996,
+        0.09999999999999996,
+        0.09999999999999996
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 65,
+      "serialA": 65,
+      "serialB": 65,
+      "ddsSequence": 1650000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 660000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415057,
+        0.08824429495415057,
+        0.08824429495415057,
+        0.08824429495415057
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 66,
+      "serialA": 66,
+      "serialB": 66,
+      "ddsSequence": 1660000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 670000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 67,
+      "serialA": 67,
+      "serialB": 67,
+      "ddsSequence": 1670000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 680000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 68,
+      "serialA": 68,
+      "serialB": 68,
+      "ddsSequence": 1680000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 690000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415058,
+        0.08824429495415058,
+        0.08824429495415058,
+        0.08824429495415058
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 69,
+      "serialA": 69,
+      "serialB": 69,
+      "ddsSequence": 1690000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 700000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.10000000000000012,
+        0.10000000000000012,
+        0.10000000000000012,
+        0.10000000000000012
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 70,
+      "serialA": 70,
+      "serialB": 70,
+      "ddsSequence": 1700000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 710000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584938,
+        0.11175570504584938,
+        0.11175570504584938,
+        0.11175570504584938
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 71,
+      "serialA": 71,
+      "serialB": 71,
+      "ddsSequence": 1710000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 720000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 72,
+      "serialA": 72,
+      "serialB": 72,
+      "ddsSequence": 1720000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 730000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 73,
+      "serialA": 73,
+      "serialB": 73,
+      "ddsSequence": 1730000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 740000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1117557050458495,
+        0.1117557050458495,
+        0.1117557050458495,
+        0.1117557050458495
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 74,
+      "serialA": 74,
+      "serialB": 74,
+      "ddsSequence": 1740000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 750000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.10000000000000012,
+        0.10000000000000012,
+        0.10000000000000012,
+        0.10000000000000012
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 75,
+      "serialA": 75,
+      "serialB": 75,
+      "ddsSequence": 1750000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 760000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415058,
+        0.08824429495415058,
+        0.08824429495415058,
+        0.08824429495415058
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 76,
+      "serialA": 76,
+      "serialB": 76,
+      "ddsSequence": 1760000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 770000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 77,
+      "serialA": 77,
+      "serialB": 77,
+      "ddsSequence": 1770000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 780000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 78,
+      "serialA": 78,
+      "serialB": 78,
+      "ddsSequence": 1780000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 790000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415057,
+        0.08824429495415057,
+        0.08824429495415057,
+        0.08824429495415057
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 79,
+      "serialA": 79,
+      "serialB": 79,
+      "ddsSequence": 1790000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 800000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999996,
+        0.09999999999999996,
+        0.09999999999999996,
+        0.09999999999999996
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 80,
+      "serialA": 80,
+      "serialB": 80,
+      "ddsSequence": 1800000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 810000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 81,
+      "serialA": 81,
+      "serialB": 81,
+      "ddsSequence": 1810000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 820000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 82,
+      "serialA": 82,
+      "serialB": 82,
+      "ddsSequence": 1820000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 830000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 83,
+      "serialA": 83,
+      "serialB": 83,
+      "ddsSequence": 1830000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 840000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1117557050458495,
+        0.1117557050458495,
+        0.1117557050458495,
+        0.1117557050458495
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 84,
+      "serialA": 84,
+      "serialB": 84,
+      "ddsSequence": 1840000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 850000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.10000000000000012,
+        0.10000000000000012,
+        0.10000000000000012,
+        0.10000000000000012
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 85,
+      "serialA": 85,
+      "serialB": 85,
+      "ddsSequence": 1850000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 860000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415058,
+        0.08824429495415058,
+        0.08824429495415058,
+        0.08824429495415058
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 86,
+      "serialA": 86,
+      "serialB": 86,
+      "ddsSequence": 1860000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 870000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409697,
+        0.08097886967409697,
+        0.08097886967409697,
+        0.08097886967409697
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 87,
+      "serialA": 87,
+      "serialB": 87,
+      "ddsSequence": 1870000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 880000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 88,
+      "serialA": 88,
+      "serialB": 88,
+      "ddsSequence": 1880000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 890000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415057,
+        0.08824429495415057,
+        0.08824429495415057,
+        0.08824429495415057
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 89,
+      "serialA": 89,
+      "serialB": 89,
+      "ddsSequence": 1890000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 900000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999996,
+        0.09999999999999996,
+        0.09999999999999996,
+        0.09999999999999996
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 90,
+      "serialA": 90,
+      "serialB": 90,
+      "ddsSequence": 1900000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 910000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 91,
+      "serialA": 91,
+      "serialB": 91,
+      "ddsSequence": 1910000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 920000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 92,
+      "serialA": 92,
+      "serialB": 92,
+      "ddsSequence": 1920000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 930000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 93,
+      "serialA": 93,
+      "serialB": 93,
+      "ddsSequence": 1930000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 940000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584939,
+        0.11175570504584939,
+        0.11175570504584939,
+        0.11175570504584939
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 94,
+      "serialA": 94,
+      "serialB": 94,
+      "ddsSequence": 1940000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 950000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999998,
+        0.09999999999999998,
+        0.09999999999999998,
+        0.09999999999999998
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 95,
+      "serialA": 95,
+      "serialB": 95,
+      "ddsSequence": 1950000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 960000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415058,
+        0.08824429495415058,
+        0.08824429495415058,
+        0.08824429495415058
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 96,
+      "serialA": 96,
+      "serialB": 96,
+      "ddsSequence": 1960000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 970000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409697,
+        0.08097886967409697,
+        0.08097886967409697,
+        0.08097886967409697
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 97,
+      "serialA": 97,
+      "serialB": 97,
+      "ddsSequence": 1970000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 980000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 98,
+      "serialA": 98,
+      "serialB": 98,
+      "ddsSequence": 1980000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 990000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415044,
+        0.08824429495415044,
+        0.08824429495415044,
+        0.08824429495415044
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 99,
+      "serialA": 99,
+      "serialB": 99,
+      "ddsSequence": 1990000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1000000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999995,
+        0.09999999999999995,
+        0.09999999999999995,
+        0.09999999999999995
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 100,
+      "serialA": 100,
+      "serialB": 100,
+      "ddsSequence": 2000000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1010000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949,
+        0.11175570504584949
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 101,
+      "serialA": 101,
+      "serialB": 101,
+      "ddsSequence": 2010000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1020000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 102,
+      "serialA": 102,
+      "serialB": 102,
+      "ddsSequence": 2020000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1030000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 103,
+      "serialA": 103,
+      "serialB": 103,
+      "ddsSequence": 2030000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1040000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1117557050458495,
+        0.1117557050458495,
+        0.1117557050458495,
+        0.1117557050458495
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 104,
+      "serialA": 104,
+      "serialB": 104,
+      "ddsSequence": 2040000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1050000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999999,
+        0.09999999999999999,
+        0.09999999999999999,
+        0.09999999999999999
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 105,
+      "serialA": 105,
+      "serialB": 105,
+      "ddsSequence": 2050000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1060000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415047,
+        0.08824429495415047,
+        0.08824429495415047,
+        0.08824429495415047
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 106,
+      "serialA": 106,
+      "serialB": 106,
+      "ddsSequence": 2060000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1070000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409688,
+        0.08097886967409688,
+        0.08097886967409688,
+        0.08097886967409688
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 107,
+      "serialA": 107,
+      "serialB": 107,
+      "ddsSequence": 2070000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1080000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409691,
+        0.08097886967409691,
+        0.08097886967409691,
+        0.08097886967409691
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 108,
+      "serialA": 108,
+      "serialB": 108,
+      "ddsSequence": 2080000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1090000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415055,
+        0.08824429495415055,
+        0.08824429495415055,
+        0.08824429495415055
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 109,
+      "serialA": 109,
+      "serialB": 109,
+      "ddsSequence": 2090000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1100000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.10000000000000009,
+        0.10000000000000009,
+        0.10000000000000009,
+        0.10000000000000009
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 110,
+      "serialA": 110,
+      "serialB": 110,
+      "ddsSequence": 2100000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1110000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1117557050458496,
+        0.1117557050458496,
+        0.1117557050458496,
+        0.1117557050458496
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 111,
+      "serialA": 111,
+      "serialB": 111,
+      "ddsSequence": 2110000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1120000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 112,
+      "serialA": 112,
+      "serialB": 112,
+      "ddsSequence": 2120000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1130000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307,
+        0.11902113032590307
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 113,
+      "serialA": 113,
+      "serialB": 113,
+      "ddsSequence": 2130000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1140000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584939,
+        0.11175570504584939,
+        0.11175570504584939,
+        0.11175570504584939
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 114,
+      "serialA": 114,
+      "serialB": 114,
+      "ddsSequence": 2140000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1150000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999985,
+        0.09999999999999985,
+        0.09999999999999985,
+        0.09999999999999985
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 115,
+      "serialA": 115,
+      "serialB": 115,
+      "ddsSequence": 2150000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1160000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415059,
+        0.08824429495415059,
+        0.08824429495415059,
+        0.08824429495415059
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 116,
+      "serialA": 116,
+      "serialB": 116,
+      "ddsSequence": 2160000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1170000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409701,
+        0.08097886967409701,
+        0.08097886967409701,
+        0.08097886967409701
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 117,
+      "serialA": 117,
+      "serialB": 117,
+      "ddsSequence": 2170000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1180000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409687,
+        0.08097886967409687,
+        0.08097886967409687,
+        0.08097886967409687
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 118,
+      "serialA": 118,
+      "serialB": 118,
+      "ddsSequence": 2180000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1190000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415044,
+        0.08824429495415044,
+        0.08824429495415044,
+        0.08824429495415044
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 119,
+      "serialA": 119,
+      "serialB": 119,
+      "ddsSequence": 2190000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1200000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999995,
+        0.09999999999999995,
+        0.09999999999999995,
+        0.09999999999999995
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 120,
+      "serialA": 120,
+      "serialB": 120,
+      "ddsSequence": 2200000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1210000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584947,
+        0.11175570504584947,
+        0.11175570504584947,
+        0.11175570504584947
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 121,
+      "serialA": 121,
+      "serialB": 121,
+      "ddsSequence": 2210000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1220000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590302,
+        0.11902113032590302,
+        0.11902113032590302,
+        0.11902113032590302
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 122,
+      "serialA": 122,
+      "serialB": 122,
+      "ddsSequence": 2220000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1230000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 123,
+      "serialA": 123,
+      "serialB": 123,
+      "ddsSequence": 2230000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1240000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584952,
+        0.11175570504584952,
+        0.11175570504584952,
+        0.11175570504584952
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 124,
+      "serialA": 124,
+      "serialB": 124,
+      "ddsSequence": 2240000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1250000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999999,
+        0.09999999999999999,
+        0.09999999999999999,
+        0.09999999999999999
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 125,
+      "serialA": 125,
+      "serialB": 125,
+      "ddsSequence": 2250000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1260000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415048,
+        0.08824429495415048,
+        0.08824429495415048,
+        0.08824429495415048
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 126,
+      "serialA": 126,
+      "serialB": 126,
+      "ddsSequence": 2260000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1270000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409698,
+        0.08097886967409698,
+        0.08097886967409698,
+        0.08097886967409698
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 127,
+      "serialA": 127,
+      "serialB": 127,
+      "ddsSequence": 2270000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1280000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409691,
+        0.08097886967409691,
+        0.08097886967409691,
+        0.08097886967409691
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 128,
+      "serialA": 128,
+      "serialB": 128,
+      "ddsSequence": 2280000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1290000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415055,
+        0.08824429495415055,
+        0.08824429495415055,
+        0.08824429495415055
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 129,
+      "serialA": 129,
+      "serialB": 129,
+      "ddsSequence": 2290000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1300000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.10000000000000009,
+        0.10000000000000009,
+        0.10000000000000009,
+        0.10000000000000009
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 130,
+      "serialA": 130,
+      "serialB": 130,
+      "ddsSequence": 2300000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1310000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584936,
+        0.11175570504584936,
+        0.11175570504584936,
+        0.11175570504584936
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 131,
+      "serialA": 131,
+      "serialB": 131,
+      "ddsSequence": 2310000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1320000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306,
+        0.11902113032590306
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 132,
+      "serialA": 132,
+      "serialB": 132,
+      "ddsSequence": 2320000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1330000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309,
+        0.11902113032590309
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 133,
+      "serialA": 133,
+      "serialB": 133,
+      "ddsSequence": 2330000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1340000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1117557050458494,
+        0.1117557050458494,
+        0.1117557050458494,
+        0.1117557050458494
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 134,
+      "serialA": 134,
+      "serialB": 134,
+      "ddsSequence": 2340000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1350000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999985,
+        0.09999999999999985,
+        0.09999999999999985,
+        0.09999999999999985
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 135,
+      "serialA": 135,
+      "serialB": 135,
+      "ddsSequence": 2350000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1360000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415059,
+        0.08824429495415059,
+        0.08824429495415059,
+        0.08824429495415059
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 136,
+      "serialA": 136,
+      "serialB": 136,
+      "ddsSequence": 2360000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1370000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693,
+        0.08097886967409693
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 137,
+      "serialA": 137,
+      "serialB": 137,
+      "ddsSequence": 2370000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1380000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409695,
+        0.08097886967409695,
+        0.08097886967409695,
+        0.08097886967409695
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 138,
+      "serialA": 138,
+      "serialB": 138,
+      "ddsSequence": 2380000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1390000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415066,
+        0.08824429495415066,
+        0.08824429495415066,
+        0.08824429495415066
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 139,
+      "serialA": 139,
+      "serialB": 139,
+      "ddsSequence": 2390000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1400000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.10000000000000023,
+        0.10000000000000023,
+        0.10000000000000023,
+        0.10000000000000023
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 140,
+      "serialA": 140,
+      "serialB": 140,
+      "ddsSequence": 2400000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1410000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584924,
+        0.11175570504584924,
+        0.11175570504584924,
+        0.11175570504584924
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 141,
+      "serialA": 141,
+      "serialB": 141,
+      "ddsSequence": 2410000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1420000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590302,
+        0.11902113032590302,
+        0.11902113032590302,
+        0.11902113032590302
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 142,
+      "serialA": 142,
+      "serialB": 142,
+      "ddsSequence": 2420000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1430000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311,
+        0.11902113032590311
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 143,
+      "serialA": 143,
+      "serialB": 143,
+      "ddsSequence": 2430000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1440000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.11175570504584953,
+        0.11175570504584953,
+        0.11175570504584953,
+        0.11175570504584953
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 144,
+      "serialA": 144,
+      "serialB": 144,
+      "ddsSequence": 2440000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1450000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.1,
+        0.1,
+        0.1,
+        0.1
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 145,
+      "serialA": 145,
+      "serialB": 145,
+      "ddsSequence": 2450000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1460000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415072,
+        0.08824429495415072,
+        0.08824429495415072,
+        0.08824429495415072
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 146,
+      "serialA": 146,
+      "serialB": 146,
+      "ddsSequence": 2460000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1470000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409698,
+        0.08097886967409698,
+        0.08097886967409698,
+        0.08097886967409698
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 147,
+      "serialA": 147,
+      "serialB": 147,
+      "ddsSequence": 2470000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1480000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08097886967409691,
+        0.08097886967409691,
+        0.08097886967409691,
+        0.08097886967409691
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 148,
+      "serialA": 148,
+      "serialB": 148,
+      "ddsSequence": 2480000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1490000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.08824429495415054,
+        0.08824429495415054,
+        0.08824429495415054,
+        0.08824429495415054
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 149,
+      "serialA": 149,
+      "serialB": 149,
+      "ddsSequence": 2490000,
+      "batchIndex": 0
+    },
+    {
+      "tUs": 1500000,
+      "command": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "feedback": [
+        0.09999999999999978,
+        0.09999999999999978,
+        0.09999999999999978,
+        0.09999999999999978
+      ],
+      "status": 0,
+      "errCode": 0,
+      "selfCheck": 0,
+      "timeout": 0,
+      "productSequence": 150,
+      "serialA": 150,
+      "serialB": 150,
+      "ddsSequence": 2500000,
+      "batchIndex": 0
+    }
+  ],
+  "expected": {
+    "steadyMeanError": 0.1,
+    "steadyStddev": 0.013912166872805028
+  },
+  "generation": {
+    "method": "closed-form signal models / explicit Euler first-order plant",
+    "generator": "generate_fixtures.py",
+    "generatorVersion": "1",
+    "tolerance": "See per-test assertions; values do not call the C++ analyzer.",
+    "coverage": [
+      "constant",
+      "zero-target",
+      "tail-window",
+      "non-dynamic-excitation-floor"
+    ]
+  }
+}

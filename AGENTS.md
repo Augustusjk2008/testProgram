@@ -24,9 +24,9 @@
 - 九份 `configs/mbddf_*.testcfg.json` 中，前七项声明 `single`，系统状态、电气健康、内存、定时器和 DI 还声明 `pc_periodic`；惯测与舵机连续实测只声明 `device_stream`。BIZ 提供 `single`、`pc_periodic` 和 `device_stream` 三种通用运行语义，配置能力以各 JSON 的 `reportFields.supportedRunModes` 为准；同一配置不得同时声明 `pc_periodic` 与 `device_stream`，字段缺失时只安全回退到 `single`，应用控制器拒绝启动未声明的模式。
 - 电气健康以设备 `status`/`err_code` 判定；SPI Flash 写入固定隔离测试区并保留写入结果；`TIMER_JITTER` 在结束阶段发送 STOP 清理。
 - `DiStimulusController` 通过 HAL 批量数字输出维护 16 路逻辑掩码、revision 和安全复位；PXI-6259 配置中的物理 safe state 与 DI descriptor 的 inactive level 保持一致。
-- 应用层位于 `src/app/`，共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support` 和 `hwtest_web_support`，产出 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web`。四个入口统一使用 `TestApplicationController` 和 MB_DDF 注册表；启动选项动态扫描并校验 `configs/*.testcfg.json`。`ContinuousDataRecorder` 在显式启用的连续任务中按固定元数据和 descriptor 测量列增量保存 UTF-8-SIG/TSV TXT，`single` 不保存。
-- `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置选择、运行控制、两种连续模式、算法运行参数编辑、完整 descriptor 测量列保存、动态测量字段和 16 路 DI 刺激/回读。运行期覆盖只作用于本次启动，浏览器按 `configId + runParameterSchemaVersion` 保存编辑值；保存目录只由后端配置，曲线选择不改变保存列。
-- 舵机连续实测由 DUT 以 1 ms 周期经 DDS 连接用户独立启停的 `MB_DDF_v2_HelmControl`；它与 `HELM_BOARD_TEST 07/02` 不建立生命周期、互斥、忙状态或进程控制绑定。DUT/Web 不设置舵角业务范围，舵控程序保留内部限幅；当前保存原始样本，不计算性能或伯德图。
+- 应用层位于 `src/app/`，共享 `hwtest_app_core`、`hwtest_tui_support`、`hwtest_gui_support` 和 `hwtest_web_support`，产出 `hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与 `hwtest_web`。四个入口统一使用 `TestApplicationController` 和 MB_DDF 注册表；启动选项动态扫描并校验 `configs/*.testcfg.json`。`ContinuousDataRecorder` 在显式启用的连续任务中按固定元数据和 descriptor 测量列增量保存 UTF-8-SIG/TSV TXT，`single` 不保存；它与后处理分析输入、结果 JSON 和浏览器曲线投影保持独立。
+- `hwtest_web` 提供回环 WebSocket v1 服务；`front/` 提供独立的 React/Vite 遥测控制台，支持配置选择、运行控制、两种连续模式、算法运行参数编辑、完整 descriptor 测量列保存、动态测量字段和 16 路 DI 刺激/回读。运行期覆盖只作用于本次启动，浏览器按 `configId + runParameterSchemaVersion` 保存编辑值；保存目录只由后端配置，曲线选择不改变保存列。`mbddf.helm_stream` 还投影 `postRunAnalysis` capability、`snapshot.analysis` 小型摘要和只读 `analysisResult` 按通道结果；浏览器性能页只消费后端投影，不以 50,000 点实时环形缓存计算性能。
+- 舵机连续实测由 DUT 以 1 ms 周期经 DDS 连接用户独立启停的 `MB_DDF_v2_HelmControl`；它与 `HELM_BOARD_TEST 07/02` 不建立生命周期、互斥、忙状态或进程控制绑定。DUT/Web 不设置舵角业务范围，舵控程序保留内部限幅。算法层提供正弦、方波、三角波、恒值和连续对数扫频五种后处理及扫频伯德图；应用层已接通“STOP 尾样本封存 → `queued` 起写门禁 → 硬件收尾栅栏 → 后台分析/持久化/取消”，并通过 capability、DTO、WebSocket `analysisResult` 和性能页投影结果。性能结果是独立 sidecar，不得改变采集 `Pass/Fail`、BIZ `TestResult`、采集错误码或硬件 STOP 语义。TUI 和 Qt GUI 本轮不增加性能 UI。
 - `tests/` 按 HAL、日志、BIZ、算法和应用组织 GoogleTest 目标；NI Fake Adapter 使用独立 CTest 入口；`front/` 的 Vitest 独立运行。测试清单与统计以测试规范为准。
 - `dut/docs/design/product_protocol_csv/` 保存当前 MB_DDF 协议 CSV 快照；`hwtest.ps1` 默认使用该目录，显式传入 `MB_DDF_PROTOCOL_CSV_DIR` 时可改用另一受控资产目录。
 
@@ -101,6 +101,7 @@ ctest --test-dir build_vs -C Release --output-on-failure
 
 - 直接运行 CTest 时显式设置 `MB_DDF_PROTOCOL_CSV_DIR`，核对其他受控来源时替换该目录；`GTEST_SKIP` 记为待验证证据。
 - 当前 NI 证据等级为 Fake NI-DAQmx 自动化。PXI-6259 真机验收记录共地、电平、隔离、接线映射、NI SDK 版本、MAX 设备身份、采样/触发参数、长时运行和安全收尾结果。
+- 舵机性能的算法、协议和浏览器自动化证据不构成 DDS、真实舵机或目标板性能验收；五种波形、正反扫频、提前 STOP、四通道差异和独立参考量仍须在隔离、明确授权的台架记录输入、结果 JSON、原始 TXT（对照轮次）、前端截图与安全收尾结果。
 - 修改 BIZ 时运行 BIZ 契约与架构测试；修改算法层时运行 `tests/algorithm/`；产品模拟与集成测试沿 HAL 路径执行。
 - 说明性文档改动至少运行链接/术语检查和 `git diff --check`。
 - 宿主工程与 DUT 使用独立构建树和验证入口。进入 `dut/` 后按局部 `AGENTS.md` 与 `README.md` 使用 `build.ps1`、`debug.ps1`、`tests/test-dds-only.ps1`、`tests/test-all.ps1` 和 `tests/test-deploy.ps1`。

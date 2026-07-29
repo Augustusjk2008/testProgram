@@ -26,6 +26,9 @@ QJsonObject makeHello();
 QJsonObject makeReply(const QString& id,
                       const ActionResult& result,
                       const QJsonObject& data = {});
+QJsonObject makeAnalysisResultReply(const QString& id,
+                                    const ActionResult& result,
+                                    const QJsonObject& data = {});
 bool digitalStimulusSupportedByVersionOne(const DigitalStimulusSnapshot& stimulus);
 QJsonObject digitalStimulusObject(const DigitalStimulusSnapshot& stimulus);
 QJsonObject makeSnapshot(quint64 sequence,
@@ -34,6 +37,7 @@ QJsonObject makeSnapshot(quint64 sequence,
 // by the WebSocket v1 JSON number contract.
 QJsonObject makeSample(quint64 sequence,
                        const ApplicationSample& sample);
+QJsonObject analysisResultObject(const AnalysisChannelProjection& projection);
 QString compactJson(const QJsonObject& object);
 
 } // namespace hwtest::app::web

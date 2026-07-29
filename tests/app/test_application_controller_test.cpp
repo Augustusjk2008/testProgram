@@ -147,6 +147,39 @@ bool setDataStorageDirectory(const QString& halPath,
     return written;
 }
 
+bool setAnalysisConfiguration(const QString& sourcePath,
+                              const QString& outputPath,
+                              const QJsonObject& analysis,
+                              QString* error)
+{
+    QFile source(sourcePath);
+    if (!source.open(QIODevice::ReadOnly)) {
+        if (error != nullptr) *error = source.errorString();
+        return false;
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(source.readAll());
+    source.close();
+    if (!document.isObject()) {
+        if (error != nullptr) *error = QStringLiteral("HAL fixture is not a JSON object");
+        return false;
+    }
+
+    QJsonObject root = document.object();
+    QJsonObject dataStorage = root.value(QStringLiteral("dataStorage")).toObject();
+    dataStorage.insert(QStringLiteral("analysis"), analysis);
+    root.insert(QStringLiteral("dataStorage"), dataStorage);
+
+    QFile output(outputPath);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (error != nullptr) *error = output.errorString();
+        return false;
+    }
+    const QByteArray json = QJsonDocument(root).toJson();
+    const bool written = output.write(json) == json.size();
+    if (!written && error != nullptr) *error = output.errorString();
+    return written;
+}
+
 bool writeTestConfigWithSupportedRunModes(const QString& sourcePath,
                                           const QString& outputPath,
                                           const QStringList& modes,
@@ -189,6 +222,41 @@ bool writeTestConfigWithSupportedRunModes(const QString& sourcePath,
     return written;
 }
 
+QVariantMap helmOneSampleFeedback(quint64 timestampUs,
+                                  quint16 serialA,
+                                  quint16 serialB,
+                                  double command,
+                                  double feedback)
+{
+    QVariantMap values{
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("err_code"), 0},
+        {QStringLiteral("sample_count"), 1},
+        {QStringLiteral("first_timestamp_us_low"),
+         static_cast<quint32>(timestampUs & 0xFFFFFFFFULL)},
+        {QStringLiteral("first_timestamp_us_high"),
+         static_cast<quint32>(timestampUs >> 32)},
+        {QStringLiteral("sample[0].delta_us"), 0},
+        {QStringLiteral("sample[0].serial_b"), serialB},
+        {QStringLiteral("sample[0].version"), 0x4000},
+        {QStringLiteral("sample[0].self_check"), 0},
+        {QStringLiteral("sample[0].self_check_1"), 0},
+        {QStringLiteral("sample[0].self_check_2"), 0},
+        {QStringLiteral("sample[0].self_check_3"), 0},
+        {QStringLiteral("sample[0].self_check_4"), 0},
+        {QStringLiteral("sample[0].self_check_combined"), 0},
+        {QStringLiteral("sample[0].timeout"), 0},
+        {QStringLiteral("sample[0].serial_a"), serialA},
+    };
+    for (int channel = 0; channel < 4; ++channel) {
+        values.insert(QStringLiteral("sample[0].fdb[%1]").arg(channel),
+                      feedback + channel * 0.01);
+        values.insert(QStringLiteral("sample[0].ins[%1]").arg(channel),
+                      command + channel * 0.01);
+    }
+    return values;
+}
+
 TEST(TestApplicationControllerTest, RejectsPreparationBeforeConfigurationsAreLoaded)
 {
     TestApplicationController controller;
@@ -198,6 +266,47 @@ TEST(TestApplicationControllerTest, RejectsPreparationBeforeConfigurationsAreLoa
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.code, QStringLiteral("invalid_state"));
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+}
+
+TEST(TestApplicationControllerTest, RejectsOutOfRangePostRunAnalysisResources)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString halConfigPath = directory.filePath(QStringLiteral("hal.json"));
+    QString error;
+    ASSERT_TRUE(setAnalysisConfiguration(
+        QStringLiteral(HWTEST_APP_HAL_CONFIG),
+        halConfigPath,
+        QJsonObject{{QStringLiteral("maxProjectedPoints"), 257}},
+        &error)) << error.toStdString();
+
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG), halConfigPath);
+
+    EXPECT_FALSE(loaded.ok);
+    EXPECT_EQ(loaded.code, QStringLiteral("analysis_config"));
+}
+
+TEST(TestApplicationControllerTest, RejectsNonNumericPostRunAnalysisResources)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString halConfigPath = directory.filePath(QStringLiteral("hal.json"));
+    QString error;
+    ASSERT_TRUE(setAnalysisConfiguration(
+        QStringLiteral(HWTEST_APP_HAL_CONFIG),
+        halConfigPath,
+        QJsonObject{{QStringLiteral("maxProjectedPoints"),
+                     QStringLiteral("256")}},
+        &error)) << error.toStdString();
+
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG), halConfigPath);
+
+    EXPECT_FALSE(loaded.ok);
+    EXPECT_EQ(loaded.code, QStringLiteral("analysis_config"));
 }
 
 TEST(TestApplicationControllerTest, DefaultsMissingRunModeCapabilitiesToSingleOnly)
@@ -683,11 +792,18 @@ TEST(TestApplicationControllerTest, ProjectsUnboundedHelmRuntimeParameters)
         QStringLiteral(HWTEST_APP_HAL_CONFIG));
     ASSERT_TRUE(loaded.ok) << loaded.message.toStdString();
 
-    const TestDescriptor& descriptor = controller.snapshot().descriptor;
+    const ApplicationSnapshot loadedSnapshot = controller.snapshot();
+    const TestDescriptor& descriptor = loadedSnapshot.descriptor;
     EXPECT_EQ(descriptor.algorithmId, QStringLiteral("mbddf.helm_stream"));
     EXPECT_EQ(descriptor.supportedRunModes,
               QVector<QString>{QStringLiteral("device_stream")});
     EXPECT_EQ(descriptor.runParameterSchemaVersion, QStringLiteral("1"));
+    EXPECT_TRUE(descriptor.postRunAnalysis.supported);
+    EXPECT_EQ(descriptor.postRunAnalysis.analyzerId,
+              QStringLiteral("mbddf.helm.performance"));
+    EXPECT_EQ(descriptor.postRunAnalysis.schemaVersion, QStringLiteral("1"));
+    EXPECT_TRUE(loadedSnapshot.analysis.supported);
+    EXPECT_EQ(loadedSnapshot.analysis.state, QStringLiteral("none"));
     ASSERT_EQ(descriptor.runParameters.size(), 8);
     const auto amplitude = std::find_if(
         descriptor.runParameters.cbegin(), descriptor.runParameters.cend(),
@@ -709,6 +825,282 @@ TEST(TestApplicationControllerTest, ProjectsUnboundedHelmRuntimeParameters)
     EXPECT_DOUBLE_EQ(descriptor.runParameterDefaults.value(
                          QStringLiteral("sweep_duration_s")).toDouble(),
                      25.0);
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, HelmAnalysisStorageFailurePreventsBizStart)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QTemporaryDir directory;
+    QString error;
+    QString halConfigPath;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+    const QString blockedPath = directory.filePath(QStringLiteral("not-a-directory"));
+    QFile blocked(blockedPath);
+    ASSERT_TRUE(blocked.open(QIODevice::WriteOnly));
+    ASSERT_EQ(blocked.write("x"), 1);
+    blocked.close();
+    ASSERT_TRUE(setDataStorageDirectory(halConfigPath, blockedPath, &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_HELM_STREAM_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    TestRunOptions options;
+    options.mode = QStringLiteral("device_stream");
+
+    const ActionResult started = controller.start(options);
+
+    EXPECT_FALSE(started.ok);
+    EXPECT_EQ(started.code, QStringLiteral("analysis_storage"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
+    if (started.ok) {
+        (void)controller.stop(5000);
+    }
+    (void)controller.shutdown();
+}
+
+TEST(TestApplicationControllerTest, HelmSuccessfulStartCreatesIndependentAnalysisIdentity)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QTemporaryDir directory;
+    QString error;
+    QString halConfigPath;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_HELM_STREAM_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    TestRunOptions options;
+    options.mode = QStringLiteral("device_stream");
+    ASSERT_TRUE(controller.start(options).ok);
+
+    const ApplicationSnapshot started = controller.snapshot();
+    EXPECT_FALSE(started.taskId.isEmpty());
+    EXPECT_EQ(started.analysis.taskId, started.taskId);
+    EXPECT_EQ(started.analysis.analysisGeneration, 1u);
+    EXPECT_EQ(started.analysis.state, QStringLiteral("capturing"));
+    EXPECT_EQ(started.analysis.progress, 0);
+
+    (void)controller.stop(5000);
+    (void)controller.shutdown();
+}
+
+TEST(TestApplicationControllerTest, HelmStopCompletesSidecarWithoutChangingRunVerdict)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QTemporaryDir directory;
+    QString error;
+    QString halConfigPath;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_HELM_STREAM_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    TestRunOptions options;
+    options.mode = QStringLiteral("device_stream");
+    ASSERT_TRUE(controller.start(options).ok);
+    const QString verdictBeforeStop = controller.snapshot().verdict;
+    const QString errorBeforeStop = controller.snapshot().errorCode;
+
+    ASSERT_TRUE(controller.stop(5000).ok);
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    const QMetaObject::Connection changed = QObject::connect(
+        &controller,
+        &TestApplicationController::snapshotChanged,
+        &loop,
+        [&](const ApplicationSnapshot& snapshot) {
+            const QString state = snapshot.analysis.state;
+            if (state == QStringLiteral("completed") ||
+                state == QStringLiteral("partial") ||
+                state == QStringLiteral("unavailable") ||
+                state == QStringLiteral("failed") ||
+                state == QStringLiteral("cancelled")) {
+                loop.quit();
+            }
+        });
+    timeout.start(5000);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    loop.exec();
+    QObject::disconnect(changed);
+
+    const ApplicationSnapshot completed = controller.snapshot();
+    EXPECT_NE(completed.analysis.state, QStringLiteral("capturing"));
+    EXPECT_NE(completed.analysis.state, QStringLiteral("queued"));
+    EXPECT_EQ(completed.phase, QStringLiteral("stopped"));
+    EXPECT_EQ(completed.verdict, verdictBeforeStop);
+    EXPECT_EQ(completed.errorCode, errorBeforeStop);
+    (void)controller.shutdown();
+}
+
+TEST(TestApplicationControllerTest, HelmSamplesFlowThroughCaptureAnalysisAndQuery)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+    test::MbddfUdpTestPeer peer;
+    QTemporaryDir directory;
+    QString error;
+    QString halConfigPath;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_HELM_STREAM_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    TestRunOptions options;
+    options.mode = QStringLiteral("device_stream");
+    options.saveData = false;
+    ASSERT_TRUE(controller.start(options).ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(
+        QStringLiteral("helm_start_response"),
+        {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}},
+        &error)) << error.toStdString();
+
+    for (int index = 0; index < 12; ++index) {
+        ASSERT_TRUE(peer.sendToLastRequester(
+            QStringLiteral("helm_feedback_response"),
+            static_cast<quint16>(0x8000 + index),
+            helmOneSampleFeedback(static_cast<quint64>(index) * 100000ULL,
+                                  static_cast<quint16>(100 + index),
+                                  static_cast<quint16>(200 + index),
+                                  1.8,
+                                  1.7),
+            &error)) << error.toStdString();
+    }
+    QEventLoop sampleLoop;
+    QTimer sampleGuard;
+    sampleGuard.setSingleShot(true);
+    QObject::connect(&sampleGuard, &QTimer::timeout,
+                     &sampleLoop, &QEventLoop::quit);
+    const QMetaObject::Connection samples = QObject::connect(
+        &controller,
+        &TestApplicationController::sampleReceived,
+        &sampleLoop,
+        [&](const ApplicationSample&) {
+            if (controller.snapshot().sampleCount >= 12) sampleLoop.quit();
+        });
+    sampleGuard.start(5000);
+    sampleLoop.exec();
+    QObject::disconnect(samples);
+    ASSERT_EQ(controller.snapshot().sampleCount, 12u);
+
+    QEventLoop stopLoop;
+    QTimer stopGuard;
+    stopGuard.setSingleShot(true);
+    ActionResult stopResult{false, QStringLiteral("not_completed"), {}};
+    QObject::connect(&stopGuard, &QTimer::timeout, &stopLoop, &QEventLoop::quit);
+    const QMetaObject::Connection stopped = QObject::connect(
+        &controller,
+        &TestApplicationController::stopCompleted,
+        &stopLoop,
+        [&](const ActionResult& result) {
+            stopResult = result;
+            stopLoop.quit();
+        });
+    ASSERT_TRUE(controller.stopAsync(5000).ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(
+        QStringLiteral("helm_stop_response"),
+        {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}},
+        &error)) << error.toStdString();
+    stopGuard.start(5000);
+    stopLoop.exec();
+    QObject::disconnect(stopped);
+    ASSERT_TRUE(stopResult.ok) << stopResult.message.toStdString();
+
+    QEventLoop analysisLoop;
+    QTimer analysisGuard;
+    analysisGuard.setSingleShot(true);
+    QObject::connect(&analysisGuard, &QTimer::timeout,
+                     &analysisLoop, &QEventLoop::quit);
+    const QMetaObject::Connection analyzed = QObject::connect(
+        &controller,
+        &TestApplicationController::snapshotChanged,
+        &analysisLoop,
+        [&](const ApplicationSnapshot& snapshot) {
+            if (snapshot.analysis.state == QStringLiteral("completed") ||
+                snapshot.analysis.state == QStringLiteral("partial") ||
+                snapshot.analysis.state == QStringLiteral("unavailable") ||
+                snapshot.analysis.state == QStringLiteral("failed")) {
+                analysisLoop.quit();
+            }
+        });
+    if (controller.snapshot().analysis.state == QStringLiteral("capturing") ||
+        controller.snapshot().analysis.state == QStringLiteral("queued") ||
+        controller.snapshot().analysis.state == QStringLiteral("validating") ||
+        controller.snapshot().analysis.state == QStringLiteral("preprocessing") ||
+        controller.snapshot().analysis.state == QStringLiteral("calculating") ||
+        controller.snapshot().analysis.state == QStringLiteral("persisting")) {
+        analysisGuard.start(10000);
+        analysisLoop.exec();
+    }
+    QObject::disconnect(analyzed);
+
+    const ApplicationSnapshot snapshot = controller.snapshot();
+    ASSERT_TRUE(snapshot.analysis.state == QStringLiteral("completed") ||
+                snapshot.analysis.state == QStringLiteral("partial"))
+        << snapshot.analysis.reasonCode.toStdString() << ": "
+        << snapshot.analysis.message.toStdString();
+    EXPECT_FALSE(snapshot.dataSaveEnabled);
+    EXPECT_TRUE(snapshot.dataFilePath.isEmpty());
+    ASSERT_TRUE(QFileInfo::exists(snapshot.analysis.resultFilePath));
+    AnalysisChannelProjection channel;
+    const ActionResult queried = controller.analysisResult(
+        AnalysisResultQuery{snapshot.analysis.taskId,
+                            snapshot.analysis.analysisGeneration,
+                            0},
+        &channel);
+    ASSERT_TRUE(queried.ok) << queried.message.toStdString();
+    EXPECT_TRUE(channel.channelSummary.status == QStringLiteral("completed") ||
+                channel.channelSummary.status == QStringLiteral("partial"));
+    EXPECT_FALSE(channel.channelSummary.commonMetrics.isEmpty());
+    EXPECT_TRUE(channel.frequencyHz.isEmpty());
     EXPECT_TRUE(controller.shutdown().ok);
 }
 

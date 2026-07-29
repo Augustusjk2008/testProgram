@@ -6,6 +6,8 @@
 #include <QJsonValue>
 #include <QSet>
 
+#include <cmath>
+
 namespace hwtest::app::web {
 
 namespace {
@@ -15,6 +17,76 @@ constexpr qint64 kMaxJsonSafeInteger = 9007199254740991LL;
 bool isJsonSafeNonNegativeInteger(qint64 value)
 {
     return value >= 0 && value <= kMaxJsonSafeInteger;
+}
+
+QJsonObject analysisMetricObject(const AnalysisMetric& metric)
+{
+    QJsonValue value = QJsonValue::Null;
+    if (metric.hasValue && std::isfinite(metric.value)) {
+        value = metric.value;
+    }
+    return QJsonObject{
+        {QStringLiteral("key"), metric.key},
+        {QStringLiteral("label"), metric.label},
+        {QStringLiteral("unit"), metric.unit},
+        {QStringLiteral("status"), metric.status},
+        {QStringLiteral("value"), value},
+        {QStringLiteral("detail"), metric.detail},
+    };
+}
+
+QJsonObject analysisChannelSummaryObject(const AnalysisChannelSummary& summary)
+{
+    QJsonArray warnings;
+    for (const QString& warning : summary.warnings) warnings.push_back(warning);
+    QJsonArray commonMetrics;
+    for (const AnalysisMetric& metric : summary.commonMetrics) {
+        commonMetrics.push_back(analysisMetricObject(metric));
+    }
+    QJsonArray waveformMetrics;
+    for (const AnalysisMetric& metric : summary.waveformMetrics) {
+        waveformMetrics.push_back(analysisMetricObject(metric));
+    }
+    return QJsonObject{
+        {QStringLiteral("channel"), summary.channel},
+        {QStringLiteral("enabled"), summary.enabled},
+        {QStringLiteral("status"), summary.status},
+        {QStringLiteral("warnings"), warnings},
+        {QStringLiteral("omittedWarningCount"), summary.omittedWarningCount},
+        {QStringLiteral("commonMetrics"), commonMetrics},
+        {QStringLiteral("waveformMetrics"), waveformMetrics},
+        {QStringLiteral("bodeAvailable"), summary.bodeAvailable},
+        {QStringLiteral("bodePointCount"), summary.bodePointCount},
+        {QStringLiteral("reasonCode"), summary.reasonCode},
+        {QStringLiteral("message"), summary.message},
+    };
+}
+
+QJsonObject analysisSnapshotObject(const PostRunAnalysisSnapshot& analysis)
+{
+    QJsonArray channelSummaries;
+    for (const AnalysisChannelSummary& summary : analysis.channelSummaries) {
+        channelSummaries.push_back(analysisChannelSummaryObject(summary));
+    }
+    return QJsonObject{
+        {QStringLiteral("supported"), analysis.supported},
+        {QStringLiteral("analyzerId"), analysis.analyzerId},
+        {QStringLiteral("schemaVersion"), analysis.schemaVersion},
+        {QStringLiteral("taskId"), analysis.taskId},
+        {QStringLiteral("analysisGeneration"),
+         static_cast<double>(analysis.analysisGeneration)},
+        {QStringLiteral("state"), analysis.state},
+        {QStringLiteral("progress"), analysis.progress},
+        {QStringLiteral("stage"), analysis.stage},
+        {QStringLiteral("message"), analysis.message},
+        {QStringLiteral("reasonCode"), analysis.reasonCode},
+        {QStringLiteral("resultFilePath"), analysis.resultFilePath},
+        {QStringLiteral("diagnosticInputFilePath"),
+         analysis.diagnosticInputFilePath},
+        {QStringLiteral("sourceSummary"),
+         QJsonObject::fromVariantMap(analysis.sourceSummary)},
+        {QStringLiteral("channelSummaries"), channelSummaries},
+    };
 }
 
 ProtocolParseResult failure(const QString& code, const QString& message)
@@ -32,6 +104,7 @@ bool isKnownAction(const QString& action)
         QStringLiteral("testConfigs"),
         QStringLiteral("selectTest"),
         QStringLiteral("snapshot"),
+        QStringLiteral("analysisResult"),
         QStringLiteral("controls"),
         QStringLiteral("ports"),
         QStringLiteral("selectControl"),
@@ -103,6 +176,11 @@ QJsonObject descriptorObject(const TestDescriptor& descriptor)
         }
         runParameters.push_back(projected);
     }
+    const QJsonObject postRunAnalysis{
+        {QStringLiteral("supported"), descriptor.postRunAnalysis.supported},
+        {QStringLiteral("analyzerId"), descriptor.postRunAnalysis.analyzerId},
+        {QStringLiteral("schemaVersion"), descriptor.postRunAnalysis.schemaVersion},
+    };
     return QJsonObject{
         {QStringLiteral("configId"), descriptor.configId},
         {QStringLiteral("productModel"), descriptor.productModel},
@@ -120,6 +198,7 @@ QJsonObject descriptorObject(const TestDescriptor& descriptor)
         {QStringLiteral("runParameters"), runParameters},
         {QStringLiteral("runParameterDefaults"),
          QJsonObject::fromVariantMap(descriptor.runParameterDefaults)},
+        {QStringLiteral("postRunAnalysis"), postRunAnalysis},
     };
 }
 
@@ -161,6 +240,8 @@ QJsonObject snapshotObject(const ApplicationSnapshot& snapshot)
                   descriptorObject(snapshot.descriptor));
     object.insert(QStringLiteral("digitalStimulus"),
                   digitalStimulusObject(snapshot.digitalStimulus));
+    object.insert(QStringLiteral("analysis"),
+                  analysisSnapshotObject(snapshot.analysis));
     return object;
 }
 
@@ -338,9 +419,29 @@ QJsonObject makeReply(const QString& id,
     };
 }
 
+QJsonObject makeAnalysisResultReply(const QString& id,
+                                    const ActionResult& result,
+                                    const QJsonObject& data)
+{
+    QJsonObject reply = makeReply(id, result, data);
+    if (!result.ok ||
+        QJsonDocument(reply).toJson(QJsonDocument::Compact).size() <= 16384) {
+        return reply;
+    }
+    return makeReply(
+        id,
+        ActionResult{false,
+                     QStringLiteral("analysis_projection_too_large"),
+                     QStringLiteral("The complete compact analysis reply exceeds 16384 bytes")});
+}
+
 QJsonObject makeSnapshot(quint64 sequence,
                          const ApplicationSnapshot& snapshot)
 {
+    if (snapshot.analysis.analysisGeneration >
+        static_cast<quint64>(kMaxJsonSafeInteger)) {
+        return {};
+    }
     return QJsonObject{
         {QStringLiteral("v"), 1},
         {QStringLiteral("type"), QStringLiteral("snapshot")},
@@ -375,6 +476,55 @@ QJsonObject makeSample(quint64 sequence,
         {QStringLiteral("seq"), static_cast<double>(sequence)},
         {QStringLiteral("sample"), sampleObject},
     };
+}
+
+QJsonObject analysisResultObject(const AnalysisChannelProjection& projection)
+{
+    const int count = projection.frequencyHz.size();
+    if (count > 256 || projection.channelSummary.bodePointCount != count ||
+        count != projection.magnitudeDb.size() ||
+        count != projection.phaseDeg.size() ||
+        count != projection.pointStatus.size()) {
+        return {};
+    }
+    QJsonArray frequencyHz;
+    QJsonArray magnitudeDb;
+    QJsonArray phaseDeg;
+    QJsonArray pointStatus;
+    for (int index = 0; index < count; ++index) {
+        const double frequency = projection.frequencyHz.at(index);
+        if (!std::isfinite(frequency) || frequency <= 0.0 ||
+            projection.pointStatus.at(index).isEmpty()) {
+            return {};
+        }
+        frequencyHz.push_back(frequency);
+        const AnalysisNullableNumber magnitude = projection.magnitudeDb.at(index);
+        const AnalysisNullableNumber phase = projection.phaseDeg.at(index);
+        if ((magnitude.hasValue && !std::isfinite(magnitude.value)) ||
+            (phase.hasValue && !std::isfinite(phase.value))) {
+            return {};
+        }
+        magnitudeDb.push_back(magnitude.hasValue
+                                  ? QJsonValue(magnitude.value)
+                                  : QJsonValue(QJsonValue::Null));
+        phaseDeg.push_back(phase.hasValue
+                              ? QJsonValue(phase.value)
+                              : QJsonValue(QJsonValue::Null));
+        pointStatus.push_back(projection.pointStatus.at(index));
+    }
+    const QJsonObject result{
+        {QStringLiteral("channelSummary"),
+         analysisChannelSummaryObject(projection.channelSummary)},
+        {QStringLiteral("bode"),
+         QJsonObject{{QStringLiteral("frequencyHz"), frequencyHz},
+                     {QStringLiteral("magnitudeDb"), magnitudeDb},
+                     {QStringLiteral("phaseDeg"), phaseDeg},
+                     {QStringLiteral("pointStatus"), pointStatus}}},
+    };
+    if (QJsonDocument(result).toJson(QJsonDocument::Compact).size() > 16384) {
+        return {};
+    }
+    return result;
 }
 
 QString compactJson(const QJsonObject& object)

@@ -42,6 +42,86 @@ export interface TestRunParameterDescriptor {
   visibleWhen?: TestRunParameterVisibility
 }
 
+export interface PostRunAnalysisCapability {
+  supported: boolean
+  analyzerId: string
+  schemaVersion: string
+}
+
+export type AnalysisState =
+  | 'none'
+  | 'capturing'
+  | 'queued'
+  | 'validating'
+  | 'preprocessing'
+  | 'calculating'
+  | 'persisting'
+  | 'completed'
+  | 'partial'
+  | 'unavailable'
+  | 'failed'
+  | 'cancelled'
+
+export type AnalysisChannelStatus =
+  | 'not_applicable'
+  | 'completed'
+  | 'partial'
+  | 'unavailable'
+
+export type AnalysisChannel = 0 | 1 | 2 | 3
+
+export interface AnalysisIdentity {
+  taskId: string
+  analysisGeneration: number
+}
+
+export interface AnalysisMetric {
+  key: string
+  label: string
+  unit: string
+  status: string
+  value: number | null
+  detail: string
+}
+
+export interface AnalysisChannelSummary {
+  channel: AnalysisChannel
+  enabled: boolean
+  status: AnalysisChannelStatus
+  warnings: string[]
+  omittedWarningCount?: number
+  commonMetrics: AnalysisMetric[]
+  waveformMetrics: AnalysisMetric[]
+  bodeAvailable: boolean
+  bodePointCount: number
+  reasonCode: string
+  message: string
+}
+
+export interface AnalysisSnapshot extends PostRunAnalysisCapability, AnalysisIdentity {
+  state: AnalysisState
+  progress: number
+  stage: string
+  message: string
+  reasonCode: string
+  resultFilePath: string
+  diagnosticInputFilePath: string
+  sourceSummary: Record<string, unknown>
+  channelSummaries: AnalysisChannelSummary[]
+}
+
+export interface BodeProjection {
+  frequencyHz: number[]
+  magnitudeDb: Array<number | null>
+  phaseDeg: Array<number | null>
+  pointStatus: string[]
+}
+
+export interface AnalysisResult {
+  channelSummary: AnalysisChannelSummary
+  bode: BodeProjection
+}
+
 export interface TestDescriptor {
   configId: string
   productModel: string
@@ -57,6 +137,7 @@ export interface TestDescriptor {
   runParameterSchemaVersion: string
   runParameters: TestRunParameterDescriptor[]
   runParameterDefaults: Record<string, unknown>
+  postRunAnalysis: PostRunAnalysisCapability
 }
 
 export interface TestConfigOption {
@@ -105,6 +186,7 @@ export type ActionName =
   | 'resume'
   | 'setDigitalStimulus'
   | 'resetDigitalStimulus'
+  | 'analysisResult'
   | 'stop'
   | 'disconnect'
   | 'quit'
@@ -138,6 +220,7 @@ export interface ApplicationSnapshot {
   dataSaveError: string
   descriptor: TestDescriptor
   digitalStimulus: DigitalStimulusSnapshot
+  analysis: AnalysisSnapshot
 }
 
 export interface ApplicationSample {
@@ -174,6 +257,7 @@ export interface SampleMessage {
 
 export type ReplyData = Record<string, unknown> & {
   digitalStimulus?: DigitalStimulusSnapshot
+  analysisResult?: AnalysisResult
 }
 
 export interface ReplyMessage {
@@ -216,6 +300,28 @@ export const EMPTY_TEST_DESCRIPTOR: TestDescriptor = {
   runParameterSchemaVersion: '',
   runParameters: [],
   runParameterDefaults: {},
+  postRunAnalysis: {
+    supported: false,
+    analyzerId: '',
+    schemaVersion: '',
+  },
+}
+
+export const EMPTY_ANALYSIS: AnalysisSnapshot = {
+  supported: false,
+  analyzerId: '',
+  schemaVersion: '',
+  taskId: '',
+  analysisGeneration: 0,
+  state: 'none',
+  progress: 0,
+  stage: '',
+  message: '',
+  reasonCode: '',
+  resultFilePath: '',
+  diagnosticInputFilePath: '',
+  sourceSummary: {},
+  channelSummaries: [],
 }
 
 export const EMPTY_DIGITAL_STIMULUS: DigitalStimulusSnapshot = {
@@ -259,4 +365,5 @@ export const EMPTY_SNAPSHOT: ApplicationSnapshot = {
   dataSaveError: '',
   descriptor: EMPTY_TEST_DESCRIPTOR,
   digitalStimulus: EMPTY_DIGITAL_STIMULUS,
+  analysis: EMPTY_ANALYSIS,
 }

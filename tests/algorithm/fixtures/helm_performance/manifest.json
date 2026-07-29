@@ -1,0 +1,301 @@
+{
+  "fixtureSchemaVersion": "1",
+  "analyzerVersion": "mbddf.helm.performance/1;cyclesPerEstimate=4;maxDelayMs=100;frequencyPointCount=96;candidateSamples=2048;candidateSampling=time_stratified;minCommandCorrelation=0.95;absoluteExcitationFloor=1e-6;relativeExcitationRatio=0.01",
+  "generator": {
+    "path": "generate_fixtures.py",
+    "version": "1",
+    "sha256": "d5e57fc00eac9a079afa37b7c97c6abb7b3c19f513e756df60257d19cac5e6ac",
+    "method": "independent standard-library closed-form and explicit-Euler models"
+  },
+  "files": [
+    {
+      "name": "constant",
+      "sha256": "5dea4ccf9d4953fde3ba0ef58b313d5721a12d57f4bfd4cd3fb5f7b6e44fbd64",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 3,
+        "freq": 1.0,
+        "ampl": 5.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "constant",
+        "zero-target",
+        "tail-window",
+        "non-dynamic-excitation-floor"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "sine",
+      "sha256": "4499df3ee8757670dd24a0ec781346c318ed1844137f018dce10ff194db3c9ad",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 0,
+        "freq": 2.0,
+        "ampl": 2.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "sine",
+        "nonuniform-dds-time",
+        "positive-phase-lag",
+        "three-stable-cycles"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "square",
+      "sha256": "a3f8fe8fd9d6af321e83520fbb33b4fb76be5affbb18bc8a2f12d0fa548e944f",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 1,
+        "freq": 1.0,
+        "ampl": 1.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "square",
+        "rising-edge",
+        "falling-edge",
+        "linear-crossing",
+        "complete-platforms"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "triangle",
+      "sha256": "cb1535d3768d135a2eccdfa77ca677f55bff0daf96c18d57486a8e0f638d2ed6",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 2,
+        "freq": 1.0,
+        "ampl": 1.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "triangle",
+        "turning-dead-zone",
+        "directional-tracking",
+        "nonuniform-direction"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "sweep_first_order",
+      "sha256": "015f63bbacd8819a475467af913000921492e9330f3c0631d7315497a992000a",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 4,
+        "freq": 1.0,
+        "ampl": 1.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "sweep",
+        "first-order-low-pass",
+        "local-synchronous-estimate",
+        "forward",
+        "complete-tail"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "sweep_delay_truncated",
+      "sha256": "e80e90b51b3be2f9e88522fc4b766e623bd24ac1144f0eb885421ed20de4e5cc",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 4,
+        "freq": 1.0,
+        "ampl": 1.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "sweep",
+        "first-order-low-pass",
+        "local-synchronous-estimate",
+        "forward",
+        "truncated-tail"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "sweep_reverse_complete",
+      "sha256": "e4e3c806de60611e40a28758c3692b7b103a0a048c14be97f38857416c20782a",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 4,
+        "freq": 8.0,
+        "ampl": 1.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 1.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "sweep",
+        "first-order-low-pass",
+        "local-synchronous-estimate",
+        "reverse",
+        "complete-tail"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "sweep_reverse_truncated",
+      "sha256": "c1389e5fd95a764257e8a46e4421ce190d6174fd81d9f49262f1a4649767d7ba",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 4,
+        "freq": 8.0,
+        "ampl": 1.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 1.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "sweep",
+        "first-order-low-pass",
+        "local-synchronous-estimate",
+        "reverse",
+        "truncated-tail"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "sweep_second_order",
+      "sha256": "8902a14d6082a8b0b17b00e433f58cb7665781b733a7fcda0ed4b6cc075e5ee3",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 4,
+        "freq": 1.0,
+        "ampl": 1.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "sweep",
+        "second-order-underdamped",
+        "resonance",
+        "complete-tail"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "sweep_pure_delay",
+      "sha256": "36d6a6f07c2207afc840e01976e2dd35a5f0f52fca9aa8f5fd98d93f7d7f9366",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 4,
+        "freq": 1.0,
+        "ampl": 1.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "sweep",
+        "pure-delay",
+        "phase",
+        "complete-tail"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "sweep_early_stop",
+      "sha256": "19e265a4d00701b2def98c47ff7ab29f3447f5a3d24de127dfda4781286a914f",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 4,
+        "freq": 1.0,
+        "ampl": 1.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "sweep",
+        "forward",
+        "early-stop",
+        "partial-coverage"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "sequence_diagnostic_a",
+      "sha256": "e595ee7eefc97d6c23021d61a5eb8b897240a79e3b1108e50b67ac0517d0b351",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 3,
+        "freq": 1.0,
+        "ampl": 5.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "sequence-diagnostics",
+        "numerical-invariance",
+        "constant"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    },
+    {
+      "name": "sequence_diagnostic_b",
+      "sha256": "4294f3a4fe5dbbf03a17d0d6b50a57dd85d0fe3ddac43cdb2c6f6cd64d3d5a47",
+      "method": "independently generated; never calls the C++ analyzer",
+      "parameters": {
+        "waveform": 3,
+        "freq": 1.0,
+        "ampl": 5.0,
+        "offset": 0.0,
+        "start": 0.0,
+        "max_freq": 8.0,
+        "sweep_duration_s": 8.0,
+        "enable": 1
+      },
+      "coverage": [
+        "sequence-diagnostics",
+        "numerical-invariance",
+        "constant"
+      ],
+      "tolerance": "See per-test assertions; values do not call the C++ analyzer."
+    }
+  ]
+}

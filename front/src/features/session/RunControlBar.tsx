@@ -11,6 +11,10 @@ import { useEffect, useMemo, useState } from 'react'
 import type { RunMode, TestRunOptions } from '../../shared/protocol'
 import { phaseLabel } from '../../shared/format'
 import { setLocalStorageValue } from '../../shared/storage'
+import {
+  analysisStageLabel,
+  isAnalysisBlockingWrites,
+} from '../performance/analysis-session-state'
 import { normalizeRunOptionsForStart } from './run-options'
 import {
   loadRunParameterValues,
@@ -51,6 +55,19 @@ const MODE_LABELS: Array<{ mode: RunMode; title: string }> = [
   { mode: 'device_stream', title: '设备持续' },
 ]
 
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function isSweepWaveform(value: unknown): boolean {
+  return value === 4 || (typeof value === 'string' && value.toLowerCase().includes('sweep'))
+}
+
+function formatObservedStreamDuration(streamElapsedUs: number | undefined): string {
+  if (streamElapsedUs === undefined || !Number.isSafeInteger(streamElapsedUs) || streamElapsedUs < 0) return '等待设备流'
+  return `${(streamElapsedUs / 1_000_000).toLocaleString('zh-CN', { maximumFractionDigits: 3 })} s`
+}
+
 export function RunControlBar() {
   const {
     actionError,
@@ -58,6 +75,7 @@ export function RunControlBar() {
     connectionState,
     connect,
     invoke,
+    latestSample,
     snapshot,
     selectedConfigId,
     start,
@@ -67,8 +85,9 @@ export function RunControlBar() {
   const [options, setOptions] = useState<TestRunOptions>(loadRunOptions)
 
   const active = ['running', 'paused', 'stopping'].includes(snapshot.phase)
-  const testChangeBlocked = ['running', 'paused', 'stopping', 'preparing'].includes(snapshot.phase)
-  const canStart = ['ready', 'finished', 'stopped'].includes(snapshot.phase)
+  const analysisBlockingWrites = isAnalysisBlockingWrites(snapshot.analysis)
+  const testChangeBlocked = ['running', 'paused', 'stopping', 'preparing'].includes(snapshot.phase) || analysisBlockingWrites
+  const canStart = ['ready', 'finished', 'stopped'].includes(snapshot.phase) && !analysisBlockingWrites
   const testTitle = snapshot.descriptor.title || snapshot.descriptor.productName || '当前测试'
   const selectedTestId = snapshot.descriptor.configId || selectedConfigId
   const hasRunModeCapabilities = snapshot.descriptor.supportedRunModes.length > 0
@@ -93,6 +112,18 @@ export function RunControlBar() {
   )
   const unsupported = hasRunModeCapabilities && !supportedModes.includes(options.mode)
   const controlError = periodicError || parameterError || (unsupported ? `${testTitle}不支持当前运行模式` : '') || snapshot.dataSaveError || actionError
+  const activeRunParameters = Object.keys(snapshot.effectiveRunParameters).length > 0
+    ? snapshot.effectiveRunParameters
+    : options.algorithmParameters
+  const sweepDurationS = finiteNumber(activeRunParameters.sweep_duration_s)
+  const maxDelayMs = finiteNumber(activeRunParameters.maxDelayMs) ??
+    finiteNumber(activeRunParameters.max_delay_ms) ?? 100
+  const observedStreamSeconds = latestSample?.streamElapsedUs === undefined
+    ? null
+    : latestSample.streamElapsedUs / 1_000_000
+  const sweepReached = isSweepWaveform(activeRunParameters.waveform) &&
+    sweepDurationS !== null && observedStreamSeconds !== null &&
+    observedStreamSeconds >= sweepDurationS + maxDelayMs / 1000
 
   useEffect(() => {
     const descriptor = snapshot.descriptor
@@ -184,7 +215,7 @@ export function RunControlBar() {
         {modeOptions.map(({ mode, title }) => (
           <button
             className={options.mode === mode ? 'run-mode__item is-active' : 'run-mode__item'}
-            disabled={active}
+            disabled={active || analysisBlockingWrites}
             key={mode}
             onClick={() => saveOptions({ ...options, mode })}
             type="button"
@@ -202,7 +233,7 @@ export function RunControlBar() {
               <span className="number-input">
                 <input
                   aria-label="PC 周期轮间隔毫秒"
-                  disabled={active}
+                  disabled={active || analysisBlockingWrites}
                   min={10}
                   max={3_600_000}
                   onChange={(event) => saveOptions({ ...options, intervalMs: Number(event.target.value) })}
@@ -217,7 +248,7 @@ export function RunControlBar() {
               <span className="number-input">
                 <input
                   aria-label="PC 周期最大轮数，零表示无限"
-                  disabled={active}
+                  disabled={active || analysisBlockingWrites}
                   min={0}
                   max={1_000_000_000}
                   onChange={(event) => saveOptions({ ...options, maxCycles: Number(event.target.value) })}
@@ -234,7 +265,7 @@ export function RunControlBar() {
             <input
               aria-label="保存连续测试全部测量列"
               checked={options.saveData}
-              disabled={active}
+              disabled={active || analysisBlockingWrites}
               onChange={(event) => saveOptions({ ...options, saveData: event.target.checked })}
               type="checkbox"
             />
@@ -258,7 +289,7 @@ export function RunControlBar() {
             <Plug size={17} />{loadingConfig ? '加载中…' : '加载配置'}
           </button>
         ) : snapshot.phase === 'configured' ? (
-          <button className="button button--primary" disabled={busyAction !== null} onClick={() => execute('prepare')} type="button">
+          <button className="button button--primary" disabled={busyAction !== null || analysisBlockingWrites} onClick={() => execute('prepare')} type="button">
             <Plug size={17} />连接设备
           </button>
         ) : !active ? (
@@ -288,6 +319,11 @@ export function RunControlBar() {
           </button>
         )}
         {busyAction && <span className="command-busy">处理中…</span>}
+        {analysisBlockingWrites && (
+          <span className="analysis-run-state" title={snapshot.analysis.message}>
+            性能分析：{analysisStageLabel(snapshot.analysis.state, snapshot.analysis.stage)}
+          </span>
+        )}
         {snapshot.dataSaveEnabled && !snapshot.dataSaveError && (
           <span
             className="data-save-state"
@@ -300,12 +336,22 @@ export function RunControlBar() {
 
       <RunParameterEditor
         descriptor={snapshot.descriptor}
-        disabled={active}
+        disabled={active || analysisBlockingWrites}
         effective={active && Object.keys(snapshot.effectiveRunParameters).length > 0}
         onChange={saveRunParameters}
         onReset={() => saveRunParameters({ ...snapshot.descriptor.runParameterDefaults })}
         values={options.algorithmParameters}
       />
+
+      {snapshot.descriptor.postRunAnalysis.supported && active && (
+        <div className="analysis-run-hint" role="status">
+          <strong>停止后自动计算</strong>
+          <span>设备流：{formatObservedStreamDuration(latestSample?.streamElapsedUs)}</span>
+          {sweepReached && (
+            <span>理论时长已达到，可手动停止；完整性将在停止后确认</span>
+          )}
+        </div>
+      )}
 
       <div className="run-console__progress" aria-label={`测试进度 ${snapshot.progress}%`}>
         <i style={{ width: `${Math.max(0, Math.min(100, snapshot.progress))}%` }} />

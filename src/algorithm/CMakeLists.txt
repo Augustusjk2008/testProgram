@@ -6,6 +6,7 @@ set(ALGORITHM_PUBLIC_HEADERS
     include/algorithm/mbddf_exchange_executor.h
     include/algorithm/mbddf_protocol.h
     include/algorithm/mbddf_transport.h
+    include/algorithm/post_run_analysis.h
     include/algorithm/run_parameter_schema.h
     include/algorithm/system_status_executor.h
 )
@@ -17,6 +18,12 @@ set(ALGORITHM_SOURCES
     src/helm_stream_executor.cpp
     src/mbddf_protocol.cpp
     src/mbddf_transport.cpp
+    src/post_run_analysis_factory.cpp
+    src/helm_analysis_capture.cpp
+    src/helm_performance_analyzer.cpp
+    src/helm_waveform_analyzers.cpp
+    src/helm_sweep_estimator.cpp
+    src/analysis_result_json.cpp
     src/run_parameter_schema.cpp
     src/system_status_executor.cpp
 )

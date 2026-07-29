@@ -1,5 +1,13 @@
 import type {
   ActionName,
+  AnalysisChannel,
+  AnalysisChannelStatus,
+  AnalysisChannelSummary,
+  AnalysisMetric,
+  AnalysisResult,
+  AnalysisSnapshot,
+  AnalysisState,
+  BodeProjection,
   ApplicationSample,
   ApplicationSnapshot,
   DigitalStimulusSnapshot,
@@ -14,7 +22,11 @@ import type {
   TestMeasurementDescriptor,
   TestRunParameterDescriptor,
 } from '../protocol'
-import { EMPTY_DIGITAL_STIMULUS, EMPTY_TEST_DESCRIPTOR } from '../protocol'
+import {
+  EMPTY_ANALYSIS,
+  EMPTY_DIGITAL_STIMULUS,
+  EMPTY_TEST_DESCRIPTOR,
+} from '../protocol'
 
 type JsonObject = Record<string, unknown>
 
@@ -80,6 +92,22 @@ function requiredNonEmptyString(parent: JsonObject, key: string): string {
   return value
 }
 
+function requiredArray(parent: JsonObject, key: string): unknown[] {
+  const value = parent[key]
+  if (!Array.isArray(value)) {
+    throw new Error(`Invalid protocol field: ${key}`)
+  }
+  return value
+}
+
+function requiredNullableFiniteNumber(value: unknown, field: string): number | null {
+  if (value === null) return null
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`Invalid protocol field: ${field}`)
+  }
+  return value
+}
+
 function requiredDigitalLevel(parent: JsonObject, key: string): DigitalSwitchDescriptor['activeLevel'] {
   const value = requiredString(parent, key)
   if (value !== 'High' && value !== 'Low') {
@@ -101,6 +129,153 @@ function runParameterMap(value: unknown, field: string): Record<string, unknown>
     result[key] = parseRunParameterScalar(item, field)
   }
   return result
+}
+
+function emptyAnalysis() : AnalysisSnapshot {
+  return { ...EMPTY_ANALYSIS, channelSummaries: [], sourceSummary: {} }
+}
+
+function parsePostRunAnalysisCapability(value: JsonObject): TestDescriptor['postRunAnalysis'] {
+  try {
+    return {
+      supported: requiredBoolean(value, 'supported'),
+      analyzerId: requiredString(value, 'analyzerId'),
+      schemaVersion: requiredString(value, 'schemaVersion'),
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid protocol postRunAnalysis: ${detail}`)
+  }
+}
+
+function parseAnalysisState(value: unknown): AnalysisState {
+  if (value === 'none' || value === 'capturing' || value === 'queued' ||
+      value === 'validating' || value === 'preprocessing' || value === 'calculating' ||
+      value === 'persisting' || value === 'completed' || value === 'partial' ||
+      value === 'unavailable' || value === 'failed' || value === 'cancelled') {
+    return value
+  }
+  throw new Error('Invalid protocol field: analysis.state')
+}
+
+function parseAnalysisChannelStatus(value: unknown): AnalysisChannelStatus {
+  if (value === 'not_applicable' || value === 'completed' ||
+      value === 'partial' || value === 'unavailable') {
+    return value
+  }
+  throw new Error('Invalid protocol field: analysis.channel.status')
+}
+
+function parseAnalysisMetric(value: JsonObject): AnalysisMetric {
+  return {
+    key: requiredNonEmptyString(value, 'key'),
+    label: requiredString(value, 'label'),
+    unit: requiredString(value, 'unit'),
+    status: requiredNonEmptyString(value, 'status'),
+    value: requiredNullableFiniteNumber(value.value, 'metric.value'),
+    detail: requiredString(value, 'detail'),
+  }
+}
+
+function parseAnalysisMetrics(value: unknown, field: string): AnalysisMetric[] {
+  if (!Array.isArray(value)) throw new Error(`Invalid protocol field: ${field}`)
+  return value.map((item) => {
+    if (!isObject(item)) throw new Error(`Invalid protocol field: ${field}`)
+    return parseAnalysisMetric(item)
+  })
+}
+
+function parseAnalysisChannelSummary(value: JsonObject): AnalysisChannelSummary {
+  const channel = requiredSafeInteger(value, 'channel', 0, 3) as AnalysisChannel
+  const warnings = requiredArray(value, 'warnings').map((warning) => {
+    if (typeof warning !== 'string') throw new Error('Invalid protocol field: analysis.warnings')
+    return warning
+  })
+  const omittedWarningCount = Object.prototype.hasOwnProperty.call(value, 'omittedWarningCount')
+    ? requiredSafeInteger(value, 'omittedWarningCount')
+    : undefined
+  return {
+    channel,
+    enabled: requiredBoolean(value, 'enabled'),
+    status: parseAnalysisChannelStatus(value.status),
+    warnings,
+    ...(omittedWarningCount === undefined ? {} : { omittedWarningCount }),
+    commonMetrics: parseAnalysisMetrics(value.commonMetrics, 'analysis.commonMetrics'),
+    waveformMetrics: parseAnalysisMetrics(value.waveformMetrics, 'analysis.waveformMetrics'),
+    bodeAvailable: requiredBoolean(value, 'bodeAvailable'),
+    bodePointCount: requiredSafeInteger(value, 'bodePointCount'),
+    reasonCode: requiredString(value, 'reasonCode'),
+    message: requiredString(value, 'message'),
+  }
+}
+
+function parseAnalysisSnapshot(value: JsonObject): AnalysisSnapshot {
+  try {
+    const channelSummaries = requiredArray(value, 'channelSummaries').map((item) => {
+      if (!isObject(item)) throw new Error('Invalid protocol field: analysis.channelSummaries')
+      return parseAnalysisChannelSummary(item)
+    })
+    const channels = new Set<number>()
+    for (const summary of channelSummaries) {
+      if (channels.has(summary.channel)) {
+        throw new Error('Invalid protocol field: analysis.channelSummaries')
+      }
+      channels.add(summary.channel)
+    }
+    return {
+      supported: requiredBoolean(value, 'supported'),
+      analyzerId: requiredString(value, 'analyzerId'),
+      schemaVersion: requiredString(value, 'schemaVersion'),
+      taskId: requiredString(value, 'taskId'),
+      analysisGeneration: requiredSafeInteger(value, 'analysisGeneration'),
+      state: parseAnalysisState(value.state),
+      progress: requiredNumber(value, 'progress'),
+      stage: requiredString(value, 'stage'),
+      message: requiredString(value, 'message'),
+      reasonCode: requiredString(value, 'reasonCode'),
+      resultFilePath: requiredString(value, 'resultFilePath'),
+      diagnosticInputFilePath: requiredString(value, 'diagnosticInputFilePath'),
+      sourceSummary: requiredObject(value, 'sourceSummary'),
+      channelSummaries,
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid protocol analysis: ${detail}`)
+  }
+}
+
+function parseBodeProjection(value: JsonObject): BodeProjection {
+  const frequencyHz = requiredArray(value, 'frequencyHz').map((item) => {
+    if (typeof item !== 'number' || !Number.isFinite(item) || item <= 0) {
+      throw new Error('Invalid protocol field: bode.frequencyHz')
+    }
+    return item
+  })
+  const magnitudeDb = requiredArray(value, 'magnitudeDb')
+    .map((item) => requiredNullableFiniteNumber(item, 'bode.magnitudeDb'))
+  const phaseDeg = requiredArray(value, 'phaseDeg')
+    .map((item) => requiredNullableFiniteNumber(item, 'bode.phaseDeg'))
+  const pointStatus = requiredArray(value, 'pointStatus').map((item) => {
+    if (typeof item !== 'string' || !item) throw new Error('Invalid protocol field: bode.pointStatus')
+    return item
+  })
+  const length = frequencyHz.length
+  if (magnitudeDb.length !== length || phaseDeg.length !== length || pointStatus.length !== length) {
+    throw new Error('Invalid protocol bode: arrays must have equal lengths')
+  }
+  return { frequencyHz, magnitudeDb, phaseDeg, pointStatus }
+}
+
+function parseAnalysisResult(value: JsonObject): AnalysisResult {
+  try {
+    return {
+      channelSummary: parseAnalysisChannelSummary(requiredObject(value, 'channelSummary')),
+      bode: parseBodeProjection(requiredObject(value, 'bode')),
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid protocol analysisResult: ${detail}`)
+  }
 }
 
 function parseDescriptor(value: JsonObject): TestDescriptor {
@@ -196,6 +371,9 @@ function parseDescriptor(value: JsonObject): TestDescriptor {
       runParameterSchemaVersion: schemaVersion,
       runParameters,
       runParameterDefaults,
+      postRunAnalysis: Object.prototype.hasOwnProperty.call(value, 'postRunAnalysis')
+        ? parsePostRunAnalysisCapability(requiredObject(value, 'postRunAnalysis'))
+        : { supported: false, analyzerId: '', schemaVersion: '' },
     }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
@@ -270,10 +448,13 @@ function parseDigitalStimulus(value: JsonObject): DigitalStimulusSnapshot {
 function parseReplyData(value: JsonObject): ReplyData {
   const data: ReplyData = {}
   for (const [key, item] of Object.entries(value)) {
-    if (key !== 'digitalStimulus') data[key] = item
+    if (key !== 'digitalStimulus' && key !== 'analysisResult') data[key] = item
   }
   if (Object.prototype.hasOwnProperty.call(value, 'digitalStimulus')) {
     data.digitalStimulus = parseDigitalStimulus(requiredObject(value, 'digitalStimulus'))
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'analysisResult')) {
+    data.analysisResult = parseAnalysisResult(requiredObject(value, 'analysisResult'))
   }
   return data
 }
@@ -295,6 +476,9 @@ function parseSnapshot(value: JsonObject): ApplicationSnapshot {
   const effectiveRunParameters = Object.prototype.hasOwnProperty.call(value, 'effectiveRunParameters')
     ? runParameterMap(value.effectiveRunParameters, 'effectiveRunParameters')
     : {}
+  const analysis = Object.prototype.hasOwnProperty.call(value, 'analysis')
+    ? parseAnalysisSnapshot(requiredObject(value, 'analysis'))
+    : emptyAnalysis()
   return {
     ...(value as unknown as ApplicationSnapshot),
     dataSaveEnabled,
@@ -305,6 +489,7 @@ function parseSnapshot(value: JsonObject): ApplicationSnapshot {
       ? EMPTY_TEST_DESCRIPTOR
       : parseDescriptor(requiredObject(value, 'descriptor')),
     digitalStimulus,
+    analysis,
   }
 }
 

@@ -1,6 +1,6 @@
 # HWTEST 浏览器遥测控制台
 
-`front/` 是独立的 React 19 + TypeScript + Vite 浏览器前端。它不进入宿主 CMake、不提供后端或 DUT I/O，只通过回环 WebSocket 消费 `hwtest_web` 的应用层快照和样本。
+`front/` 是独立的 React 19 + TypeScript + Vite 浏览器前端。它不进入宿主 CMake、不提供后端或 DUT I/O，只通过回环 WebSocket 消费 `hwtest_web` 的应用层快照、样本和只读分析结果。
 
 ## 启动
 
@@ -23,13 +23,16 @@ npm run dev
 
 ## 当前功能
 
-- 支持深色/浅色主题切换并在浏览器本地保留选择，包含任务、曲线、诊断三页。
+- 支持深色/浅色主题切换并在浏览器本地保留选择，包含任务、曲线、性能、诊断四页。
 - WebSocket 连接后自动读取配置目录并加载默认测试项，正常操作路径为连接设备后开始测试；加载失败时可手动重试。
 - 全局运行控制条贯穿所有页面，支持单次和 PC 周期测试。PC 周期只发送一次 `start`，由 BIZ 按“上一轮完成 → 等待轮间隔 → 再发指令并采反馈”调度。
 - 选择 `mbddf.di_read` 后，首页按后端 descriptor 紧凑显示 16 路 DUT DI 激励开关与 `di_state[0]` 回显状态，并保留只读 `di_state[1]` 诊断位图；快速操作会合并并串行发送带 revision 的请求，失败时回滚到后端权威状态，且可一键恢复安全态。
 - 设备主动持续回告保留独立运行语义，只有当前测试配置声明支持时才显示对应模式；当前 SYSTEM_STATUS 不支持该模式，后端算法返回 `CapabilityUnsupported`。
 - 自动发现样本中的数值字段，允许全部同图、每项一图或自定义图组；横轴固定为采样时间，曲线配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存在 `localStorage`。
 - uPlot Canvas 绘图；每通道最多保留 50,000 点，样本最多 10 Hz 批量提交到 React/图表，绘制前按像素宽度做 min/max 降采样。诊断事件最多保留 500 条。
+- `mbddf.helm_stream` descriptor 声明 `postRunAnalysis.supported` 时启用“性能”导航。页面读取 `snapshot.analysis` 的小型摘要，按 `{taskId, analysisGeneration}` 缓存四个通道的 `analysisResult`；新身份会清空缓存，迟到 reply 不覆盖当前结果，读取动作不占全局 `busyAction`。旧服务端缺字段时安全回退为不支持分析。
+- 性能页只展示后端 `analysisResult` 的通道摘要和伯德投影，不从实时 `SampleBuffer` 计算性能。扫频图使用 uPlot 对数频率轴、`spanGaps=false` 的 `null` 空洞、幅相同步游标；Hz/rad/s 只改变显示，不改变后端保存的 Hz 数据。
+- 用户手动 STOP 后，页面首次观察到当前 `{taskId, analysisGeneration}` 进入 `queued` 或后续分析状态时自动跳到性能页一次；用户离开页面不会取消分析，也不会被后续进度强制跳回。分析期间新会话写按钮按后端门禁状态禁用，真正断线、`disconnect` 或 `quit` 会触发后端协作取消。
 
 ## 验证
 
@@ -38,4 +41,4 @@ npm test
 npm run build
 ```
 
-`npm run build` 会生成已内联 JS、CSS 和 Geist 字体的 `front/dist/index.html`，可以直接双击打开；该单文件仍需可用的 `hwtest_web` WebSocket 后端才能显示实时数据。前端协议字段和关闭语义以 [WebSocket 前端协议契约](../docs/design/contracts/websocket-frontend-protocol.md) 为准。
+`npm run build` 会生成已内联 JS、CSS 和 Geist 字体的 `front/dist/index.html`，可以直接双击打开；该单文件仍需可用的 `hwtest_web` WebSocket 后端才能显示实时数据。前端/算法自动化与模拟消息不构成 DDS、真实舵机或目标板性能证据；真机仍需在隔离、明确授权的台架保存波形参数、STOP 时机、原始 TXT、性能 JSON、前端截图与独立参考量。前端协议字段和关闭语义以 [WebSocket 前端协议契约](../docs/design/contracts/websocket-frontend-protocol.md) 为准。

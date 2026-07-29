@@ -68,6 +68,86 @@ TEST(WebSocketFrontendServerTest, ListensOnlyOnLoopbackAndSendsHelloThenSnapshot
               QStringLiteral("empty"));
 }
 
+TEST(WebSocketFrontendServerTest, RejectsUnknownAnalysisResultParameters)
+{
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, {}, testOptions());
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("analysis-invalid"),
+                  QStringLiteral("analysisResult"),
+                  QJsonObject{{QStringLiteral("taskId"), QStringLiteral("task")},
+                              {QStringLiteral("analysisGeneration"), 1},
+                              {QStringLiteral("channel"), 0},
+                              {QStringLiteral("path"), QStringLiteral("forbidden")}}))),
+              0);
+    QJsonObject reply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("analysis-invalid"), &reply));
+    EXPECT_FALSE(reply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(reply.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+}
+
+TEST(WebSocketFrontendServerTest, RejectsInvalidAnalysisResultIdentityAndChannel)
+{
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, {}, testOptions());
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    const QVector<QJsonObject> invalid{
+        QJsonObject{{QStringLiteral("taskId"), QStringLiteral(" ")},
+                    {QStringLiteral("analysisGeneration"), 1},
+                    {QStringLiteral("channel"), 0}},
+        QJsonObject{{QStringLiteral("taskId"), QStringLiteral("task")},
+                    {QStringLiteral("analysisGeneration"), 1.5},
+                    {QStringLiteral("channel"), 0}},
+        QJsonObject{{QStringLiteral("taskId"), QStringLiteral("task")},
+                    {QStringLiteral("analysisGeneration"), 1},
+                    {QStringLiteral("channel"), 4}},
+    };
+    for (int index = 0; index < invalid.size(); ++index) {
+        const QString id = QStringLiteral("analysis-invalid-%1").arg(index);
+        ASSERT_GT(client.sendText(compact(request(
+                      id, QStringLiteral("analysisResult"), invalid.at(index)))),
+                  0);
+        QJsonObject reply;
+        ASSERT_TRUE(client.waitForReply(id, &reply));
+        EXPECT_FALSE(reply.value(QStringLiteral("ok")).toBool());
+        EXPECT_EQ(reply.value(QStringLiteral("code")).toString(),
+                  QStringLiteral("invalid_envelope"));
+    }
+}
+
+TEST(WebSocketFrontendServerTest, ValidAnalysisResultRequestUsesReadOnlyControllerPath)
+{
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, {}, testOptions());
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("analysis-read"),
+                  QStringLiteral("analysisResult"),
+                  QJsonObject{{QStringLiteral("taskId"), QStringLiteral("task")},
+                              {QStringLiteral("analysisGeneration"), 1},
+                              {QStringLiteral("channel"), 0}}))),
+              0);
+    QJsonObject reply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("analysis-read"), &reply));
+    EXPECT_FALSE(reply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(reply.value(QStringLiteral("code")).toString(),
+              QStringLiteral("stale_analysis_result"));
+}
+
 TEST(WebSocketFrontendServerTest, ListsAndSelectsAllowlistedTestConfigurations)
 {
     const QString projectDirectory = QStringLiteral(HWTEST_PROJECT_SOURCE_DIR);
@@ -213,24 +293,32 @@ TEST(WebSocketFrontendServerTest, RejectsNonWebSocketPath)
 
 TEST(WebSocketFrontendServerTest, RejectsRemoteOriginButStillAcceptsLocalOrigin)
 {
-    TestApplicationController controller;
-    WebSocketFrontendServer server(&controller, {}, testOptions());
-    ASSERT_TRUE(server.listen());
+    {
+        TestApplicationController controller;
+        WebSocketFrontendServer server(&controller, {}, testOptions());
+        ASSERT_TRUE(server.listen());
 
-    test::WebSocketTestClient rejected;
-    EXPECT_FALSE(rejected.connectTo(server.webSocketUrl(),
-                                    QStringLiteral("https://example.com"),
-                                    1000));
+        test::WebSocketTestClient rejected;
+        EXPECT_FALSE(rejected.connectTo(server.webSocketUrl(),
+                                        QStringLiteral("https://example.com"),
+                                        1000));
 
-    test::WebSocketTestClient accepted;
-    ASSERT_TRUE(accepted.connectTo(server.webSocketUrl(),
-                                   QStringLiteral("http://localhost:8080")));
-    ASSERT_TRUE(accepted.waitForMessageCount(2));
-    accepted.close();
-    ASSERT_TRUE(accepted.waitForDisconnected());
+        test::WebSocketTestClient accepted;
+        ASSERT_TRUE(accepted.connectTo(server.webSocketUrl(),
+                                       QStringLiteral("http://localhost:8080")));
+        ASSERT_TRUE(accepted.waitForMessageCount(2));
+    }
 
+    // A dropped active client deliberately keeps the server busy until its
+    // asynchronous cleanup finishes.  Use an independent server here so this
+    // origin test does not race that separately covered cleanup contract.
+    TestApplicationController standaloneController;
+    WebSocketFrontendServer standaloneServer(
+        &standaloneController, {}, testOptions());
+    ASSERT_TRUE(standaloneServer.listen());
     test::WebSocketTestClient standalone;
-    ASSERT_TRUE(standalone.connectTo(server.webSocketUrl(), QStringLiteral("null")));
+    ASSERT_TRUE(standalone.connectTo(standaloneServer.webSocketUrl(),
+                                     QStringLiteral("null")));
     EXPECT_TRUE(standalone.waitForMessageCount(2));
 }
 

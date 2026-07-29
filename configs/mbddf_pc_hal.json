@@ -9,7 +9,20 @@
     "filePath": "../logs/mbddf_pc.jsonl"
   },
   "dataStorage": {
-    "directory": "../data"
+    "directory": "../data",
+    "analysis": {
+      "maxCaptureBytes": 536870912,
+      "maxInputSamples": 5000000,
+      "maxAnalysisDurationS": 3600,
+      "minFreeBytes": 1073741824,
+      "analysisTimeoutMs": 30000,
+      "analysisShutdownTimeoutMs": 5000,
+      "maxResultBytes": 16777216,
+      "maxProjectedPoints": 256,
+      "maxProjectedBytes": 16384,
+      "maxAnalysisSummaryBytes": 8192,
+      "diagnosticRetentionDays": 7
+    }
   },
   "adapters": {
     "ni.daqmx": {

@@ -66,6 +66,17 @@
       "cwd": ".",
       "confirm": false,
       "enabled": true
+    },
+    {
+      "id": "plot",
+      "label": "绘图",
+      "icon": "Rocket",
+      "windowsCommand": "python .\\data\\plot.py",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".",
+      "confirm": false,
+      "enabled": true
     }
   ]
 }

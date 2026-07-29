@@ -2,6 +2,8 @@
 
 当前版本提供 MB_DDF_v2 的九项配置驱动测试：`SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`、带 STOP 清理的 `TIMER_JITTER`、`DI_READ`、`IMU_STREAM` 和 `HELM_STREAM`。一次性 runner、分步 TUI、Qt Widgets GUI、本机 WebSocket 后端和浏览器遥测控制台共享同一个应用控制器；当前宿主开发与验证以 Web 链路为主基线。BIZ 支持单次、PC 主动周期和设备主动持续回告三种通用语义。舵机连续实测由 DUT 以 1 ms 周期生成指令，经 DDS 与用户独立启停的 `MB_DDF_v2_HelmControl` 交互；它与 `HELM_BOARD_TEST` 并列存在且没有生命周期、互斥或忙状态绑定。板端当前通讯基线是串口，PC 端仍保留 UDP 控制资源，用于本机模拟和后续网口扩展。IMU、DDS 舵机和其他新增硬件路径尚无真实板端验收证据。
 
+`HELM_STREAM` 的后处理把性能结果作为采集结果之外的 sidecar：算法层覆盖正弦、方波、三角波、恒值和连续对数扫频，只有扫频产生伯德图；频率结果以 Hz 保存，浏览器可仅改变显示为 rad/s。性能指标不参与 `Pass/Fail`，也不改变 BIZ `TestResult`、采集错误码或硬件 STOP 语义。用户手动 STOP 后，应用层封存包含尾样本的输入，等待既有硬件收尾完成，再异步分析、原子保存版本化 JSON，并由 Web 性能页读取按通道投影；分析从 `queued` 到终态期间拒绝新会话写动作，断线/退出会协作取消。PC 不会为扫频自动 STOP。TUI 和 Qt GUI 本轮不提供性能页面。
+
 从仓库根目录执行一条命令即可配置、构建和启动：
 
 ```powershell
@@ -30,7 +32,7 @@ npm ci
 npm run dev
 ```
 
-随后打开 `http://127.0.0.1:5173`。三张页面顶部都保留同一个运行控制条；PC 周期模式由后端/BIZ 重复执行“发指令 → 采反馈”，浏览器不会用定时器重复发送 `start`。Web 参数编辑器消费算法层 Schema，当前可修改舵机连续实测参数以及 DH 的配置使能和 23 路脉宽；修改值按配置与 Schema 版本保存在当前浏览器，并只随本次 `start` 发送，不改写测试配置文件。字段选择、同图/分图/自定义图组和时间窗同样保存在浏览器本机。消息、动作和关闭规则见 [WebSocket 前端协议契约](docs/design/contracts/websocket-frontend-protocol.md)。
+随后打开 `http://127.0.0.1:5173`。任务、曲线、性能和诊断四页顶部都保留同一个运行控制条；性能页只在 descriptor 声明 `postRunAnalysis.supported` 时可进入，展示 `snapshot.analysis` 摘要并仅通过只读 `analysisResult` 拉取四个舵机通道的曲线。PC 周期模式由后端/BIZ 重复执行“发指令 → 采反馈”，浏览器不会用定时器重复发送 `start`。Web 参数编辑器消费算法层 Schema，当前可修改舵机连续实测参数以及 DH 的配置使能和 23 路脉宽；修改值按配置与 Schema 版本保存在当前浏览器，并只随本次 `start` 发送，不改写测试配置文件。字段选择、同图/分图/自定义图组和时间窗同样保存在浏览器本机。消息、动作和关闭规则见 [WebSocket 前端协议契约](docs/design/contracts/websocket-frontend-protocol.md)。
 
 `-Port` 只覆盖本次进程，不修改配置文件。也可以在独立的 HAL 部署配置中设置 `hardware.resources.<ResourceId>.properties.portName`，再用 `-HalConfig` 指定：
 
@@ -56,4 +58,4 @@ quit
 
 GUI 启动后先显示配置和可用操作，不会自动加载、准备或运行。点击“加载配置”后可选择控制资源和可编辑的串口，再依次执行“准备”和“运行”；运行、停止和终态结果均由控制器快照事件驱动，不阻塞 GUI 事件循环。
 
-运行 `.\hwtest.ps1 help` 查看全部动作和参数。架构、接口与验证规则分别见 [五层架构](docs/design/overview/five-layer-architecture.md)、[HAL 契约](docs/design/contracts/hal-interface-protocol.md) 和 [测试规范](docs/design/testing/testing-specification.md)。
+运行 `.\hwtest.ps1 help` 查看全部动作和参数。算法、协议和浏览器自动化不构成真实舵机性能验收；真机仍须在隔离、明确授权的台架按波形、负载、STOP 时机、原始 TXT、性能 JSON、DDS 时间轴和独立参考量留存证据。架构、接口与验证规则分别见 [五层架构](docs/design/overview/five-layer-architecture.md)、[HAL 契约](docs/design/contracts/hal-interface-protocol.md) 和 [测试规范](docs/design/testing/testing-specification.md)。

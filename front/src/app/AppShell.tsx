@@ -10,14 +10,16 @@ import type { ReactNode } from 'react'
 
 import { RunControlBar } from '../features/session/RunControlBar'
 import { useSession } from '../features/session/SessionProvider'
+import { isPerformanceCapabilityEnabled } from '../features/performance/performance-navigation'
 import { connectionStateLabel } from '../shared/format'
 import { useTheme } from './ThemeProvider'
 
-export type PageId = 'overview' | 'charts' | 'diagnostics'
+export type PageId = 'overview' | 'charts' | 'performance' | 'diagnostics'
 
 const NAV_ITEMS = [
   { id: 'overview' as const, label: '任务', icon: Gauge },
   { id: 'charts' as const, label: '曲线', icon: ChartLine },
+  { id: 'performance' as const, label: '性能', icon: Pulse },
   { id: 'diagnostics' as const, label: '诊断', icon: TerminalWindow },
 ]
 
@@ -32,6 +34,7 @@ export function AppShell({ page, onPageChange, children }: AppShellProps) {
   const { theme, toggleTheme } = useTheme()
   const activePage = NAV_ITEMS.find(({ id }) => id === page) ?? NAV_ITEMS[0]
   const descriptor = snapshot.descriptor
+  const performanceAvailable = isPerformanceCapabilityEnabled(descriptor.postRunAnalysis)
 
   return (
     <div className="app-shell">
@@ -42,18 +45,23 @@ export function AppShell({ page, onPageChange, children }: AppShellProps) {
         </div>
 
         <nav aria-label="主导航">
-          {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-            <button
-              aria-current={page === id ? 'page' : undefined}
-              className={page === id ? 'nav-item is-active' : 'nav-item'}
-              key={id}
-              onClick={() => onPageChange(id)}
-              type="button"
-            >
-              <Icon size={20} />
-              <strong>{label}</strong>
-            </button>
-          ))}
+          {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
+            const disabled = id === 'performance' && !performanceAvailable
+            return (
+              <button
+                aria-current={page === id ? 'page' : undefined}
+                className={page === id ? 'nav-item is-active' : 'nav-item'}
+                disabled={disabled}
+                key={id}
+                onClick={() => onPageChange(id)}
+                title={disabled ? '当前测试未声明后处理性能分析能力' : undefined}
+                type="button"
+              >
+                <Icon size={20} />
+                <strong>{label}</strong>
+              </button>
+            )
+          })}
         </nav>
 
         <div className="sidebar__link">

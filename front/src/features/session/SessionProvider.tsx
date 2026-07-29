@@ -19,6 +19,9 @@ import { connectionStateLabel, phaseLabel } from '../../shared/format'
 import {
   EMPTY_SNAPSHOT,
   type ActionName,
+  type AnalysisChannel,
+  type AnalysisIdentity,
+  type AnalysisResult,
   type ApplicationSample,
   type ApplicationSnapshot,
   type DigitalStimulusSnapshot,
@@ -32,6 +35,13 @@ import {
   HwtestClient,
 } from '../../shared/ws/HwtestClient'
 import { SampleBuffer } from '../telemetry/sample-buffer'
+import {
+  AnalysisResultCache,
+  analysisIdentityFromSnapshot,
+  analysisIdentityKey,
+} from '../performance/analysis-session-state'
+import { PerformanceNavigationGate } from '../performance/performance-navigation'
+import { tracksGlobalBusyAction } from './action-policy'
 import { selectInitialTestConfig } from './config-selection'
 
 export interface DiagnosticEntry {
@@ -58,6 +68,10 @@ interface SessionContextValue {
   diagnostics: DiagnosticEntry[]
   busyAction: ActionName | null
   actionError: string
+  analysisResults: ReadonlyArray<AnalysisResult | undefined>
+  analysisResultLoading: ReadonlyArray<boolean>
+  analysisResultErrors: ReadonlyArray<string>
+  performanceNavigationIdentity: AnalysisIdentity | null
   connect: (reconnecting?: boolean) => Promise<void>
   invoke: (action: ActionName, params?: Record<string, unknown>) => Promise<ReplyMessage>
   start: (options: TestRunOptions) => Promise<ReplyMessage>
@@ -67,6 +81,10 @@ interface SessionContextValue {
     expectedRevision: number,
   ) => Promise<DigitalStimulusSnapshot>
   resetDigitalStimulus: () => Promise<DigitalStimulusSnapshot>
+  fetchAnalysisResult: (
+    identity: AnalysisIdentity,
+    channel: AnalysisChannel,
+  ) => Promise<AnalysisResult>
   clearTelemetry: () => void
 }
 
@@ -83,6 +101,9 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const descriptorConfigId = useRef('')
   const snapshotRef = useRef<ApplicationSnapshot>(EMPTY_SNAPSHOT)
   const autoLoadInFlight = useRef(false)
+  const analysisCacheRef = useRef(new AnalysisResultCache())
+  const analysisRequestRef = useRef(new Map<string, Promise<AnalysisResult>>())
+  const performanceNavigationGateRef = useRef(new PerformanceNavigationGate())
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected')
   const [connectionDetail, setConnectionDetail] = useState('')
@@ -96,6 +117,16 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([])
   const [busyAction, setBusyAction] = useState<ActionName | null>(null)
   const [actionError, setActionError] = useState('')
+  const [analysisResults, setAnalysisResults] = useState<ReadonlyArray<AnalysisResult | undefined>>(
+    [undefined, undefined, undefined, undefined],
+  )
+  const [analysisResultLoading, setAnalysisResultLoading] = useState<ReadonlyArray<boolean>>(
+    [false, false, false, false],
+  )
+  const [analysisResultErrors, setAnalysisResultErrors] = useState<ReadonlyArray<string>>(
+    ['', '', '', ''],
+  )
+  const [performanceNavigationIdentity, setPerformanceNavigationIdentity] = useState<AnalysisIdentity | null>(null)
 
   const pushDiagnostic = useCallback((
     kind: DiagnosticEntry['kind'],
@@ -147,6 +178,23 @@ export function SessionProvider({ children }: PropsWithChildren) {
     setDataVersion((version) => version + 1)
   }, [])
 
+  const publishPerformanceNavigation = useCallback((identity: AnalysisIdentity | null) => {
+    if (identity) setPerformanceNavigationIdentity({ ...identity })
+  }, [])
+
+  const synchronizeAnalysisIdentity = useCallback((nextSnapshot: ApplicationSnapshot) => {
+    const identity = analysisIdentityFromSnapshot(nextSnapshot.analysis)
+    if (analysisCacheRef.current.begin(identity)) {
+      analysisRequestRef.current.clear()
+      setAnalysisResults(analysisCacheRef.current.snapshot().entries)
+      setAnalysisResultLoading([false, false, false, false])
+      setAnalysisResultErrors(['', '', '', ''])
+    }
+    publishPerformanceNavigation(
+      performanceNavigationGateRef.current.observe(identity, nextSnapshot.analysis.state),
+    )
+  }, [publishPerformanceNavigation])
+
   const connect = useCallback(async (reconnecting = true) => {
     setActionError('')
     await clientRef.current?.connect(reconnecting)
@@ -158,8 +206,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
   ): Promise<ReplyMessage> => {
     const client = clientRef.current
     if (!client) throw new Error('WebSocket client is unavailable')
-    const tracksGlobalBusy = action !== 'setDigitalStimulus' &&
-      action !== 'resetDigitalStimulus'
+    const tracksGlobalBusy = tracksGlobalBusyAction(action)
     if (tracksGlobalBusy) setBusyAction(action)
     setActionError('')
     pushDiagnostic('command', `发送 · ${action}`, JSON.stringify(params), params)
@@ -172,6 +219,14 @@ export function SessionProvider({ children }: PropsWithChildren) {
         reply,
       )
       if (!reply.ok) setActionError(reply.message || reply.code)
+      if (action === 'stop' && reply.ok) {
+        const analysis = snapshotRef.current.analysis
+        const identity = analysisIdentityFromSnapshot(analysis)
+        performanceNavigationGateRef.current.recordStopSucceeded(identity)
+        publishPerformanceNavigation(
+          performanceNavigationGateRef.current.observe(identity, analysis.state),
+        )
+      }
       return reply
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -181,6 +236,76 @@ export function SessionProvider({ children }: PropsWithChildren) {
     } finally {
       if (tracksGlobalBusy) setBusyAction(null)
     }
+  }, [publishPerformanceNavigation, pushDiagnostic])
+
+  const fetchAnalysisResult = useCallback(async (
+    identity: AnalysisIdentity,
+    channel: AnalysisChannel,
+  ): Promise<AnalysisResult> => {
+    const cache = analysisCacheRef.current
+    if (!cache.isCurrent(identity)) {
+      throw new Error('分析身份已过期，已丢弃结果读取请求')
+    }
+    const cached = cache.get(identity, channel)
+    if (cached) return cached
+
+    const requestKey = `${analysisIdentityKey(identity)}:${channel}`
+    const pending = analysisRequestRef.current.get(requestKey)
+    if (pending) return pending
+
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket client is unavailable')
+    const request = (async () => {
+      if (cache.isCurrent(identity)) {
+        setAnalysisResultLoading((current) => current.map((value, index) => (
+          index === channel ? true : value
+        )))
+        setAnalysisResultErrors((current) => current.map((value, index) => (
+          index === channel ? '' : value
+        )))
+      }
+      try {
+        const params = {
+          taskId: identity.taskId,
+          analysisGeneration: identity.analysisGeneration,
+          channel,
+        }
+        pushDiagnostic('command', '发送 · analysisResult', JSON.stringify(params), params)
+        const reply = await client.request('analysisResult', params)
+        if (!reply.ok) throw new Error(reply.message || reply.code || 'analysisResult was rejected')
+        const result = reply.data.analysisResult
+        if (!result) throw new Error('后端未返回 analysisResult；该服务端可能不支持性能结果读取')
+        if (result.channelSummary.channel !== channel) {
+          throw new Error('后端返回的 analysisResult 通道与请求不一致')
+        }
+        if (cache.store(identity, channel, result)) {
+          setAnalysisResults(cache.snapshot().entries)
+          setAnalysisResultErrors((current) => current.map((value, index) => (
+            index === channel ? '' : value
+          )))
+          pushDiagnostic('command', '完成 · analysisResult', `舵 ${channel + 1} 结果已加载`, reply)
+        }
+        return result
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (cache.isCurrent(identity)) {
+          setAnalysisResultErrors((current) => current.map((value, index) => (
+            index === channel ? message : value
+          )))
+          pushDiagnostic('error', '失败 · analysisResult', message)
+        }
+        throw error
+      } finally {
+        analysisRequestRef.current.delete(requestKey)
+        if (cache.isCurrent(identity)) {
+          setAnalysisResultLoading((current) => current.map((value, index) => (
+            index === channel ? false : value
+          )))
+        }
+      }
+    })()
+    analysisRequestRef.current.set(requestKey, request)
+    return request
   }, [pushDiagnostic])
 
   useEffect(() => {
@@ -208,6 +333,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
         const nextSnapshot = { ...EMPTY_SNAPSHOT, ...message.snapshot }
         snapshotRef.current = nextSnapshot
         setSnapshot(nextSnapshot)
+        synchronizeAnalysisIdentity(nextSnapshot)
         pushDiagnostic(
           'snapshot',
           `状态 · ${phaseLabel(message.snapshot.phase)}`,
@@ -290,7 +416,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
       if (commitFrame.current !== null) window.cancelAnimationFrame(commitFrame.current)
       autoLoadInFlight.current = false
     }
-  }, [clearTelemetry, invoke, pushDiagnostic, scheduleTelemetryCommit])
+  }, [clearTelemetry, invoke, pushDiagnostic, scheduleTelemetryCommit, synchronizeAnalysisIdentity])
 
   const start = useCallback(async (options: TestRunOptions) => {
     clearTelemetry()
@@ -358,14 +484,22 @@ export function SessionProvider({ children }: PropsWithChildren) {
     diagnostics,
     busyAction,
     actionError,
+    analysisResults,
+    analysisResultLoading,
+    analysisResultErrors,
+    performanceNavigationIdentity,
     connect,
     invoke,
     start,
     setDigitalStimulus,
     resetDigitalStimulus,
+    fetchAnalysisResult,
     clearTelemetry,
   }), [
     actionError,
+    analysisResultErrors,
+    analysisResultLoading,
+    analysisResults,
     busyAction,
     clearTelemetry,
     connect,
@@ -373,9 +507,11 @@ export function SessionProvider({ children }: PropsWithChildren) {
     connectionState,
     dataVersion,
     diagnostics,
+    fetchAnalysisResult,
     fields,
     invoke,
     latestSample,
+    performanceNavigationIdentity,
     resetDigitalStimulus,
     selectedConfigId,
     setDigitalStimulus,

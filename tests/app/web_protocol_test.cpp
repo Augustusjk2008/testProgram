@@ -29,6 +29,7 @@ TEST(WebProtocolTest, AcceptsEveryVersionOneAction)
         QStringLiteral("testConfigs"),
         QStringLiteral("selectTest"),
         QStringLiteral("snapshot"),
+        QStringLiteral("analysisResult"),
         QStringLiteral("controls"),
         QStringLiteral("ports"),
         QStringLiteral("selectControl"),
@@ -218,7 +219,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(envelope.value(QStringLiteral("seq")).toInt(), 12);
 
     const QJsonObject json = envelope.value(QStringLiteral("snapshot")).toObject();
-    EXPECT_EQ(json.size(), 28);
+    EXPECT_EQ(json.size(), 29);
     EXPECT_EQ(json.value(QStringLiteral("phase")).toString(), snapshot.phase);
     EXPECT_EQ(json.value(QStringLiteral("testState")).toString(), snapshot.testState);
     EXPECT_EQ(json.value(QStringLiteral("controlResourceId")).toString(),
@@ -249,6 +250,12 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(json.value(QStringLiteral("dataFilePath")).toString(),
               snapshot.dataFilePath);
     EXPECT_TRUE(json.value(QStringLiteral("dataSaveError")).toString().isEmpty());
+    const QJsonObject analysis = json.value(QStringLiteral("analysis")).toObject();
+    EXPECT_FALSE(analysis.value(QStringLiteral("supported")).toBool());
+    EXPECT_EQ(analysis.value(QStringLiteral("state")).toString(),
+              QStringLiteral("none"));
+    EXPECT_EQ(analysis.value(QStringLiteral("analysisGeneration")).toDouble(),
+              0.0);
     const QJsonObject effectiveRunParameters =
         json.value(QStringLiteral("effectiveRunParameters")).toObject();
     EXPECT_EQ(effectiveRunParameters.value(QStringLiteral("waveform")).toInt(), 4);
@@ -267,6 +274,10 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
               QStringLiteral("di8"));
     EXPECT_FALSE(switches.at(1).toObject().contains(QStringLiteral("resourceId")));
     const QJsonObject descriptor = json.value(QStringLiteral("descriptor")).toObject();
+    const QJsonObject analysisCapability =
+        descriptor.value(QStringLiteral("postRunAnalysis")).toObject();
+    EXPECT_TRUE(descriptor.contains(QStringLiteral("postRunAnalysis")));
+    EXPECT_FALSE(analysisCapability.value(QStringLiteral("supported")).toBool());
     EXPECT_EQ(descriptor.value(QStringLiteral("configId")).toString(),
               snapshot.descriptor.configId);
     EXPECT_EQ(descriptor.value(QStringLiteral("title")).toString(),
@@ -316,6 +327,43 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
               QStringLiteral("ok"));
 }
 
+TEST(WebProtocolTest, RejectsAnalysisGenerationOutsideJsonSafeIntegerRange)
+{
+    ApplicationSnapshot snapshot;
+    snapshot.analysis.supported = true;
+    snapshot.analysis.analysisGeneration = 9007199254740992ULL;
+
+    EXPECT_TRUE(makeSnapshot(1, snapshot).isEmpty());
+}
+
+TEST(WebProtocolTest, ProjectsPerChannelAnalysisReason)
+{
+    ApplicationSnapshot snapshot;
+    snapshot.analysis.supported = true;
+    snapshot.analysis.state = QStringLiteral("partial");
+    AnalysisChannelSummary summary;
+    summary.channel = 2;
+    summary.enabled = true;
+    summary.status = QStringLiteral("unavailable");
+    summary.reasonCode = QStringLiteral("weak_excitation");
+    summary.message = QStringLiteral("Command amplitude is below the excitation floor");
+    snapshot.analysis.channelSummaries.push_back(summary);
+
+    const QJsonObject channel = makeSnapshot(1, snapshot)
+                                    .value(QStringLiteral("snapshot"))
+                                    .toObject()
+                                    .value(QStringLiteral("analysis"))
+                                    .toObject()
+                                    .value(QStringLiteral("channelSummaries"))
+                                    .toArray()
+                                    .first()
+                                    .toObject();
+    EXPECT_EQ(channel.value(QStringLiteral("reasonCode")).toString(),
+              summary.reasonCode);
+    EXPECT_EQ(channel.value(QStringLiteral("message")).toString(),
+              summary.message);
+}
+
 TEST(WebProtocolTest, HidesDigitalStimulusOutsideVersionOneBitRange)
 {
     DigitalStimulusSnapshot stimulus;
@@ -339,6 +387,89 @@ TEST(WebProtocolTest, HidesDigitalStimulusOutsideVersionOneBitRange)
     EXPECT_EQ(json.value(QStringLiteral("revision")).toDouble(), 0.0);
     EXPECT_EQ(json.value(QStringLiteral("errorCode")).toString(),
               QStringLiteral("CapabilityUnsupported"));
+}
+
+TEST(WebProtocolTest, RejectsAnalysisProjectionAbovePointLimit)
+{
+    AnalysisChannelProjection projection;
+    projection.channelSummary.channel = 0;
+    projection.channelSummary.enabled = true;
+    projection.channelSummary.status = QStringLiteral("completed");
+    projection.channelSummary.bodeAvailable = true;
+    projection.channelSummary.bodePointCount = 257;
+    for (int index = 0; index < 257; ++index) {
+        projection.frequencyHz.push_back(1.0 + index);
+        projection.magnitudeDb.push_back(AnalysisNullableNumber{true, 0.0});
+        projection.phaseDeg.push_back(AnalysisNullableNumber{});
+        projection.pointStatus.push_back(QStringLiteral("valid"));
+    }
+
+    EXPECT_TRUE(analysisResultObject(projection).isEmpty());
+}
+
+TEST(WebProtocolTest, RejectsAnalysisProjectionWhoseSummaryCountDoesNotMatch)
+{
+    AnalysisChannelProjection projection;
+    projection.channelSummary.channel = 0;
+    projection.channelSummary.enabled = true;
+    projection.channelSummary.status = QStringLiteral("completed");
+    projection.channelSummary.bodeAvailable = true;
+    projection.channelSummary.bodePointCount = 2;
+    projection.frequencyHz = {1.0};
+    projection.magnitudeDb = {AnalysisNullableNumber{true, 0.0}};
+    projection.phaseDeg = {AnalysisNullableNumber{true, -10.0}};
+    projection.pointStatus = {QStringLiteral("valid")};
+
+    EXPECT_TRUE(analysisResultObject(projection).isEmpty());
+}
+
+TEST(WebProtocolTest, RejectsAnalysisProjectionAboveCompactByteLimit)
+{
+    AnalysisChannelProjection projection;
+    projection.channelSummary.channel = 0;
+    projection.channelSummary.enabled = true;
+    projection.channelSummary.status = QStringLiteral("completed");
+    projection.channelSummary.bodeAvailable = true;
+    projection.channelSummary.bodePointCount = 256;
+    const QString oversizedStatus(128, QLatin1Char('x'));
+    for (int index = 0; index < 256; ++index) {
+        projection.frequencyHz.push_back(1.0 + index);
+        projection.magnitudeDb.push_back(AnalysisNullableNumber{true, 0.0});
+        projection.phaseDeg.push_back(AnalysisNullableNumber{true, 0.0});
+        projection.pointStatus.push_back(oversizedStatus);
+    }
+
+    EXPECT_TRUE(analysisResultObject(projection).isEmpty());
+}
+
+TEST(WebProtocolTest, BoundsTheCompleteCompactAnalysisReply)
+{
+    AnalysisChannelProjection projection;
+    projection.channelSummary.channel = 0;
+    projection.channelSummary.enabled = true;
+    projection.channelSummary.status = QStringLiteral("completed");
+    projection.channelSummary.bodeAvailable = true;
+    projection.channelSummary.bodePointCount = 200;
+    const QString status(40, QLatin1Char('x'));
+    for (int index = 0; index < 200; ++index) {
+        projection.frequencyHz.push_back(1.0 + index);
+        projection.magnitudeDb.push_back(AnalysisNullableNumber{true, 0.0});
+        projection.phaseDeg.push_back(AnalysisNullableNumber{true, 0.0});
+        projection.pointStatus.push_back(status);
+    }
+    const QJsonObject projected = analysisResultObject(projection);
+    ASSERT_FALSE(projected.isEmpty());
+    const QJsonObject data{{QStringLiteral("analysisResult"), projected}};
+    const QString id(8000, QLatin1Char('i'));
+    ASSERT_GT(compactJson(makeReply(id, ActionResult{}, data)).toUtf8().size(),
+              16384);
+
+    const QJsonObject reply = makeAnalysisResultReply(id, ActionResult{}, data);
+
+    EXPECT_FALSE(reply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(reply.value(QStringLiteral("code")).toString(),
+              QStringLiteral("analysis_projection_too_large"));
+    EXPECT_LE(compactJson(reply).toUtf8().size(), 16384);
 }
 
 TEST(WebProtocolTest, ProjectsApplicationSampleAsVersionedEvent)

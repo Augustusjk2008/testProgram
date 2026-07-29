@@ -38,6 +38,7 @@ const descriptor: TestDescriptor = {
     },
   ],
   runParameterDefaults: { waveform: 0, ampl: 1.8, max_freq: 80 },
+  postRunAnalysis: { supported: false, analyzerId: '', schemaVersion: '' },
 }
 
 describe('algorithm-owned run parameters', () => {

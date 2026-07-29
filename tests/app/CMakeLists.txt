@@ -29,7 +29,9 @@ if(MSVC)
 endif()
 
 add_executable(hwtest_app_tests
+    analysis_result_store_test.cpp
     frontend_launch_options_test.cpp
+    post_run_analysis_coordinator_test.cpp
     test_application_controller_test.cpp
     tui_shell_test.cpp
 )
@@ -64,6 +66,7 @@ target_compile_definitions(hwtest_app_tests
 target_include_directories(hwtest_app_tests
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src/app/include
+        ${PROJECT_SOURCE_DIR}/src/app/src
 )
 
 target_link_libraries(hwtest_app_tests
@@ -132,6 +135,7 @@ target_compile_definitions(hwtest_web_tests
     PRIVATE
         HWTEST_APP_TEST_CONFIG="${HWTEST_APP_TEST_CONFIG}"
         HWTEST_APP_HAL_CONFIG="${HWTEST_APP_HAL_CONFIG}"
+        HWTEST_APP_HELM_STREAM_CONFIG="${HWTEST_APP_HELM_STREAM_CONFIG}"
         HWTEST_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )
 
