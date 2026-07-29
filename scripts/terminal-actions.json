@@ -77,6 +77,17 @@
       "cwd": ".",
       "confirm": false,
       "enabled": true
+    },
+    {
+      "id": "front_build",
+      "label": "构建前端",
+      "icon": "Server",
+      "windowsCommand": "npm run build",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".\\front",
+      "confirm": false,
+      "enabled": true
     }
   ]
 }

@@ -17,7 +17,7 @@ struct Helm_ins_frame {
     double temp_imu; // 惯测温度
     double temp_ground; // 地面温度
     float ins[4]; // 舵指令
-    uint8_t plug_detach; // 拖插分离
+    uint8_t helm_unlock; // 舵机解锁
     uint8_t check1; // 校验1 / 非解析字段
     uint8_t check2; // 校验2 / 非解析字段
 
@@ -34,7 +34,7 @@ struct Helm_ins_frame {
         ins[1] = 0;
         ins[2] = 0;
         ins[3] = 0;
-        plug_detach = 0;
+        helm_unlock = 0;
         check1 = 0;
         check2 = 0;
     }
@@ -135,7 +135,7 @@ public:
             std::memcpy(&raw, &value, sizeof(raw));
             writeLe32(buffer.data() + 22, raw);
         }
-        buffer[26] = static_cast<char>(frame.plug_detach);
+        buffer[26] = static_cast<char>(frame.helm_unlock);
         return buffer;
     }
 
@@ -177,7 +177,7 @@ public:
             std::memcpy(&value, &raw, sizeof(value));
             frame.ins[3] = value;
         }
-        frame.plug_detach = static_cast<uint8_t>(rawData[26]);
+        frame.helm_unlock = static_cast<uint8_t>(rawData[26]);
         return true;
     }
 

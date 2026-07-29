@@ -24,6 +24,9 @@ Result<void> PwmDevice::set_duty_mode_unsigned() {
 Result<void> PwmDevice::set_update_enabled(bool v) {
     return transport_.write32(R::UpdateEnable, v ? 0xAAAAu : 0xFFFFu);
 }
+Result<void> PwmDevice::disable_outputs() {
+    return transport_.write32(R::Enable, 0xFFFFu);
+}
 Result<uint32_t> PwmDevice::read_peak_value() const {
     return transport_.read32(R::Peak);
 }

@@ -10,6 +10,7 @@ TEST(HwDidoDevice, OnlyWritesUpdatedChannels) {
     ASSERT_TRUE(d.set_outputs(0x21, 0x21));
     ASSERT_EQ(t.accesses().size(), 2u);
     EXPECT_EQ(t.accesses()[0].offset, 4u);
+    EXPECT_EQ(t.accesses()[0].value, 0xAAAAu);
     EXPECT_EQ(t.accesses()[1].offset, 0x18u);
 }
 TEST(HwDidoDevice, ConvertsHighAndLowActiveInputs) {

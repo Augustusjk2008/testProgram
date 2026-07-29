@@ -147,10 +147,12 @@ $env:QT_QPA_PLATFORM = 'offscreen'
   `pwm_duty_match`、raw duty、peak、方向、使能状态及四路 AD7606。Web 主基线使用
   `HELM_START 0x07/0x10`、`HELM_FEEDBACK 0x07/0x01`、`HELM_STOP 0x07/0x11`：DUT
   以 1 ms 周期生成指令，经 DDS 与独立 `MB_DDF_v2_HelmControl` 交互，最多 5 个完整反馈
-  样本组成一帧回告。扫频总时长可配置，结束后指令归零、反馈继续到 STOP。
+  样本组成一帧回告。DDS 27 字节指令 B27 为 `helm_unlock=0xFF`；舵控程序启动先禁止
+  PWM，收到首次解锁请求后将 DIDO DO0 置高，至少等待 30 ms 再使能 PWM。扫频总
+  时长可配置，结束后指令归零、反馈继续到 STOP；STOP 尾帧仍保持解锁并只令舵机回零。
 - `MB_DDF_v2` 测试服务与 `MB_DDF_v2_HelmControl` 可由用户按任意顺序、独立启停；测试
   服务不管理舵控进程。`HELM_BOARD_TEST` 与连续实测并列存在，不互斥、不返回对方导致的
-  `TASK_BUSY`，也不共享生命周期状态。
+  `TASK_BUSY`，也不共享生命周期状态；`HELM_BOARD_TEST` 不包含舵锁流程。
 - 板级寄存器以 `origin_v3` 为现行事实源。XADC 全局基址为 `0x150000`，PCIe SPI Flash
   为 `0x160000`；外部集成不得继续沿用旧映射。
 - `ELEC_HEALTH_STATUS` 在 B31-B32 传输 XADC `value_YX` 的 FPGA 原始 ADC code，PC

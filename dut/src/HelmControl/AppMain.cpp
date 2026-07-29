@@ -7,12 +7,16 @@
 #include "MB_DDF_HW/Transport/XdmaTransport.h"
 #include "MB_DDF_HW/Device/PwmDevice.h"
 #include "MB_DDF_HW/Device/Ad7606Device.h"
+#include "MB_DDF_HW/Device/DidoDevice.h"
 
 // ─── 舵机控制 ───
+#include "HelmControl/HelmPwmLifecycle.h"
 #include "HelmControl/Servo/ServoController.h"
+#include "HelmControl/ProtocolModel/helm_command_contract.h"
 #include "HelmControl/ProtocolModel/helm_ins_frame_protocol.h"
 #include "HelmControl/ProtocolModel/helm_fdb_frame_protocol.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
@@ -24,6 +28,67 @@ const char sast_app_version[] __attribute__((section(".myversion"), used)) = "1.
 
 // 舵机程序分配的核心号
 #define SERVO_CORE 7
+
+namespace {
+
+class HelmPwmLifecycleIo final : public IHelmPwmLifecycleIo {
+public:
+    HelmPwmLifecycleIo(MB_DDF::HW::PwmDevice& pwm,
+                       MB_DDF::HW::DidoDevice& dido)
+        : pwm_(pwm), dido_(dido) {}
+
+    bool force_pwm_disabled() override {
+        auto disable_result = pwm_.disable_outputs();
+        if (!disable_result) {
+            LOG_ERROR << "PWM startup output disable failed: "
+                      << disable_result.status().message;
+            return false;
+        }
+        auto update_result = pwm_.set_update_enabled(false);
+        if (!update_result) {
+            LOG_ERROR << "PWM startup update disable failed: "
+                      << update_result.status().message;
+            return false;
+        }
+        MB_DDF::HW::PwmRawOutputs disabled_outputs{};
+        auto output_result = pwm_.apply_outputs(disabled_outputs);
+        if (!output_result) {
+            LOG_ERROR << "PWM startup zero duty write failed: "
+                      << output_result.status().message;
+            return false;
+        }
+        return true;
+    }
+
+    bool unlock_helm() override {
+        constexpr uint16_t kHelmLockDo = 0x0001u;
+        auto result = dido_.set_outputs(kHelmLockDo, kHelmLockDo);
+        if (!result) {
+            LOG_ERROR << "Helm unlock DO0 write failed: "
+                      << result.status().message;
+            return false;
+        }
+        LOG_INFO << "Helm unlocked through DIDO DO0; waiting 30 ms before PWM enable";
+        return true;
+    }
+
+    bool enable_pwm() override {
+        auto result = pwm_.set_update_enabled(true);
+        if (!result) {
+            LOG_ERROR << "PWM update enable after helm unlock failed: "
+                      << result.status().message;
+            return false;
+        }
+        LOG_INFO << "PWM enabled after helm unlock delay";
+        return true;
+    }
+
+private:
+    MB_DDF::HW::PwmDevice& pwm_;
+    MB_DDF::HW::DidoDevice& dido_;
+};
+
+} // namespace
 
 /*
  * 程序入口
@@ -38,20 +103,34 @@ int main(int argc, char** argv) {
     ProtocolModel::Helm_ins_frame ins_frame = {};
     ProtocolModel::Helm_fdb_frame fdb_frame = {};
     bool ins_pending = false;
+    bool helm_unlock_requested = false;
     std::mutex ins_mutex;
 
     // ─── 初始化硬件层 ──────────────────────────────────────
 
-    // 连 FPGA：PWM 在 0x00000，AD7606 在 0x10000
+    // 连 FPGA：PWM 在 0x00000，AD7606 在 0x10000，DIDO 在 0x140000
     using namespace MB_DDF::HW;
 
     XdmaTransport pwm_transport({"/dev/xdma0", 0x00000, 0x10000});
     XdmaTransport adc_transport({"/dev/xdma0", 0x10000, 0x10000});
+    XdmaTransport dido_transport({"/dev/xdma0", 0x140000, 0x10000});
+
+    PwmDevice pwm(pwm_transport);
+    Ad7606Device adc(adc_transport);
+    DidoDevice dido(dido_transport);
+    HelmPwmLifecycleIo pwm_lifecycle_io(pwm, dido);
+    HelmPwmLifecycle pwm_lifecycle;
 
     {
         auto pwm_open_result = pwm_transport.open();
         if (!pwm_open_result) {
             LOG_ERROR << "PWM transport open failed: " << pwm_open_result.status().message;
+            return 1;
+        }
+    }
+    {
+        if (!pwm_lifecycle.initialize(pwm_lifecycle_io)) {
+            LOG_ERROR << "Cannot establish disabled PWM startup state";
             return 1;
         }
     }
@@ -62,9 +141,14 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-
-    PwmDevice pwm(pwm_transport);
-    Ad7606Device adc(adc_transport);
+    {
+        auto dido_open_result = dido_transport.open();
+        if (!dido_open_result) {
+            LOG_ERROR << "DIDO transport open failed: "
+                      << dido_open_result.status().message;
+            return 1;
+        }
+    }
 
     // 验证硬件通信
     {
@@ -78,6 +162,13 @@ int main(int argc, char** argv) {
         auto adc_comm_result = adc.check_communication();
         if (!adc_comm_result) {
             LOG_ERROR << "ADC communication check failed";
+            return 1;
+        }
+    }
+    {
+        auto dido_comm_result = dido.check_communication();
+        if (!dido_comm_result) {
+            LOG_ERROR << "DIDO communication check failed";
             return 1;
         }
     }
@@ -105,15 +196,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 开启更新使能（默认关闭，必须打开）
-    {
-        auto update_result = pwm.set_update_enabled(true);
-        if (!update_result) {
-            LOG_ERROR << "PWM set_update_enabled failed";
-            return 1;
-        }
-    }
-
     // 配置 AD7606：使能采集 + 开滤波
     {
         Ad7606Config adc_cfg = {
@@ -127,7 +209,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    LOG_INFO << "Hardware initialized: PWM@4000Hz, ADC filter=on";
+    LOG_INFO << "Hardware initialized: PWM disabled awaiting helm unlock, ADC filter=on";
 
     // ─── 初始化 DDS ──────────────────────────────────────────────
     auto& dds = MB_DDF::DDS::DDSCore::instance();
@@ -148,6 +230,9 @@ int main(int argc, char** argv) {
         std::lock_guard<std::mutex> lock(ins_mutex);
         ins_frame = candidate;
         ins_pending = true;
+        if (candidate.helm_unlock == ProtocolModel::kHelmUnlockRequested) {
+            helm_unlock_requested = true;
+        }
     });
     auto feedback_writer = dds.create_writer("local:://helm_feedback", false);
     if (!ins_reader || !feedback_writer) {
@@ -191,11 +276,21 @@ int main(int argc, char** argv) {
 
         ProtocolModel::Helm_ins_frame cycle_ins{};
         bool feedback_due = false;
+        bool cycle_unlock_requested = false;
         {
             std::lock_guard<std::mutex> lock(ins_mutex);
             cycle_ins = ins_frame;
             feedback_due = ins_pending;
+            cycle_unlock_requested = helm_unlock_requested;
             ins_pending = false;
+        }
+
+        if (!pwm_lifecycle.update(
+                pwm_lifecycle_io,
+                cycle_unlock_requested,
+                std::chrono::steady_clock::now())) {
+            LOG_ERROR << "Helm PWM lifecycle entered fault state";
+            return 1;
         }
 
         // 1. 读取 AD 反馈（4 路舵机）
@@ -215,8 +310,8 @@ int main(int argc, char** argv) {
             pwm_data[i] = controller[i].pwm_out;
         }
 
-        // 3. 输出 PWM 占空比
-        {
+        // 3. 解锁并等待至少 30 ms 后才输出 PWM 占空比
+        if (pwm_lifecycle.pwm_enabled()) {
             using namespace MB_DDF::HW;
             PwmRawOutputs raw_outputs = {};
             raw_outputs.enable_mask = 0x0F;
@@ -237,10 +332,11 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        static int dd = 0;
-        if ((dd == 0) && (cycle_ins.plug_detach == 0xFF)) {
+        static bool feedback_sequence_started = false;
+        if (!feedback_sequence_started &&
+            cycle_ins.helm_unlock == ProtocolModel::kHelmUnlockRequested) {
             fdb_frame.serial_b = 0;
-            dd = 1;
+            feedback_sequence_started = true;
         } else {
             fdb_frame.serial_b += 1;
         }

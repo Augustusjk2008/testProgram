@@ -162,7 +162,6 @@ export function PerformancePage() {
         <div>
           <span className="performance-summary__eyebrow">POST-RUN ANALYSIS</span>
           <h2>舵机性能分析</h2>
-          <p>仅测量，不参与 Pass/Fail。</p>
         </div>
         <dl>
           <div><dt>任务 ID</dt><dd title={analysis.taskId || snapshot.taskId}>{analysis.taskId || snapshot.taskId || '—'}</dd></div>

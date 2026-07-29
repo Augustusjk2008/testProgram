@@ -26,3 +26,22 @@ TEST(HwPwmDevice, RejectsDutyAbovePeak) {
     EXPECT_FALSE(r);
     EXPECT_EQ(r.status().code, StatusCode::InvalidArgument);
 }
+
+TEST(HwPwmDevice, EncodesDisabledUpdateGateAndAllOutputsOff) {
+    RecordingTransport t;
+    ASSERT_TRUE(t.open());
+    t.preset(0x30, 100);
+    t.preset(0x28, 0x0F);
+    PwmDevice d(t);
+
+    ASSERT_TRUE(d.disable_outputs());
+    ASSERT_TRUE(d.set_update_enabled(false));
+    ASSERT_TRUE(d.apply_outputs(PwmRawOutputs{}));
+
+    const auto& accesses = t.accesses();
+    ASSERT_FALSE(accesses.empty());
+    EXPECT_EQ(accesses.front().offset, 0x28u);
+    EXPECT_EQ(accesses.front().value, 0xFFFFu);
+    EXPECT_EQ(accesses[1].offset, 0x24u);
+    EXPECT_EQ(accesses[1].value, 0xFFFFu);
+}

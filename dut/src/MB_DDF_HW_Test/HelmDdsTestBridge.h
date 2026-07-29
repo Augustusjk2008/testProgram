@@ -77,6 +77,9 @@ public:
     std::optional<ProductErrorCode> poll_feedback(ProductMessage& response);
 
 private:
+    bool publish_command_frame(const std::array<float, 4>& commands,
+                               std::string* error);
+    bool publish_neutral_command(std::string* error);
     void command_loop();
     void receive_feedback(const void* data, size_t size, uint64_t timestamp_us);
 
@@ -86,6 +89,7 @@ private:
     std::atomic_bool active_{false};
     std::atomic_bool publish_failed_{false};
     std::atomic_uint16_t next_serial_{0};
+    bool endpoint_open_{false};
     std::chrono::steady_clock::time_point started_{};
     mutable std::mutex feedback_mutex_;
     std::deque<HelmFeedbackSample> feedback_;

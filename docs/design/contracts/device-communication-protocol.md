@@ -243,11 +243,11 @@ DUT 经 COM3 发送 128 字节 `imu_stream_feedback_response`：B9 为状态、B
 
 `HELM_STREAM` 的运行参数由 `mbddf.helm_stream` Schema 定义：`waveform`、`freq`、`ampl`、`offset`、`start`、`max_freq`、`sweep_duration_s` 和低四位 `enable`。波形为正弦、方波、三角、恒值或连续对数扫频；频率和扫频时长必须为有限正数，通道位图为 `0..15`。测试程序的 DUT 与 Web 界面不限制角度幅值或偏置；舵控程序自身现有的内部限幅保持独立。`max_freq` 与 `sweep_duration_s` 只按波形条件显示，但隐藏时仍执行协议语义校验。DH 的 `config_enable` 和 23 路 `pulse_width[]` 使用同一算法 Schema/运行覆盖机制；配置使能时，23 路回读判据以本次实际下发值为准，关闭配置使能时脉宽只读、不参与本次写入一致性判定。
 
-PC 经 COM3 发送一次 `HELM_START 07/10`，DUT `HelmDdsTestBridge` 建立 `local:://helm_command` writer 与 `local:://helm_feedback` reader。DUT 按 1 ms 周期生成一个共用波形，启用位对应的舵通道使用该值，未启用通道发送零；连续对数扫频从 `freq` 过渡到 `max_freq`，超过 `sweep_duration_s` 后指令归零，但反馈转发与测试会话保持活动，直到 PC 手动 STOP。每个 `HELM_FEEDBACK 07/01` 使用 232 字节 payload，包含首个 DDS 时间戳和 1..5 个完整 41 字节反馈样本；宿主拆成逐样本事件，并记录产品帧、`serial_a`、`serial_b` 的不连续与缺失计数、批内索引和全部生效参数。
+PC 经 COM3 发送一次 `HELM_START 07/10`，DUT `HelmDdsTestBridge` 建立 `local:://helm_command` writer 与 `local:://helm_feedback` reader。START 先发布一帧四路零位解锁指令；27 字节 DDS 指令的 B27/U8 名为 `helm_unlock`，连续测试首帧、运行帧和 STOP 回零尾帧均固定为 `0xFF`，它不属于 COM3 CSV 或界面参数。DUT 按 1 ms 周期生成一个共用波形，启用位对应的舵通道使用该值，未启用通道发送零；连续对数扫频从 `freq` 过渡到 `max_freq`，超过 `sweep_duration_s` 后指令归零，但反馈转发与测试会话保持活动，直到 PC 手动 STOP。STOP 停止指令线程后在关闭 DDS 端点前发布“四路零位 + `helm_unlock=0xFF`”尾帧，不发送关舵锁或禁止 PWM 语义。每个 `HELM_FEEDBACK 07/01` 使用 232 字节 payload，包含首个 DDS 时间戳和 1..5 个完整 41 字节反馈样本；宿主拆成逐样本事件，并记录产品帧、`serial_a`、`serial_b` 的不连续与缺失计数、批内索引和全部生效参数。
 
 DDS 时间来自设备单调时钟而非 UTC。宿主保留每条原始值为 `dds_timestamp_us`，以本次 `executeStep()` 第一条有效 DDS 样本为 0 生成 `streamElapsedUs`，并用一次 PC UTC 锚点映射公开 `timestampUs`；后续样本使用协议携带的真实 DDS 增量，不强制重建为 1 ms 等间隔。DDS 原始值、相对值和 UTC 映射值当前统一限制在 `0..9007199254740991`，确保 WebSocket v1 的 JSON number 可无损表达，超限或跨样本倒退均视为协议错误。U16 连续性采用半环规则：前进距离 `2..0x7FFF` 才计缺失数，连续、自然回绕、重复、反向/重启候选和恰好半环均不制造巨额缺失计数。
 
-独立目标 `MB_DDF_v2_HelmControl` 使用与 `tmp/helm_control` 一致的 DDS 主题和 27/41 字节协议模型，用户可按任意顺序独立启动或停止。DUT 服务只启停本次 DDS bridge，不创建、终止、探测或占有舵控进程；`HELM_BOARD_TEST 07/02` 继续走直接板级硬件路径，与设备流没有生命周期、互斥、忙状态或其他形式的绑定。DDS 端点使用 create-or-get 语义，启动顺序不构成协议约束。
+独立目标 `MB_DDF_v2_HelmControl` 使用与 `tmp/helm_control` 一致的 DDS 主题和 27/41 字节协议模型，用户可按任意顺序独立启动或停止。舵控进程打开 PWM 后首先直接禁止四路输出，随后关闭 update gate 并写入零 duty；首次解锁请求将高有效 DIDO DO0 置高，从写入成功起使用单调时钟至少等待 30 ms 才使能 PWM。成功后在进程内单向锁存，重复请求、字段回落或 STOP 都不重新上锁、禁止 PWM 或重置 30 ms 计时。DUT 服务只启停本次 DDS bridge，不创建、终止、探测或占有舵控进程；`HELM_BOARD_TEST 07/02` 继续走直接板级硬件路径且不包含舵锁流程，与设备流没有生命周期、互斥、忙状态或其他形式的绑定。DDS 端点使用 create-or-get 语义，启动顺序不构成协议约束。
 
 宿主算法校验 START ACK 后持续读取 `07/01`；请求停止后发送一次 STOP 并校验 ACK。停止时零有效样本判为 `SampleFail`，一条及以上通过。第一阶段只保存完整原始样本与生效参数，不定义性能计算、伯德图或分析结果接口。
 

@@ -1,5 +1,6 @@
 #include "MB_DDF_HW_Test/HelmDdsTestBridge.h"
 
+#include "HelmControl/ProtocolModel/helm_command_contract.h"
 #include "MB_DDF/DDS/DDSCore.h"
 #include "MB_DDF/Debug/Logger.h"
 
@@ -240,6 +241,13 @@ ProductErrorCode HelmDdsTestBridge::start(
         endpoint_->close();
         return ProductErrorCode::HelmDdsFailed;
     }
+    endpoint_open_ = true;
+    if (!publish_neutral_command(&error)) {
+        LOG_ERROR << "[HW-TEST] 发布舵控 DDS 解锁首帧失败：" << error;
+        endpoint_->close();
+        endpoint_open_ = false;
+        return ProductErrorCode::HelmDdsFailed;
+    }
     started_ = std::chrono::steady_clock::now();
     active_.store(true, std::memory_order_release);
     command_thread_ = std::thread([this] { command_loop(); });
@@ -249,12 +257,21 @@ ProductErrorCode HelmDdsTestBridge::start(
 ProductErrorCode HelmDdsTestBridge::stop() {
     active_.store(false, std::memory_order_release);
     if (command_thread_.joinable()) command_thread_.join();
-    if (endpoint_) endpoint_->close();
+    ProductErrorCode result = ProductErrorCode::Ok;
+    if (endpoint_ && endpoint_open_) {
+        std::string error;
+        if (!publish_neutral_command(&error)) {
+            LOG_ERROR << "[HW-TEST] 发布舵控 DDS 回零尾帧失败：" << error;
+            result = ProductErrorCode::HelmDdsFailed;
+        }
+        endpoint_->close();
+        endpoint_open_ = false;
+    }
     {
         std::lock_guard<std::mutex> lock(feedback_mutex_);
         feedback_.clear();
     }
-    return ProductErrorCode::Ok;
+    return result;
 }
 
 bool HelmDdsTestBridge::active() const noexcept {
@@ -263,10 +280,10 @@ bool HelmDdsTestBridge::active() const noexcept {
 
 std::optional<ProductErrorCode> HelmDdsTestBridge::poll_feedback(
     ProductMessage& response) {
-    if (!active()) return std::nullopt;
     if (publish_failed_.exchange(false, std::memory_order_acq_rel)) {
         return ProductErrorCode::HelmDdsFailed;
     }
+    if (!active()) return std::nullopt;
     std::array<HelmFeedbackSample, kHelmFeedbackBatchMaximum> batch{};
     size_t count = 0;
     {
@@ -288,6 +305,25 @@ std::optional<ProductErrorCode> HelmDdsTestBridge::poll_feedback(
         std::span<const HelmFeedbackSample>(batch.data(), count), response);
 }
 
+bool HelmDdsTestBridge::publish_command_frame(
+    const std::array<float, 4>& commands,
+    std::string* error) {
+    ProtocolModel::Helm_ins_frame frame{};
+    frame.serial_a = next_serial_.fetch_add(1, std::memory_order_relaxed);
+    frame.Q = 0.0F;
+    frame.temp_imu = 30.0;
+    frame.temp_ground = 30.0;
+    frame.helm_unlock = ProtocolModel::kHelmUnlockRequested;
+    std::copy(commands.begin(), commands.end(), frame.ins);
+    const auto bytes = ProtocolModel::Helm_ins_frameProtocol::packFrame(frame);
+    return endpoint_->publish_command(
+        std::span<const char>(bytes.data(), bytes.size()), error);
+}
+
+bool HelmDdsTestBridge::publish_neutral_command(std::string* error) {
+    return publish_command_frame(std::array<float, 4>{}, error);
+}
+
 void HelmDdsTestBridge::command_loop() {
     auto next = started_;
     while (active_.load(std::memory_order_acquire)) {
@@ -297,21 +333,13 @@ void HelmDdsTestBridge::command_loop() {
         if (!std::all_of(commands.begin(), commands.end(),
                          [](float value) { return std::isfinite(value); })) {
             publish_failed_.store(true, std::memory_order_release);
-        } else {
-            ProtocolModel::Helm_ins_frame frame{};
-            frame.serial_a = next_serial_.fetch_add(1, std::memory_order_relaxed);
-            frame.Q = 0.0F;
-            frame.temp_imu = 30.0;
-            frame.temp_ground = 30.0;
-            frame.plug_detach = 0;
-            std::copy(commands.begin(), commands.end(), frame.ins);
-            const auto bytes = ProtocolModel::Helm_ins_frameProtocol::packFrame(frame);
-            std::string error;
-            if (!endpoint_->publish_command(
-                    std::span<const char>(bytes.data(), bytes.size()), &error)) {
-                LOG_ERROR << "[HW-TEST] 发布舵控 DDS 指令失败：" << error;
-                publish_failed_.store(true, std::memory_order_release);
-            }
+            break;
+        }
+        std::string error;
+        if (!publish_command_frame(commands, &error)) {
+            LOG_ERROR << "[HW-TEST] 发布舵控 DDS 指令失败：" << error;
+            publish_failed_.store(true, std::memory_order_release);
+            break;
         }
         next += kHelmCommandPeriod;
         std::this_thread::sleep_until(next);

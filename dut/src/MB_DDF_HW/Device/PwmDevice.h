@@ -46,6 +46,7 @@ public:
     Result<void> configure(const PwmConfig& config);
     Result<void> set_duty_mode_unsigned();
     Result<void> set_update_enabled(bool enabled);
+    Result<void> disable_outputs();
     Result<void> apply_outputs(const PwmRawOutputs& outputs);
     Result<void> apply_normalized_outputs(const PwmNormalizedOutputs& outputs);
     Result<PwmState> read_state() const;

@@ -200,19 +200,28 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
    `2*pi*f0*f1*T/(f1-f0)*ln(f1*T/(f1*T-t*(f1-f0))) + start`，`T` 取请求中的
    `sweep_duration_s`；`f0 == f1` 时退化为定频。超过 T 后命令归零，但反馈保持到 STOP。
 3. START 只打开 `HelmDdsTestBridge`：create-or-get `local:://helm_command` writer 与
-   `local:://helm_feedback` reader，以 1 ms 周期发布四路共用波形，未启用通道为零。
-   writer 发送严格 27 字节 `Helm_ins_frame`；reader 只接受严格 41 字节
-   `Helm_fdb_frame`。
+   `local:://helm_feedback` reader，先同步发布一帧四路零位解锁指令，成功后才以 1 ms
+   周期发布四路共用波形，未启用通道为零。writer 发送严格 27 字节
+   `Helm_ins_frame`；B27/U8 名为 `helm_unlock`，`0x00` 表示无请求，连续测试的所有指令
+   均固定为 `0xFF` 请求解锁。该字段不属于 COM3 产品 CSV，不由 PC/Web 设置；仓库
+   未包含原 Protocol Modeling 工具的源模型，现行线序以签入的两份协议头快照及回归
+   测试为准。reader 只接受严格 41 字节 `Helm_fdb_frame`。
 4. 每个 `HELM_FEEDBACK` 使用 232 字节数据段，包含首个 DDS 微秒时间戳和 1..5 个完整
    样本；每样本保留 U16 相对时间、`serial_a/serial_b`、版本、四路 `ins/fdb`、六项
    2-bit 自检及 timeout。反馈使用产品端统一发送器取得产品帧序号。
-5. STOP 只停止本次 bridge、关闭 DDS 端点并清空反馈队列，不访问板级 PWM/AD7606。
+5. STOP 先停止并 `join` 本次指令线程，再于 DDS 端点关闭前发布一帧四路零位且
+   `helm_unlock=0xFF` 的尾帧，然后关闭端点并清空反馈队列。它不访问板级
+   `07/02` PWM/AD7606 路径，也不发送关舵锁或禁止 PWM 语义。
    同一流的 START ACK、主动反馈和 STOP ACK 保持线序：已开始发送的反馈先完成，STOP ACK
    之后不得再发送该会话旧反馈。DDS 端点或发布失败返回 `HELM_DDS_FAILED (0x0301)`；同一
    bridge 重复 START 可返回 `TASK_BUSY`，但 `HELM_BOARD_TEST 07/02` 与该状态无关。
 6. `MB_DDF_v2_HelmControl` 是用户独立启停的进程，测试服务不创建、终止、探测、等待或
-   占有它；DDS create-or-get 允许任意启动顺序。连续实测与 `07/02` 板级测试没有生命
-   周期、互斥、忙状态或其他绑定。
+   占有它；DDS create-or-get 允许任意启动顺序。舵控进程在打开 PWM transport 后先直接将
+   四路 enable 写为全关，随后关闭 update gate 并写入零 duty；首次 `helm_unlock=0xFF` 由控制线程
+   将 DIDO DO0 置高，从写入成功时刻起使用单调时钟至少等待 30 ms 才使能 PWM。
+   成功后该状态在进程内单向锁存，后续 `0x00`、重复 `0xFF` 或 STOP 均不会关舵锁、禁止
+   PWM 或重置 30 ms 计时。连续实测与 `07/02` 板级测试没有生命周期、互斥、忙状态
+   或其他绑定，`07/02` 不包含舵锁流程。
 
 ### 5.4 定时器
 

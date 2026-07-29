@@ -68,14 +68,18 @@ phase(t) = 2*pi*f0*f1*T/(f1-f0) * ln(f1*T/(f1*T-t*(f1-f0))) + start
 
 - `f0 == f1` 时退化为定频正弦。
 - `t > T` 后四路指令输出零，但测试与反馈流保持活动，直至用户手动停止。
-- 指令帧的 `Q=0`、`temp_imu=30`、`temp_ground=30`、`plug_detach=0` 作为首期固定值，不暴露为界面参数。
+- 指令帧的 `Q=0`、`temp_imu=30`、`temp_ground=30` 为固定值；B27/U8 从
+  `plug_detach` 更名为 `helm_unlock`，连续测试的首帧、运行帧和 STOP 回零尾帧均固定为
+  `0xFF`。该 DDS 内部字段不暴露为 COM3 或界面参数，不改变 27 字节线序。
 
 ## DUT 结构
 
 `dut/` 新增两个相互独立的组成部分：
 
 1. 独立 `helm_control` 可执行目标：从 `tmp/helm_control` 提升正式源码，继续使用真实 27 字节 `Helm_ins_frame` 与 41 字节 `Helm_fdb_frame` DDS payload；不修改内部舵角钳位。
-2. `HW_TEST` 内的 `HelmDdsTestBridge`：接收 PC START 参数，启动 1 ms 指令生成；发布 `helm_command`，订阅 `helm_feedback`，按产品协议批量上送；收到 STOP 后停止生成并返回 ACK。
+2. `HW_TEST` 内的 `HelmDdsTestBridge`：接收 PC START 参数，先发布零位解锁首帧再启动
+   1 ms 指令生成；发布 `helm_command`，订阅 `helm_feedback`，按产品协议批量上送；
+   收到 STOP 后停止生成，在关闭 DDS 前发布零位解锁尾帧并返回 ACK。
 
 桥接不直接访问 PWM 或 AD7606。`HELM_BOARD_TEST 07/02` 继续走现有直接硬件路径，并移除与连续舵控活动状态相关的 `TASK_BUSY` 判断。
 
@@ -85,11 +89,15 @@ phase(t) = 2*pi*f0*f1*T/(f1-f0) * ln(f1*T/(f1*T-t*(f1-f0))) + start
 
 - `HELM_START 07/10`：增加 `sweep_duration_s:F32`，其余字段保持 `waveform/freq/ampl/offset/start/max_freq/enable`。
 - `HELM_FEEDBACK 07/01`：改为携带真实 DDS 反馈语义，不再由 HW_TEST 自行读 AD7606。
-- `HELM_STOP 07/11`：停止 DUT 指令生成和反馈上送，不管理 `helm_control` 进程。
+- `HELM_STOP 07/11`：停止 DUT 指令生成和反馈上送，发布“四路零位 +
+  `helm_unlock=0xFF`”尾帧，不管理 `helm_control` 进程也不请求关舵锁或禁止 PWM。
 
 反馈按最多五个样本批量编码，以适配单字节物理长度和 614400/8E1 带宽。批次携带首样本 DDS 时间戳，每个样本携带时间增量以及完整反馈语义：`serial_b`、`version`、四路 `fdb`、自检位组、`timeout`、`serial_a` 和四路回显 `ins`。不足五个样本时允许低延迟发送短批次。
 
-START 只表示 DUT 生成器和 DDS 端点已就绪，不启动或管理 `helm_control`。运行中长期没有反馈应作为测试数据/通信异常报告，但不得触发对远端进程的控制动作。STOP 必须保持可调用并完成本测试自身的收尾。
+START 只表示 DUT 生成器、DDS 端点和解锁首帧发布已就绪，不启动或管理
+`helm_control`。独立舵控程序启动先禁止 PWM，将首次 `0xFF` 锁存为 DIDO DO0 高电平解锁，
+至少 30 ms 后再使能 PWM；成功后不反向上锁。运行中长期没有反馈应作为测试数据/
+通信异常报告，但不得触发对远端进程的控制动作。STOP 必须保持可调用并完成本测试自身的收尾。
 
 ## PC 执行与样本契约
 
@@ -118,6 +126,9 @@ START 只表示 DUT 生成器和 DDS 端点已就绪，不启动或管理 `helm_
 - 参数 schema、默认值合并、条件字段、服务端二次校验和未知字段拒绝的宿主单元测试。
 - WebSocket 描述与 START 参数契约测试；前端动态表单、按配置持久化和运行期锁定测试。
 - 舵机执行器的 START、批量反馈拆样本、序号/时间戳、STOP、取消和无反馈错误测试。
-- DUT 指令生成公式、1 ms 序列、扫频结束归零、通道位图、DDS payload 编解码和五样本批次测试。
+- DUT 指令生成公式、1 ms 序列、扫频结束归零、通道位图、DDS payload 编解码、解锁首帧/
+  STOP 回零尾帧和五样本批次测试。
+- 舵控生命周期测试覆盖启动强制关 PWM、DO0 先解锁、29/30 ms 边界、重复解锁不重置、
+  字段回落/STOP 不反向和硬件失败粘滞故障。
 - `HELM_BOARD_TEST` 与舵机连续流无互斥的回归测试。
 - 独立舵控目标 AArch64 交叉构建；目标板实测记录两个进程的人工启停方式、DDS Topic、COM3 数据率、序号连续性和完整原始数据。

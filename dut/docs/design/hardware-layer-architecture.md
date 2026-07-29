@@ -332,6 +332,7 @@ Logger 初始化和编译期入口分派，DDS Core 不依赖测试服务或 `MB
 - 配置载波计数、峰值和锯齿/三角波。
 - 设置无符号占空比模式。
 - 开关统一更新。
+- 不经 peak/方向/duty 读改流程，直接把四路 enable 写为全关，用于启动安全态。
 - 写入四路原始输出。
 - 把 `[-1.0, 1.0]` 归一化值转换为方向和占空比。
 - 读取完整状态。
@@ -343,7 +344,9 @@ Logger 初始化和编译期入口分派，DDS Core 不依赖测试服务或 `MB
 3. 再写四路 duty。
 4. 最后按需更新 enable。
 
-先方向后占空比用于避免方向切换瞬间产生错误输出。
+先方向后占空比用于避免方向切换瞬间产生错误输出。`disable_outputs()` 是启动
+关断例外：它直接向 Enable 寄存器写 `0xFFFF`，保证舵控程序在其他 PWM 配置之前
+尽早禁止四路输出，随后再关闭 update gate 并写入零 duty。
 
 ### 6.4 Ad7606Device
 
@@ -655,23 +658,32 @@ SYSTEM_STATUS 只使用可追溯事实源：CPU/内存/上电时间来自 `/proc
 角度幅值或偏置边界。
 
 `HelmDdsTestBridge` 在 START 时 create-or-get `local:://helm_command` writer 和
-`local:://helm_feedback` reader，以单调时钟每 1 ms 生成一条四路舵角指令。普通波形使用
+`local:://helm_feedback` reader，先发布一帧四路零位且 `helm_unlock=0xFF` 的解锁指令，
+成功后以单调时钟每 1 ms 生成一条四路舵角指令。普通波形使用
 `phase = 2*pi*freq*t + start`；连续对数扫频在 `f0 != f1` 时使用
 `phase = 2*pi*f0*f1*T/(f1-f0)*ln(f1*T/(f1*T-t*(f1-f0))) + start`，其中 `T` 来自
 `sweep_duration_s`，`f0 == f1` 时退化为定频。超过 T 后四路指令归零，但 DDS 反馈订阅和
 COM3 主动回告继续运行到 STOP。启用通道共用该波形，未启用通道固定为零。
 
-DDS 指令严格使用 `tmp/helm_control` 对应的 27 字节 `Helm_ins_frame`，独立
+DDS 指令严格使用 `tmp/helm_control` 对应的 27 字节 `Helm_ins_frame`；B27/U8
+为 `helm_unlock`，`0x00` 表示无解锁请求，连续测试的每帧固定为 `0xFF`。独立
 `MB_DDF_v2_HelmControl` 回送 41 字节 `Helm_fdb_frame`。bridge 完整保留 `serial_a`、
 `serial_b`、版本、四路 `ins/fdb`、六项 2-bit 自检和 timeout，并以首样本 DDS 微秒时间戳
 加 U16 相对时间打包；每个 232 字节 `07/01` payload 包含 1..5 个完整样本。队列有界，
 发送失败通过 `HELM_DDS_FAILED` 上报；同一流的 START ACK、反馈和 STOP ACK 严格保序，
-已进入发送的反馈先于 STOP ACK，ACK 后不再补发旧反馈。STOP 只停止 bridge、关闭本次 DDS
-端点并清空队列。
+已进入发送的反馈先于 STOP ACK，ACK 后不再补发旧反馈。STOP 停止指令线程后先发布
+“四路零位 + `helm_unlock=0xFF`”尾帧，再关闭本次 DDS 端点并清空队列。
 
-`MB_DDF_v2_HelmControl` 由用户独立启动或停止，内部保留自身舵角限幅。HW_TEST 不创建、
+`MB_DDF_v2_HelmControl` 由用户独立启动或停止，内部保留自身舵角限幅。程序打开
+PWM transport 后的首个控制写是 `disable_outputs()` 直接禁止四路 PWM，随后关闭 update gate
+并写入零 duty；未收到解锁请求时不允许输出。首次 `helm_unlock=0xFF` 使控制线程将全局基址
+`0x140000` 的 DIDO DO0 置为高有效，从成功写入起使用 `steady_clock` 至少等待 30 ms，
+到期后才开启 update gate 和四路 PWM。该状态在进程内不可逆；重复请求不重置计时，字段
+回落或 STOP 不关闭 DO0/PWM，四路零位指令由闭环继续回零。任一首次关闭、解锁或使能
+硬件动作失败时进入粘滞故障且不标记 PWM 已使能。HW_TEST 不创建、
 终止、探测、占有或等待该进程；两个程序启动顺序不限。`07/02` 不查询 bridge，bridge 也
-不访问 `07/02` 的 PWM/AD7606 路径，二者没有生命周期、互斥、忙状态或其他形式的绑定。
+不访问 `07/02` 的 PWM/AD7606 路径，二者没有生命周期、互斥、忙状态或其他形式的绑定；
+`07/02` 不包含舵锁流程。
 
 #### COM4 惯测设备流边界
 

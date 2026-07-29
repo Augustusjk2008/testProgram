@@ -245,6 +245,7 @@ if(NOT BUILD_LIBRARY AND MB_DDF_APP_MODE STREQUAL "HW_TEST")
         ${DDS_CORE_SOURCES}
         src/MB_DDF/Timer/SystemTimer.cpp
         src/MB_DDF/Timer/ChronoHelper.cpp
+        src/HelmControl/HelmPwmLifecycle.cpp
         src/HelmControl/AppMain.cpp
     )
     configure_dds_target(${HELM_CONTROL_TARGET} PRIVATE)

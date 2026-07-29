@@ -114,11 +114,13 @@ if(ENABLE_HW_UNIT_TESTS AND TARGET MB_DDF_HW)
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_system_test_provider.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_hardware_test_provider.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_helm_dds_bridge.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_helm_pwm_lifecycle.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_HW_Test/ProductProtocol.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_HW_Test/HardwareTestService.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_HW_Test/SystemTestProvider.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_HW_Test/HardwareTestProvider.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_HW_Test/HelmDdsTestBridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/HelmControl/HelmPwmLifecycle.cpp
         ${CMAKE_SOURCE_DIR}/src/MB_DDF_Demo/HardwareExamples.cpp
         ${DDS_TESTED_SOURCES}
     )

@@ -38,6 +38,15 @@
 
 2026-07-29 落地舵机停止后性能 sidecar 后，使用仓库内 37 份协议快照执行 `hwtest.ps1 test` Debug 及显式 Release 全量构建/CTest；两个配置各有 339 条注册项，均为 338 项执行通过、1 项条件跳过、0 失败。跳过项仍是缺少外部同事导入附件的 `TestConfigManagerTest.ImportedColleagueSampleLoadsAndBuildsThroughMigrationBoundary`，不计为通过。Release 首轮发现 Origin 白名单测试把客户端断开误当作异步 `DropCleanup` 已结束的竞态；测试按独立服务实例隔离后在 Release 连续 20 次通过，随后 Debug/Release 全量均通过。新增证据覆盖 DDS bool 写入契约、版本化流式捕获、五种波形、正反/截断/纯时延扫频、资源限制、尾样本双栅栏、分析身份、协作取消与 join 超时、诊断保留、TXT SHA-256、确定性关键点投影、抽样前全序列有限值校验、最终发布摘要的完整 8 KiB 预检、完整出站 16 KiB、真实 Qt UDP 舵机捕获—分析—结果查询链，以及分析结果不修改采集 verdict/error。浏览器前端为 15 个文件、61/61 Vitest 通过，TypeScript/Vite 构建生成仅含 `dist/index.html` 的 520,792 字节单文件。DUT 主机侧 `dut/tools/tests` 为 20/20 pytest 通过，AArch64 Debug `hw_tests` 画像交叉构建 `MB_DDF_HW_Tests`/`MB_DDF_HW_Smoke` 等目标成功；未部署或运行目标板，也未启动真实舵机台架，不能据此增加真机性能证据等级。
 
+2026-07-29 舵机 DDS 解锁与 PWM 门控收敛后，先在新增生命周期测试缺少 `HelmPwmLifecycle`
+时观察到 AArch64 `hw_tests` 交叉编译按预期失败，实现后重新交叉构建成功。新增测试源覆盖
+DDS B27 `helm_unlock`、解锁首帧、运行帧、STOP 回零尾帧、发布失败可观测性，以及启动强制
+关 PWM、DO0 解锁、29/30 ms 边界、重复请求不重置、不反向和三类首次 I/O 失败。
+`hw_test_debug` 与 `hw_test_release` 均交叉构建 `MB_DDF_v2` 和独立 `MB_DDF_v2_HelmControl`
+成功，37 份产品 CSV 校验通过，`dut/tools/tests` 为 20/20 pytest 通过。由于当前主机无 AArch64/QEMU
+执行环境且未获得目标板/真实舵机台架运行授权，新增 GoogleTest 只能证明已进入并通过交叉编译，
+不记为运行通过，也不构成 DO0 电平、30 ms 真实时序、PWM 输出或机械回零证据。
+
 40 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 328。
 
 浏览器前端当前有 15 个 `*.test.ts` 文件、61 条 Vitest。除既有协议、参数、遥测缓冲/图组和 DI 行为外，新增覆盖后处理旧服务端回退、安全身份与有限数组解析、只读 action、四通道缓存隔离、迟到 reply 丢弃、自动导航一次、分析阶段文案、伯德 `null` 空洞、叠加对齐和 Hz/rad/s 纯显示转换。它们由 `npm test` 独立运行，不计入上述 339 条 CTest。
