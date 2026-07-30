@@ -1,6 +1,8 @@
 # HWTEST 浏览器遥测控制台
 
-`front/` 是独立的 React 19 + TypeScript + Vite 浏览器前端。它不进入宿主 CMake、不提供后端或 DUT I/O，只通过回环 WebSocket 消费 `hwtest_web` 的应用层快照、样本和只读分析结果。
+`front/` 是独立的 React 19 + TypeScript + Vite 浏览器前端。它不进入宿主 CMake、不提供后端或 DUT I/O，只通过回环 WebSocket 消费 `hwtest_web` 的应用层快照、样本和只读分析结果；该 WebSocket 是宿主控制面，不是产品通讯协议。
+
+[`dut/`](../dut/README.md) 是唯一可信的产品端软件来源，`dut/docs/design/product_protocol_csv/` 是唯一批准的产品协议快照。仓库外副本不构成产品事实或验证证据。
 
 ## 启动
 
@@ -19,25 +21,17 @@ npm ci
 npm run dev
 ```
 
-打开 `http://127.0.0.1:5173`。默认连接 `ws://127.0.0.1:18765/ws`；需要改端口时编辑 `.env.local` 中的 `VITE_HWTEST_WS_URL`。
+打开 `http://127.0.0.1:5173`。默认连接 `ws://127.0.0.1:18765/ws`；需要改后端端口时编辑 `.env.local` 中的 `VITE_HWTEST_WS_URL`。
 
 ## 当前功能
 
-- 支持深色/浅色主题切换并在浏览器本地保留选择，包含任务、曲线、性能、诊断四页。
-- WebSocket 连接后自动读取配置目录并加载默认测试项，正常操作路径为连接设备后开始测试；加载失败时可手动重试。
-- 全局运行控制条贯穿所有页面，支持单次和 PC 周期测试。PC 周期只发送一次 `start`，轮间隔可为 `0–3,600,000 ms`；`0` 表示上一轮完整收发结束后立即开始下一轮，仍由 BIZ 严格串行调度。轮数 `0` 仍表示持续运行。
-- “串口测试”以一个单次入口选择内部回环或 PC-DUT 回显，二者都可选择 COM1/COM2/COM4 并配置 `1..100000` 的循环次数；回显还要求从系统枚举中选择独立 PC 本地串口，并在一次运行内逐轮完成固定 114 字节往返。页面只消费 `echo_bytes`、`mismatch_count` 等紧凑摘要，不把 114 个字节字段加入实时曲线。
-- 连接时若 `hello.capabilities.telemetryBatch` 明确声明批传能力，浏览器会在读取配置和自动加载前协商 `setTelemetryDelivery({mode:"batch"})`；协商失败或旧服务端未声明能力时安全保持旧的单条 `sample` 模式。
-- 选择 `mbddf.di_read` 后，首页按后端 descriptor 紧凑显示 16 路 DUT DI 激励开关与 `di_state[0]` 回显状态，并保留只读 `di_state[1]` 诊断位图；快速操作会合并并串行发送带 revision 的请求，失败时回滚到后端权威状态，且可一键恢复安全态。
-- 设备主动持续回告保留独立运行语义，只有当前测试配置声明支持时才显示对应模式；当前 SYSTEM_STATUS 不支持该模式，后端算法返回 `CapabilityUnsupported`。
-- 自动发现样本中的数值字段，允许全部同图、每项一图或自定义图组；横轴固定为采样时间，曲线配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存在 `localStorage`。
-- uPlot Canvas 绘图；浏览器只保留 50,000 点有界环形缓存，批次内样本一次摄入并最多约 10 Hz 提交到 UI。图表直接扫描环形缓存，按字段、像素桶保留极小/极大值与首尾点，不先复制完整窗口；uPlot 实例持续复用并只更新数据。诊断事件最多保留 500 条。
-- 浏览器内部仍统计累计接收、当前缓存、缓存淘汰数和样本序号连续性，但运行控制条不显示这些诊断计数。批次继续严格校验安全整数序号、长度、首尾关系和单一任务；连续测试的全量事实源仍是后端启用保存后生成的 TXT。
-- DH 点火的电源/回线使能以复选框映射协议值 `0/1`，23 路通道支持全选/全不选；`delay_frames` 显示为“等待帧数”。数字量输出显示 16 路配置，DO5/DO6 固定关闭，DO3/DO4 标注低有效，并区分完整 DUT 回读与只覆盖 DO2/DO1 的 PXI-6259 外部物理验证。
-- 定时器概览按 `[0,2)`、`[2,4)`、`[4,8)`、`[8,16)`、`[16,32)`、`[32,64)`、`[64,100)`、`≥100 µs` 显示八桶分布和合计；终态重连可从快照恢复，异常计数只提示统计不完整，不改变后端 verdict。
-- `mbddf.helm_stream` descriptor 声明 `postRunAnalysis.supported` 时启用“性能”导航。页面读取 `snapshot.analysis` 的小型摘要，按 `{taskId, analysisGeneration}` 缓存四个通道的 `analysisResult`；新身份会清空缓存，迟到 reply 不覆盖当前结果，读取动作不占全局 `busyAction`。旧服务端缺字段时安全回退为不支持分析。
-- 性能页只展示后端 `analysisResult` 的通道摘要和伯德投影，不从实时 `SampleBuffer` 计算性能。扫频图使用 uPlot 对数频率轴、`spanGaps=false` 的 `null` 空洞、幅相同步游标；Hz/rad/s 只改变显示，不改变后端保存的 Hz 数据。
-- 用户手动 STOP 后，页面首次观察到当前 `{taskId, analysisGeneration}` 进入 `queued` 或后续分析状态时自动跳到性能页一次；用户离开页面不会取消分析，也不会被后续进度强制跳回。分析期间新会话写按钮按后端门禁状态禁用，真正断线、`disconnect` 或 `quit` 会触发后端协作取消。
+- 连接后读取后端配置和 descriptor，提供配置选择、设备准备、配置声明支持的运行模式、算法参数编辑、遥测曲线和诊断。
+- `mbddf.di_read` 总览页按当前 descriptor 显示已配置的 DI 激励、回显和诊断；通道数量与标识始终以当前快照为准。
+- 支持串口回显辅助端口、DH 参数、数字量输出、板级结果和连续数据展示；设备 I/O、数据保存和安全动作都由后端负责。
+- descriptor 声明后处理能力时显示性能页；页面只读取后端 `analysisResult`，不从实时缓存计算权威性能结果。
+- 主题、运行参数和图表工作区会使用浏览器本地存储。损坏存储、快照防御、隐藏参数和分析结果重试等当前限制见[WebSocket 前端协议契约的当前实现限制](../docs/design/contracts/websocket-frontend-protocol.md#71-当前浏览器实现限制)。
+
+请求字段、能力协商、兼容、连接和关闭语义只以[WebSocket 前端协议契约](../docs/design/contracts/websocket-frontend-protocol.md)为准；产品协议和硬件证据边界分别见[设备通讯协议契约](../docs/design/contracts/device-communication-protocol.md)与[测试规范](../docs/design/testing/testing-specification.md)。
 
 ## 验证
 
@@ -46,4 +40,4 @@ npm test
 npm run build
 ```
 
-`npm run build` 会生成已内联 JS、CSS 和 Geist 字体的 `front/dist/index.html`，可以直接双击打开；该单文件仍需可用的 `hwtest_web` WebSocket 后端才能显示实时数据。前端/算法自动化与模拟消息不构成 DDS、真实舵机或目标板性能证据；真机仍需在隔离、明确授权的台架保存波形参数、STOP 时机、原始 TXT、性能 JSON、前端截图与独立参考量。前端协议字段和关闭语义以 [WebSocket 前端协议契约](../docs/design/contracts/websocket-frontend-protocol.md) 为准。
+`npm run build` 生成已内联 JS、CSS 和 Geist 字体的 `front/dist/index.html`，可直接打开，但仍需可用的 `hwtest_web` 后端才能显示实时数据。前端自动化和模拟消息只证明浏览器控制面，不构成 DUT、真实舵机、PXI 或目标板验收。

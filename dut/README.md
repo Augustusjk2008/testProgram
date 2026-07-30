@@ -1,7 +1,7 @@
 # MB_DDF_v2
 
 > 项目版本：`1.0.0`
-> 文档最后更新：`2026-07-29`
+> 文档最后更新：`2026-07-30`
 
 MB_DDF_v2 是面向 AArch64 Linux 的 C++20 工程，包含共享内存 DDS、XDMA 硬件抽象层、
 产品硬件测试服务、只读硬件 Demo，以及配套的 Windows PyQt5 串口工具。Windows 主机
@@ -18,13 +18,17 @@ MB_DDF_v2 是面向 AArch64 Linux 的 C++20 工程，包含共享内存 DDS、XD
 
 ## 运行环境
 
-Windows 主机需要 PowerShell 5.1+、CMake 3.10+、`make.exe` 或
+Windows 主机需要 PowerShell 5.1+、能识别 `cxx_std_20` 的 CMake、`make.exe` 或
 `mingw32-make.exe`、AArch64 GNU 工具链、匹配目标板的 sysroot，以及 `ssh`/`scp`。
 工程不提供 C++ host/native 构建路径。
 
+当前根 `CMakeLists.txt` 与测试 CMake 仍声明最低版本 3.10，但目标同时请求
+`cxx_std_20`；因此 3.10 只是现有声明，不是已验证可用的最低版本。构建记录必须写明实际
+CMake 版本，文档不得把任一更高版本写成已经由工程门禁保证的下限。
+
 目标板需要 AArch64 Linux、SSH、`/dev/shm` 和对应的 XDMA 设备节点；CPU SPI Flash
-完整能力测试还需要 `/dev/spidev0.0`。默认目标板地址为 `192.168.1.29`，测试目录为
-`/home/sast8/user_tests`。完整环境变量和工具链参数见
+完整能力测试还需要 `/dev/spidev0.0`。部署目标由 `build.ps1`、`debug.ps1` 的参数指定；
+完整环境变量和工具链参数见
 [编译、运行与调试指南](docs/guides/build-and-debug-guide.md)。
 
 PC 串口工具支持 Windows 7 SP1 x64 和 Python 3.8.18，依赖锁定在
@@ -66,32 +70,10 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 help
 build\aarch64\hw_test\Release\MB_DDF_v2_HelmControl
 ```
 
-当前 `debug.bat`/`debug.ps1` 没有独立的舵控快捷入口；`debug.bat hw_test_run` 会构建上述
-二进制，但只部署并运行产品测试服务 `MB_DDF_v2`。使用默认目标板
-`root@192.168.1.29` 和默认远端目录 `/home/sast8/tmp` 时，可在两个终端中运行：
-
-终端 1 先构建、部署并运行产品测试服务：
-
-```powershell
-.\debug.bat hw_test_run
-```
-
-终端 2 部署并以前台方式运行舵机控制程序：
-
-```powershell
-scp .\build\aarch64\hw_test\Release\MB_DDF_v2_HelmControl root@192.168.1.29:/home/sast8/tmp/
-ssh -t root@192.168.1.29 "cd /home/sast8/tmp && chmod +x MB_DDF_v2_HelmControl && ./MB_DDF_v2_HelmControl"
-```
-
-远端已有同版本二进制时可跳过 `scp`。两个程序可以同时运行，舵机连续实测正是由产品
-测试服务中的 DDS bridge 与独立舵控程序协作完成；停止时也需分别停止，`HELM_STOP`
-只停止本次 DDS bridge，不结束 `MB_DDF_v2_HelmControl`。
-
-程序本身允许任意启动顺序，但当前 `debug.ps1` 部署前会使用
-`pkill -f "MB_DDF_v2"` 清理旧进程，可能同时匹配 `MB_DDF_v2_HelmControl`。因此使用上述
-快捷脚本时应先启动终端 1，再启动终端 2。自定义目标板地址或远端目录时，两条
-`scp`/`ssh` 命令必须使用与 `debug.ps1` 相同的 `-RemoteHost`、`-RemoteUser` 和
-`-RemoteDir` 值。
+当前 `debug.bat`/`debug.ps1` 没有独立的舵控快捷入口；`debug.bat hw_test_run` 只部署并
+运行产品测试服务 `MB_DDF_v2`。`MB_DDF_v2_HelmControl` 由用户独立部署、独立启停；产品
+服务只管理本次 DDS bridge，`HELM_STOP` 不结束舵控进程。连续舵机实测的主机交互和生命周期
+边界见[设备通信协议契约](../docs/design/contracts/device-communication-protocol.md)。
 
 ## 目标板测试
 
@@ -115,7 +97,7 @@ ssh -t root@192.168.1.29 "cd /home/sast8/tmp && chmod +x MB_DDF_v2_HelmControl &
 .\test_pyqt\run.bat
 ```
 
-使用固定的 `pyqt5_env` 环境打包为独立目录：
+使用已安装锁定依赖的 Python 环境打包为独立目录：
 
 ```powershell
 .\test_pyqt\run.bat package
@@ -132,52 +114,21 @@ CSV 一并收录。当前环境中的 PyInstaller 6.17.0 产物尚未在 Windows
 PC 测试是 Windows 主机运行 Python 测试的明确例外：
 
 ```powershell
-$Py = 'C:\Users\JiangKai\.conda\envs\pyqt5_env\python.exe'
 $env:QT_QPA_PLATFORM = 'offscreen'
-& $Py -m pytest -q .\test_pyqt\tests
+python -m pytest -q .\test_pyqt\tests
 ```
 
 ## 协议兼容与限制
 
-- 产品协议字段布局以 [`docs/design/product_protocol_csv`](docs/design/product_protocol_csv)
-  下的 37 份 CSV 为准。DH 脉宽配置使用 `0x06/0x01`，控制与多帧遥测使用
-  `0x06/0x02`；旧 `dh_report_response` 不再使用。
-- BUS 只测试 link 0=COM1、1=COM2、3=COM4；link 2 是 COM3 控制口，必须在打开硬件前
-  返回 `CHANNEL_INVALID`。BUS_LOOP 使用内部回环，BUS_ECHO 由独立 PC/夹具在被测 COM
-  原样回发固定 114 字节；两者每次接收最多等待 5 秒，长度、内容、次数或错误统计不符合
-  要求即失败。SPI Flash 仅保留独立 `SPI_FLASH_TEST`，不再属于 BUS。旧 PyQt 只经 COM3
-  控制口发令，不能作为 COM1/COM2/COM4 的外部 ECHO 回送端或真机验收证据。
-- 旧 PyQt 舵控页面及“执行全部”使用 `HELM_BOARD_TEST 0x07/0x02`：B9 低 4 位保留、
-  高 4 位设置四路方向，B10-B13 分别设置四路整数占空比 `0..100%`，并回读
-  `pwm_duty_match`、raw duty、peak、方向、使能状态及四路 AD7606。Web 主基线使用
-  `HELM_START 0x07/0x10`、`HELM_FEEDBACK 0x07/0x01`、`HELM_STOP 0x07/0x11`：DUT
-  以 1 ms 周期生成指令，经 DDS 与独立 `MB_DDF_v2_HelmControl` 交互，最多 5 个完整反馈
-  样本组成一帧回告。DDS 27 字节指令 B27 为 `helm_unlock=0xFF`；舵控程序启动先禁止
-  PWM，收到首次解锁请求后将 DIDO DO0 置高，至少等待 30 ms 再使能 PWM。扫频总
-  时长可配置，结束后指令归零、反馈继续到 STOP；STOP 尾帧仍保持解锁并只令舵机回零。
-- `MB_DDF_v2` 测试服务与 `MB_DDF_v2_HelmControl` 可由用户按任意顺序、独立启停；测试
-  服务不管理舵控进程。`HELM_BOARD_TEST` 与连续实测并列存在，不互斥、不返回对方导致的
-  `TASK_BUSY`，也不共享生命周期状态；`HELM_BOARD_TEST` 不包含舵锁流程。
-- 板级寄存器以 `origin_v3` 为现行事实源。XADC 全局基址为 `0x150000`，PCIe SPI Flash
-  为 `0x160000`；外部集成不得继续沿用旧映射。
-- `ELEC_HEALTH_STATUS` 在 B31-B32 传输 XADC `value_YX` 的 FPGA 原始 ADC code，PC
-  按 CSV 的 `10.09/4096 V/code` 换算；四路 AD7606 由 `HELM_BOARD_TEST` 回传并按
-  `10/65536 V/code` 换算。ADS1258 电气健康和 DH 遥测由板端完成分段定标后量化，PC
-  不重复应用运放公式。ADS1258 的当前换算系数
-  是临时定标值，完整公式以 `codedesign.md` 和 `origin_v3` 生成表为准。
-- DH 控制默认回告 50 次、间隔 2500 us；`report_count` 范围为 `1..65535`，
-  `interval_us` 范围为 `2500..65535`。板端每帧到期采样后立即发送，下一采样截止点从本帧
-  实际采样起点计算，串口发送时间只占用周期余量，不额外叠加到请求间隔。
-- PC 页面只绘制本次请求选中的点火状态和遥测电压曲线，并对高频回告批量刷新；完整去重
-  回告会在完成、失败或停止时保存到用户指定目录，文件名为
-  `DH_data_YYYYMMDD_HHMMSS_ffffff.txt`。
-- 电气健康只显示 `activate_bits.bit0`，名称为“BC激活好”；该位来自 DH
-  `BatteryStatus` 高 8 位（`0xAA=1`、`0xFF=0`），bit1..7 固定为 0 且不显示，非法高字节
-  返回 `REG_READ_WRITE_FAILED`。`5V_JS` 只有 XADC 电压采样，没有 DIDO 控制输出。
-- PC 的 DI/DO 页面按 `origin_v3` 标注已知信号：DI0 联锁/电气弹动、DI1 引信报警、
-  DI2 引信起爆指令、DI3 锁相环锁定指示、DI8 投放允许；DO0 舵锁使能、DO1
-  数控衰减器控制、DO2 数遥发送使能、DO3 `24V_EN`、DO4 `DYT_5V_EN`、DO5
-  `DI_EN1`、DO6 `DO_EN`。未在地址表中命名的通道保持通道号。
+- 产品端软件行为以当前 [`src/`](src) 实现为唯一事实；字段布局以
+  [`docs/design/product_protocol_csv`](docs/design/product_protocol_csv) 中的 CSV 为准。
+  命令、错误码、定标和硬件边界的完整定义见[产品协议设计](docs/design/product_protocol_csv/codedesign.md)。
+- 主机侧职责、运行模式和协议事务边界只在[设备通信协议契约](../docs/design/contracts/device-communication-protocol.md)定义；BUS、设备流和板级事务的产品端细节只在产品协议设计定义。
+- `MB_DDF_v2_HelmControl` 与产品测试服务独立启停；`HELM_BOARD_TEST` 与连续舵机实测
+  不互斥，也不共享生命周期。舵机、DH、DI/DO 和寄存器映射的当前软件行为以
+  `src/` 实现及产品协议设计为准。
+- 当前实现的已知限制见[产品协议设计](docs/design/product_protocol_csv/codedesign.md)中的
+  “已知实现限制”；该节记录现状，不表示问题已修复。
 
 ## 安全边界
 

@@ -195,7 +195,8 @@ public:
 - 依赖失败、禁用、重试和任务级停止策略由 BIZ 编排；算法端口返回单步结果、样本、进度和日志。
 - 一次 `executeStep()` 可以产生零到多条 `RawSample`；这既用于单轮观测，也为设备持续回告保留，不意味着 BIZ 自行读取设备。
 - `IRunControl`、`IAlgorithmObserver` 的引用只在对应 `executeStep()` 调用期间有效，算法实现不得缓存。
-- 对声明 `stoppable=true` 的执行器，`requestStop(timeoutMs)` 必须使活动 `executeStep()` 在时限内观察取消并返回；其 `Status` 描述清理结果，不表示允许继续阻塞。显式声明 `stoppable=false` 的已受理有限设备流是例外：应用入口必须在调用 BIZ STOP 前拒绝停止，执行器的 `requestStop()`/活动期 `shutdown()` 返回 `CapabilityUnsupported` 并等待自然终态；当前唯一实例是 `mbddf.dh_ignite_stream`。可停止任务的 `shutdown(timeoutMs)` 仍必须遵守时限。
+- 目标语义是：对声明 `stoppable=true` 的执行器，`requestStop(timeoutMs)` 使活动 `executeStep()` 在时限内观察取消并返回；显式声明 `stoppable=false` 的已受理有限设备流由应用入口拒绝停止并等待自然终态，当前唯一实例是 `mbddf.dh_ignite_stream`。
+- `[当前实现限制]` BIZ 关闭活动任务时向执行器传入固定 5000 ms，但随后使用无超时的 `QThread::wait()` 回收 worker。协议事务仍按步骤 `timeoutMs` 同步阻塞，而配置只拒绝负值，因此 5000 ms 不是当前实现的硬关闭上限；文档和测试报告不得把它描述为有界 shutdown 保证。
 - 工厂接收的 `IAlgorithmExecutor*` 为非拥有指针，执行器必须晚于服务销毁。
 
 生产 I/O 的目标归属由总览定义：算法组织协议/流程/判定并请求 HAL，HAL 执行生产 I/O。BIZ 对此不增加设备、Provider 或网络接口。

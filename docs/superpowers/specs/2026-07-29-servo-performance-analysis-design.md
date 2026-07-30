@@ -38,15 +38,9 @@
 - 历史运行查询、跨运行对比、手工重新分析或浏览器选择保存路径；
 - WebSocket 断线后的后台续算和重连恢复。当前断线仍沿用既有安全 cleanup/shutdown，并取消未完成分析。
 
-## 3. 参考实现评估
+## 3. 当前算法边界
 
-外部参考目录为：
-
-```text
-H:\Resources\RTLinux\MGJ_APPS\monitor\front_end\source\cyberlink-terminal
-```
-
-关键入口为 `components/HelmTest.tsx::stopTest/analyzeData` 和 `utils/servoAnalysis.ts::calculateServoCharacteristics/calculateFrequencyResponse`。参考实现由浏览器在用户停止后同步读取前端全量缓存并计算：
+舵机性能算法只以仓库内 `src/algorithm/`、DUT 协议和当前契约为依据，不再引用或比较仓库外实现。频响基本定义为：
 
 ```text
 H(f) = Y(f) / U(f)
@@ -54,7 +48,7 @@ magnitude(f) = 20 * log10(abs(H(f)))
 phase(f) = atan2(imag(H(f)), real(H(f)))
 ```
 
-可复用内容是 `H=Y/U` 的频响目标、指标集合、四通道展示思路和对数横轴伯德图。参考实现的整段 FFT 比值不直接复用。以下行为不进入本项目契约：
+当前实现保留 `H=Y/U`、四通道结果和对数横轴伯德图，并明确排除以下行为：
 
 - 前端固定按 1 ms 重建时间，不使用设备时间戳；
 - STOP 请求发出后不等 ACK 和尾包就开始分析；

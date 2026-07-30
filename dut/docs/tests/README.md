@@ -1,155 +1,66 @@
 # MB_DDF_v2 测试
 
-板端测试分为 DDS 单元/集成测试、目标板 DDS 实机测试、硬件层单元测试和 XDMA
-smoke test；另有一类 Windows PC 串口工具测试。Windows 主机交叉编译 C++，AArch64
-目标板执行 C++ 二进制，PC 的 PyQt5 测试使用下述固定 Python 环境。
+本文只保留 DUT 测试入口和证据边界。具体用例以当前 CMake 与测试源码为准；产品字段、硬件行为和已知实现限制分别以协议 CSV、产品协议设计和当前 `dut/src/` 为准。
 
 ## 快速开始
 
+在 `dut/` 目录运行：
+
 ```powershell
-# 静态检查 + 构建
+# DDS 静态检查与交叉构建
 .\tests\test-dds-only.ps1 -BuildOnly
 
-# 只交叉构建 DDS 测试目标
-.\build.ps1 dds_tests
-
-# 构建 + 部署 + 运行
+# DDS 构建、部署与目标板执行
 .\tests\test-dds-only.ps1
-
-# 只跑部分 gtest
 .\tests\test-dds-only.ps1 -TestFilter "RingBuffer*"
-.\tests\test-dds-only.ps1 -TestFilter "DDSCore*"
 
-# 全量构建，不部署不执行
+# 全部测试目标：只构建，或构建后部署执行
 .\tests\test-all.ps1 -BuildOnly
-
-# 全量构建 + 部署 + 实机执行
 .\tests\test-all.ps1
 
-# 只运行实机测试二进制
+# 单独部署并执行指定目标
 .\tests\test-deploy.ps1 -TestBinaryName MB_DDF_v2_HardwareTests
-
-# 只运行目标板 DDS 性能测试
-.\tests\test-deploy.ps1 -TestBinaryName MB_DDF_v2_HardwareTests -TestFilter "HardwarePerformanceTest.*"
-
-# 产品协议和硬件测试服务单元测试
-.\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Tests `
-  -TestFilter 'ProductProtocol*:*HardwareTestService*'
-
-# 惯测协议、COM4 配置、payload 映射和主动反馈
-.\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Tests `
-  -TestFilter 'ProductProtocolTest.*Imu*:HardwareTestServiceTest.*Imu*:HardwareTestProviderTest.*Imu*'
+.\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Tests
+.\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Smoke
 ```
 
-`test-all.ps1` 依次覆盖 `MB_DDF_v2_Tests`、`MB_DDF_v2_HardwareTests`、
-`MB_DDF_HW_Tests` 和 `MB_DDF_HW_Smoke`。前两者使用 DDS-only 测试配置，后两者使用完整
-硬件测试配置；两种配置都在 `build/aarch64/tests/Debug` 重新显式配置，不复用应用画像。
+`test-all.ps1` 当前编排以下目标：
 
-## DDS 单元与集成测试
+| 目标 | 主要边界 |
+| --- | --- |
+| `MB_DDF_v2_Tests` | DDS 单元与进程内集成 |
+| `MB_DDF_v2_HardwareTests` | 目标板 DDS、IPC、压力与性能 |
+| `MB_DDF_HW_Tests` | 硬件抽象、产品协议和产品测试服务 |
+| `MB_DDF_HW_Smoke` | 默认只读硬件巡检 |
 
-- `test_message.cpp`
-- `test_ringbuffer.cpp`
-- `test_shared_memory.cpp`
-- `test_topic_registry.cpp`
-- `test_publisher_subscriber.cpp`
-- `test_dds_core.cpp`
-- `test_semaphore_guard.cpp`
-- `test_external_endpoint.cpp`
-- `test_gateway_envelope.cpp`
-- `test_domain_gateway.cpp`
-
-## 实机测试
-
-- `hardware/test_hardware_smoke.cpp`
-- `hardware/test_hardware_ipc.cpp`
-- `hardware/test_hardware_stress.cpp`
-- `hardware/test_hardware_performance.cpp`
-
-## 硬件层测试
-
-- `hw_unit/test_hw_os.cpp`
-- `hw_unit/test_hw_transport.cpp`
-- `hw_unit/test_*_device.cpp`
-- `hw_unit/test_spi_flash_device.cpp`：验证永久关闭 `#HOLD` 使用两个独立事务 `06h`、`B1h EFh FFh`。
-- `hw_unit/test_xadc_device.cpp`：验证 `Data[15:4]`、`value_YX` 定标、`5V_JS=0x240` 和局部 `0x260` 只读访问。
-- `hw_unit/test_dds_adapter.cpp`
-- `hw_unit/test_product_protocol.cpp`
-- `hw_unit/test_hardware_test_service.cpp`
-- `hw_unit/test_hardware_test_provider.cpp`
-- `hw_unit/test_system_test_provider.cpp`
-- `hardware/test_mb_ddf_hw_smoke.cpp`
-
-`MB_DDF_HW_Smoke` 默认在目标板只读 XADC `0x150000` 的 `value_YX`，并在
-PCIe Flash 新基址 `0x160000` 读取控制器状态和时钟分频；不触发 XADC 配置或 Flash
-Read/Program/Erase。
-
-## 脚本说明
-
-- `test-dds-only.ps1`：先做静态检查，再调用 `test-deploy.ps1`。
-- `test-deploy.ps1`：使用独立的 `build/aarch64/tests/<Config>` 目录构建指定测试二进制，
-  可选部署到目标板执行。
-- `test-all.ps1`：全量入口，先做 DDS-only 静态检查，再依次调用 `test-deploy.ps1` 运行
-  `MB_DDF_v2_Tests`、`MB_DDF_v2_HardwareTests`、`MB_DDF_HW_Tests` 和
-  `MB_DDF_HW_Smoke`。
-- `test-deploy.ps1 -TestBinaryName <name>`：选择部署和执行的测试二进制，默认 `MB_DDF_v2_Tests`。
-
-详细说明见 [DDS 测试说明](dds-test-guide.md)。
-
-## 前置条件
-
-- AArch64 交叉编译工具链可用。
-- Windows `ssh`、`scp` 可用。
-- 目标板已配好免密 SSH。
-- 若要编测试，主机需能拉取 googletest 源码。
+脚本使用独立的 `build/aarch64/tests/<Config>` 构建树，不复用应用画像。目标、筛选参数和部署选项以 `tests/test-deploy.ps1` 的当前帮助及[详细 DDS 测试说明](dds-test-guide.md)为准。
 
 ## PC 串口工具测试
 
-PC 端 `test_pyqt` 是 Windows 例外测试入口，使用固定 PyQt 环境和
-`QtSerialPort` 假后端测试物理帧、产品协议目录、硬件测试会话、发送队列和协议专用
-多标签页界面：
+Windows PyQt5 工具使用 `test_pyqt/requirements-win7.txt` 锁定依赖。激活对应 Python 环境后运行：
 
 ```powershell
-$Py = 'C:\Users\JiangKai\.conda\envs\pyqt5_env\python.exe'
 $env:QT_QPA_PLATFORM = 'offscreen'
-& $Py -m pytest -q .\test_pyqt\tests
-```
-
-协议 CSV 在 PC 和板端之间共享。提交前还应单独验证 37 份布局：
-
-```powershell
-& $Py .\tools\generate_product_protocol.py --check `
+python -m pytest -q .\test_pyqt\tests
+python .\tools\generate_product_protocol.py --check `
   .\docs\design\product_protocol_csv
 ```
 
-产品协议测试覆盖 1..255 字节数据段（当前 48/123/232）、小端字段、默认值、非零 RESERVED 拒绝、非有限
-F32 拒绝、请求序号回显和回绕、无双重物理组帧、普通响应、错误响应、DH 多帧和舵反馈路由。
-当前 7 个 DUT 源级 IMU 用例还覆盖 `09/10`/`09/01`/`09/11` 命令号、COM4 event 3 与
-921600/8E1 配置、59 字节 payload 的 12 个 F32 全映射、所有 F32 位置的 NaN/Inf 拒绝、
-START/STOP ACK 序号、主动反馈发送序号、空闲不消耗序号和终止错误反馈。
-界面测试覆盖顶部紧凑连接状态栏，以及“连接与日志”“串口回显”和 11 个硬件测试页
-组成的西侧纵向标签；还覆盖每页参数序列化、“结果 / 原始字段”视图、响应只更新对应页、
-执行全部采用各页当前参数、停止、彩色日志和微软雅黑。复合流程重点验证 DH 默认
-50 次/2500 us、2500 us 下限、逐帧真实间隔、多帧报告选择查看、完整去重文本保存，
-以及非 BUS 页“连续”请求在终态后 200 ms 再次发送、停止时取消待发轮次，电气健康连续响应
-的完整 UTF-8-SIG TSV 保存，HELM_START/HELM_STOP ACK 不覆盖舵反馈曲线、TIMER_STOP ACK 不覆盖
-START 阶段的抖动统计。BUS 页面只允许 link 0/1/3、收发次数 `1..100000`，隐藏旧连续按钮，
-并明确其 COM3 控制口边界及外部 ECHO 对端要求；成功 ECHO 响应展示完整 114 字节实际返回数据。
-界面只区分执行状态，不根据测量值设置硬件通过阈值。
+`test_pyqt/run.bat`（或 `run.ps1`）是工具运行入口，会拒绝 base/system Python。PC 假后端和界面测试不覆盖宿主 Web 的 `device_stream` 生命周期，也不构成 COM、DDS、舵机或目标板实测。
 
-板端协议测试还覆盖请求序号回显、DH `请求序号+i`、采样后立即发送且串口耗时不额外叠加
-到回告间隔、发送锁下的 `Busy` 同帧有界流控、
-BUS 的 COM1/COM2/COM4 映射、COM3 控制口预检、内部回环/外部 114 字节回显配置、5 秒
-接收截止、严格完成统计和实际接收数据保留、DH 三项使能和状态映射、舵控 rad
-相位与可配置时长扫频公式、通道位图、27/41 字节帧和最多 5 样本打包，以及
-SYSTEM_STATUS 的 CPU 计数解析和 XDMA PCI BDF 事实链。板端 `SYSTEM_STATUS` 当前直接读取
-`center_thermal` hwmon、`/proc/uptime` 和 XDMA PCI BDF；`net_init_time` 按当前实现固定为
-`0 s`，K7 温度直接读取 XADC 局部 `0x200`。串口、网口、SPI、DH 和舵控硬件仍需在已隔离
-目标板上联调，单元测试不会把缺失映射视作成功。
+## 前置条件
 
-上述 IMU 与舵机 DDS bridge 用例是源级/交叉构建证据，不等于 COM4、DDS 或舵机真机验收；
-当前 smoke 不注入惯测 payload，也不运行舵控程序。宿主 `device_stream` 的
-START/反馈/STOP、至少一帧通过、单次 STOP 和 UTF-8-SIG/TSV 固定列保存证据位于根仓
-算法/应用测试。`test_pyqt` 当前没有 IMU/舵机设备流会话，不得把旧工具测试写成该功能已覆盖。
+- AArch64 GNU 交叉工具链和匹配 sysroot 可用；
+- Windows `ssh`、`scp` 可用，目标板部署参数已配置；
+- 构建测试时主机能取得项目声明的 googletest 依赖；
+- 真实硬件写入只在隔离且经明确授权的目标板执行。
 
-运行工具使用 `test_pyqt\run.bat`（或 `run.ps1`）；该入口会拒绝 base/system
-Python，且不会改变 AArch64 C++ 的构建和部署路径。
+## 证据边界
+
+- 交叉构建成功只证明可生成目标二进制；只有部署并在目标板执行后才形成板端运行证据。
+- `MB_DDF_HW_Smoke` 默认只读，不覆盖 COM 回环、DIDO、DH、舵控或 SPI Flash 写入。
+- PyQt 断言通过若伴随异步 Qt/Matplotlib teardown 异常，必须单独记录，不能称为完全干净门禁。
+- 协议资产只使用 `dut/docs/design/product_protocol_csv/`；其他目录的结果不构成当前协议证据。
+- 串口、网口、SPI、DH、DDS、舵机和其他硬件结论必须记录目标身份、工具链、命令、日志、退出状态与收尾结果。
+
+宿主 CTest、浏览器测试和跨层证据等级见根仓[测试规范](../../../docs/design/testing/testing-specification.md)。

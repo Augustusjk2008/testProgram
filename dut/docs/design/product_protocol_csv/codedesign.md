@@ -1,9 +1,8 @@
 # 产品端-上位机通信协议 V1.1
 
-> 版本：V1.1（2026-07-28）
-> 适用范围：AArch64 Linux 产品端硬件测试服务与 Windows 上位机协议端。`IMU_STREAM`
-> 与 `HELM_STREAM` 主机实现位于宿主工程根 `hwtest_*`，当前以 Web 入口为主基线；旧
-> `test_pyqt` 不作为这两项设备流的现行入口。
+> 版本：V1.1（2026-07-30）
+> 适用范围：AArch64 Linux 产品端硬件测试服务与上位机协议端。产品端软件行为以当前
+> `dut/src/` 实现为唯一事实；主机职责和运行模式见[设备通信协议契约](../../../../docs/design/contracts/device-communication-protocol.md)。
 > 字段布局唯一事实源：本目录 37 份 CSV。本文只定义传输、时序、测试映射和硬件边界。
 
 ## 1. 传输基线
@@ -15,9 +14,9 @@
   开始的 1..255 字节数据段，不重复解析物理帧，也不重复计算 CRC；当前定义使用
   48、123 和舵反馈的 232 字节数据段。
 - 全部多字节整数和 IEEE-754 F32 字段均按小端线序编码。
-- COM3 产品帧不暴露 DDS 格式，也不依赖 `Upgrade_And_Test` 编译产物；舵机连续实测在
-  产品端内部经 DDS 连接独立 `MB_DDF_v2_HelmControl`，其 27/41 字节帧以
-  `src/HelmControl/ProtocolModel` 为代码事实源。
+- COM3 产品帧不暴露 DDS 格式；舵机连续实测在产品端内部经 DDS 连接独立
+  `MB_DDF_v2_HelmControl`，其 27/41 字节帧以当前 `src/HelmControl/ProtocolModel`
+  实现为准。
 
 ## 2. 公共帧
 
@@ -95,15 +94,14 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 校验：
 
 ```powershell
-$Py='C:\Users\JiangKai\.conda\envs\pyqt5_env\python.exe'
-& $Py .\tools\generate_product_protocol.py --check `
+python .\tools\generate_product_protocol.py --check `
   .\docs\design\product_protocol_csv
 ```
 
 生成 C++17 描述头文件：
 
 ```powershell
-& $Py .\tools\generate_product_protocol.py `
+python .\tools\generate_product_protocol.py `
   --output .\build\generated\ProductProtocolGenerated.h `
   .\docs\design\product_protocol_csv
 ```
@@ -208,9 +206,9 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
    `local:://helm_feedback` reader，先同步发布一帧四路零位解锁指令，成功后才以 1 ms
    周期发布四路共用波形，未启用通道为零。writer 发送严格 27 字节
    `Helm_ins_frame`；B27/U8 名为 `helm_unlock`，`0x00` 表示无请求，连续测试的所有指令
-   均固定为 `0xFF` 请求解锁。该字段不属于 COM3 产品 CSV，不由 PC/Web 设置；仓库
-   未包含原 Protocol Modeling 工具的源模型，现行线序以签入的两份协议头快照及回归
-   测试为准。reader 只接受严格 41 字节 `Helm_fdb_frame`。
+   均固定为 `0xFF` 请求解锁。该字段不属于 COM3 产品 CSV，不由 PC 设置；现行线序以
+   当前 `src/HelmControl/ProtocolModel` 实现为准。reader 只接受严格 41 字节
+   `Helm_fdb_frame`。
 4. 每个 `HELM_FEEDBACK` 使用 232 字节数据段，包含首个 DDS 微秒时间戳和 1..5 个完整
    样本；每样本保留 U16 相对时间、`serial_a/serial_b`、版本、四路 `ins/fdb`、六项
    2-bit 自检及 timeout。反馈使用产品端统一发送器取得产品帧序号。
@@ -237,17 +235,15 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
   是 F32 测量值；START 同步完成全部采样并只返回一帧统计，不产生周期或异步回告。
 - mode 1 使用 `XdmaConfig{"/dev/xdma0", 0, 0x1000, -1, 0, -1}`：只打开 C2H0，
   不打开 H2C，不执行 DMA 写入；从设备偏移 `0` 每 12 ms 读取一次 64 KiB，只有完整
-  返回 65536 字节才计为成功。这里的偏移 `0` 是 C2H 读取地址，不使用旧参考实现中
-  仅用于 `_user` mmap 的 `0x80000000`。
+  返回 65536 字节才计为成功。这里的偏移 `0` 是 C2H 读取地址。
 - mode 1 在采样前启动负载，采样完成后先停止并 `join` 线程，再关闭 Transport 和发送
   START 响应。缺少负载执行器、打开失败、DMA 失败、短读或线程启动失败均返回
   `TASK_EXEC_FAILED`；已有负载尚未清理时返回 `TASK_BUSY`。
 - 收到成功 START 响应后，PC 自动发送 STOP。STOP 是采样结束后的幂等清理 ACK，不能
   中途取消同一接收线程中同步执行的 START；STOP ACK 的成败通过测试状态和日志展示，
   不覆盖界面中 START 返回的桶、平均值和最大值。
-- 当前 `dma_read()` 基于阻塞 `pread`，没有超时或跨线程取消能力。目标板交付必须确认
-  C2H0 读取能有界返回；若可能永久阻塞，应先设计可取消或超时读取，不能依赖无限等待
-  的 `join()`。
+- 当前 `dma_read()` 基于阻塞 `pread`，没有超时或跨线程取消能力；其收尾风险见
+  “5.6 已知实现限制”。
 
 ### 5.5 惯测连续流
 
@@ -265,8 +261,23 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
 5. PC 对同一会话最多发送一次 `IMU_STREAM_STOP 09/11`。板端停止读取并关闭 COM4 后再回
    STOP ACK；ACK 超时或错误只影响本次结果，PC 收尾不得再次发送 STOP。COM4 流活动时，
    使用同一硬件的 BUS link 3 返回 `TASK_BUSY`。
-6. 宿主配置只声明 `device_stream`，不得以 `pc_periodic` 重复 START；停止时 0 个有效
-   `09/01` 判 `SampleFail`，1 帧及以上判通过。可选保存固定使用完整字段，曲线选择不改变列。
+6. 主机侧的设备流运行模式、停止和保存语义见
+   [设备通信协议契约](../../../../docs/design/contracts/device-communication-protocol.md)。
+
+### 5.6 已知实现限制
+
+以下为当前源码已知限制，不表示已修复：
+
+- `ProductProtocol::parse_request()` 对仅含合法 `version`、长度为 1 或 2 的数据段，在长度
+  防护前访问 `data_segment[1]`/`[2]`，存在越界访问风险。
+- `MB_DDF_v2_HelmControl` 的 ADC `read_snapshot()` 失败后继续使用上次反馈值（首次为 0），
+  PWM 写失败也只记录告警并继续循环；DDS 命令只缓存最新帧，没有新鲜度 watchdog，命令源
+  中断后控制仍会使用旧命令。
+- `TIMER_JITTER_START` 的 `mode=1` 使用无超时、不可跨线程取消的阻塞 `pread`；停止路径在
+  关闭 transport 前 `join` 工作线程，若读取不返回，`join` 可无限等待。
+- `SystemTimer` 创建并写入 stop eventfd，但 worker 实际只等待实时信号；启动失败且
+  `running_` 尚未置位时，`stop()` 的早退路径不会关闭该 eventfd。该机制不提供额外取消保证，
+  并存在失败路径文件描述符泄漏。
 
 ## 6. 测试项映射
 
@@ -286,31 +297,9 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
 | 10 | 舵控板级 | `helm_board_test_request/response` | 四路 PWM 百分比=0，四路方向=0 |
 | 11 | 定时器 | `timer_jitter_start/stop_*` | mode 0/1，默认 0；250 us x 250 周期 |
 
-`IMU_STREAM` 不进入当前“执行全部”顺序，也不得由旧工具的“连续”功能模拟；它只能作为
-独立 `device_stream` 会话运行。
-
-`HELM_STREAM` 同样不进入旧 PyQt“执行全部”顺序；根仓 Web 主基线以独立
-`device_stream` 会话运行，用户另行控制 `MB_DDF_v2_HelmControl`。它与表中的
-`HELM_BOARD_TEST` 并列且没有互斥或生命周期绑定。
-
-内存类型：0-2 为 seed 图样写入/校验，3-6 分别为读、写、拷贝和 NT store 带宽测试。
-PC 默认超时为普通 2 秒、总线 60 秒、内存 120 秒、SPI Flash 180 秒；DH 首帧不再叠加
-时间延迟，收到首帧后按 `interval_us + 2 s` 的相邻回告进度重新计时，不把串口线传输时间
-或剩余报告数叠加到超时。任何测试均不自动重试。DH 页面只在用户显式勾选“保存完整数据”
-时把完整去重回告写为 UTF-8-SIG TSV 长表：用户指定目录，文件名固定为
-`DH_data_YYYYMMDD_HHMMSS_ffffff.txt`，每帧输出 23 行；自然完成或失败时保存已经收到的
-数据，活动任务不能由 PC 停止。文件中的 `sample_time_us` 从 0 开始，按
-`(report_index-1)*interval_us` 计算计划采样时刻；`delay_frames` 只标识基线帧数，不叠加
-时间，协议未携带实测时间戳。
-舵机连续实测由 Web 主基线进入，旧 PyQt 导航和“执行全部”仍只包含舵控板级测试。
-
-除 BUS 外，PC 页面“连续”是用户显式开启的重复执行，不属于协议层失败自动重试：每轮普通
-请求完成后等待 200 ms 才发送同一参数的下一轮，用户可再次点击“连续”或顶部“停止”取消
-后续轮次。BUS_ECHO 的连续轮次由根宿主 `pc_periodic` 调度；旧 PyQt 只经 COM3 控制口
-发送单次请求，不能作为 COM1/COM2/COM4 的外部回送端。
-电气健康连续采集由 PC 在用户指定目录保存完整响应，采用
-`ElectricalHealth_data_YYYYMMDD_HHMMSS_ffffff.txt` 的 UTF-8-SIG TSV 格式；每行包含一轮
-响应的序号、PC 接收相对时间、状态、错误码、10 路已解码电压、`activate_bits` 和 bit0。
+主机侧“执行全部”、连续运行、超时、保存和设备流会话语义见
+[设备通信协议契约](../../../../docs/design/contracts/device-communication-protocol.md)。本文只保留
+产品端的命令、字段和硬件行为。
 
 ## 7. 硬件映射与边界
 
@@ -327,10 +316,11 @@ PC 默认超时为普通 2 秒、总线 60 秒、内存 120 秒、SPI Flash 180 
 BUS_LOOP 的 `total_count` 只允许 `1..100000`。每轮发送后均以 5 秒作为接收截止时间；
 只有实际完成次数严格等于请求且 `error_count=0` 才返回成功，否则命令失败。
 
-BUS_ECHO 每个请求只执行一次：DUT 在所选 COM 以 `loopback=false` 发送请求中的全部 114
-字节，独立外部 PC/夹具必须在 5 秒内原样回发。DUT 严格比较接收长度和每一个字节；任何
-不一致都失败，响应中的 `data[114]` 回传实际接收字节供宿主核对。连续轮次由根宿主的
-`pc_periodic` 处理；旧 PyQt 仅经 COM3 控制口下发这一次请求，不能充当外部 ECHO 对端。
+BUS_ECHO 的每个 DUT `03/02` 请求只执行一轮：DUT 在所选 COM 以 `loopback=false` 发送请求中的
+全部 114 字节，独立外部 PC/夹具必须在 5 秒内原样回发。DUT 严格比较接收长度和每一个字节；
+任何不一致都失败，响应中的 `data[114]` 回传实际接收字节供宿主核对。多轮由根宿主
+`mbddf.serial_test` 在同一次 BIZ `single` 的一个 `executeStep()` 内顺序复合，每轮均为独立
+`03/02` 与 5 秒回显事务；旧 PyQt 仅经 COM3 控制口下发单次请求，不能充当外部 ECHO 对端。
 
 BUS 不再包含网口或 SPI Flash 路径。SPI Flash 仅由独立 `SPI_FLASH_TEST` 在固定隔离测试区
 执行，不承载任意 BUS payload。

@@ -511,7 +511,7 @@ COM 中断直接接入 XDMA `usr_irq_req` 时必须使用 Level 模式，并由�
 写 `0x82` 清源。`reset()` 会向 Control 写 0；实际 FPGA 中该软件复位可能锁存到下一次
 PCIe/AXI 全局复位，因此正常配置和回环流程不得调用它。
 
-#### 双 RX bank 缺陷、判据与验收边界
+#### 双 RX bank 风险、兼容路径与验收边界
 
 COM RX RAM 是两个乒乓 bank 复用同一 `ReceiveRam=0x00000` 读窗口。正常时，一个 bank
 接收线上下一帧，另一个 bank 保存刚完成的帧；软件看到 event、`Control.D0=1` 且 Error
@@ -519,31 +519,19 @@ COM RX RAM 是两个乒乓 bank 复用同一 `ReceiveRam=0x00000` 读窗口。�
 该写入必须同时完成三件事：切换 CPU 可见的完成 bank、清除 Level 中断、重新使能另一
 bank 接收。随后从 `ReceiveRam` 读到的长度前缀和 payload 必须属于刚完成的同一帧。
 
-2026-07-27 的 COM3 外部产品协议实测发现，连续请求期间 event 和完成状态会正常推进，
-但两个 bank 中只有一路包含当前线缆数据，另一路反复返回陈旧内容。因而表现为严格交替：
+宿主当前对一种窄特征陈旧回放提供兼容：`error_response` 必须引用同一命令、不同序号，且
+错误严格为 `0x0102/detail=0`，算法才以相同序号原帧重发一次。该路径只能缓解陈旧 bank
+回放，不能证明 FPGA bank 写入或选择逻辑已经修复；第二次失败及任何其他错误仍按协议失败。
+宿主事务语义以[设备通信协议契约](../../../docs/design/contracts/device-communication-protocol.md)为准。
 
-- 一轮返回约 `106..125 ms` 的当前 `01/01 SYSTEM_STATUS` 响应；
-- 下一轮约 `11..28 ms` 即返回 `FF/00 error_response`；错误帧引用旧序号
-  `0x1031`，而当前请求为 `0x1235`，错误为 `0x0102/detail=0`；
-- 保持 PC 串口一次打开、请求序号和 payload 逐轮变化时仍保持相同奇偶交替；临时 MMIO
-  诊断也直接看到一个 bank 更新、另一个 bank 保留固定旧数据。
-
-这组证据排除了“PC 每轮重开串口”、当前请求序号未递增和普通随机串口误码。软件对
-特征完全匹配的陈旧错误原帧重发一次只能绕过故障，不能修复 bank 写入或选择逻辑。详细
-实机记录见[测试规范 2.3 节](../../../docs/design/testing/testing-specification.md)。
-
-`debug.bat hw_run` 的 COM1 内部回环现在提供独立的 FPGA 修复验收门禁：Adapter 预检后，
+`debug.bat hw_run` 的 COM1 内部回环提供独立的软件验收门禁：Adapter 预检后，
 在同一次 Transport 打开和同一份 COM 配置下连续发送 16 个 32 字节 payload。每个 payload
 在偏移 13 编码一基轮次并带不同测试图样；测试禁用重试，逐轮严格比较长度和全部字节，
 失败时记录轮次、首个差异以及收发十六进制，并在失败后继续跑满 16 轮。最终必须满足
 `16/16`，且奇数轮与偶数轮均为 `8/8`；任一轮失败都使 COM 能力组失败。轮次奇偶只表示
 本次启动后的切换顺序，不等同于固定物理 bank 编号。
-
-2026-07-27 当前板卡的 COM1 内部回环实测为 `16/16，奇数 8/8，偶数 8/8`。该结果没有
-复现 COM1 bank 故障，说明当前 bitstream 的 COM1 内部回环路径通过此门禁；它不能单独
-证明 COM3 外部 RX 路径已经修复，也不能推翻上述 COM3 历史证据。若未来任一 COM1 bank
-再次返回旧数据，唯一轮次会使对应奇偶轮稳定失败；两个 bank 均返回本轮数据后测试才会
-恢复通过。实测二进制和整套 Demo 的边界见[测试规范 2.4 节](../../../docs/design/testing/testing-specification.md)。
+该门禁的任一次通过都只覆盖所运行的 COM1 内部回环环境，不能单独证明 COM3 外部 RX
+或其他 bitstream 已通过；实际结果必须作为独立运行证据记录，不能写死在设计文档中。
 
 #### COM3 外部回显边界
 
@@ -621,7 +609,8 @@ PC 只显示 `activate_bits.bit0` 并命名为“BC激活好”；该位读取 D
   最多等待 5 秒，只有完成次数严格等于请求且错误数为 0 才成功。
 - BUS_ECHO 为 `loopback=false` 的单次外部回显：DUT 发送请求中的 114 字节，独立 PC/夹具
   必须在 5 秒内原样回发。长度或任一字节不符均失败，响应保留实际接收字节。连续轮次由
-  根宿主 `pc_periodic` 调度；旧 PyQt 仅经 COM3 发令，不是外部回显端。
+  根宿主 `mbddf.serial_test` 在同一次 BIZ `single` 运行的 `executeStep()` 中依次发起；旧
+  PyQt 仅经 COM3 发令，不是外部回显端。
 - BUS 不再包含 UDP 或 SPI Flash；独立 SPI Flash 测试仍走固定隔离测试区的
   `SPI_FLASH_TEST`。
 - DH 脉宽配置先向 `0x1E0` 写配置使能（`0xAAAA/0xFFFF`）；使能时写入并回读 23 路，
@@ -671,7 +660,7 @@ SYSTEM_STATUS 只使用可追溯事实源：CPU/内存/上电时间来自 `/proc
 `sweep_duration_s`，`f0 == f1` 时退化为定频。超过 T 后四路指令归零，但 DDS 反馈订阅和
 COM3 主动回告继续运行到 STOP。启用通道共用该波形，未启用通道固定为零。
 
-DDS 指令严格使用 `tmp/helm_control` 对应的 27 字节 `Helm_ins_frame`；B27/U8
+DDS 指令严格使用当前 `src/HelmControl/ProtocolModel` 定义的 27 字节 `Helm_ins_frame`；B27/U8
 为 `helm_unlock`，`0x00` 表示无解锁请求，连续测试的每帧固定为 `0xFF`。独立
 `MB_DDF_v2_HelmControl` 回送 41 字节 `Helm_fdb_frame`。bridge 完整保留 `serial_a`、
 `serial_b`、版本、四路 `ins/fdb`、六项 2-bit 自检和 timeout，并以首样本 DDS 微秒时间戳

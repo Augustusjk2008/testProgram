@@ -6,7 +6,7 @@
 
 `[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；前端既可使用开发服务器，也可使用构建后的单文件 HTML，二者都与 `hwtest_web` 分开运行，浏览器仍只连接回环 WebSocket。
 
-`[当前实现]` 浏览器源码已将串口辅助端口选择、数字刺激协议类型、WebSocket transport、SessionProvider、`DigitalStimulusPanel` 和通用运行参数编辑器接入总览页。参数编辑器只消费后端 descriptor 中由算法层提供的 Schema，按 `configId + runParameterSchemaVersion` 在浏览器保存编辑值，并把覆盖值放入本次 `start.algorithmParameters`；它不写回测试配置。某个 `runParameters[]` 项显式 `persistValues=false` 时，浏览器既不从 localStorage 恢复也不向其中写入该项，缺失时仍兼容为 true；这不改变该项随本次 `start.algorithmParameters` 发送的行为。串口回显模式从 `ports` 枚举中选择独立 PC 本地串口，并用 `selectAuxiliarySerialPort` 写入当前应用会话；回环不使用该端口。DH 点火的两个 U8 使能在 Web 中映射为 0/1 复选框，23 路通道支持批量全选/全不选。数字刺激面板在快照声明可用、配置 1..16 路且 `switchId`/`dutBit` 唯一、位号全部为 0..15 时显示，标题按实际通道数展示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。descriptor 的 `stoppable=false` 时，浏览器在运行/暂停态隐藏 pause/resume/stop，配置选择保持禁用，终态后恢复；不能从 algorithmId 推断该能力。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。浏览器只为 `mbddf.do_write` 与 `mbddf.helm_board_test` 显示板级测试导航，消费 `rawData.boardTest` 的当前快照结果；定时器概览按精确半开区间显示八桶分布，并可从终态 `rawData.responseValues` 恢复。浏览器也已接入性能导航、`snapshot.analysis`、四通道身份缓存和 uPlot 伯德图输入；性能页只消费后端 `analysisResult`，不从实时 `SampleBuffer` 重算。此浏览器控制面实现不等价于 PXI-6259、PXI-6733、DH 点火或舵机真机已连接或已验收。
+`[当前实现]` 浏览器按 descriptor 动态投影配置、运行模式、算法参数、数字刺激、板级结果、连续遥测和舵机后处理；只通过本协议调用应用控制器，不解释产品帧或直接访问硬件。页面功能与操作说明见 [`front/README.md`](../../../front/README.md)，产品流程和物理证据边界分别见[设备通讯契约](device-communication-protocol.md)与[HAL 契约](hal-interface-protocol.md)，本文不复制页面清单和硬件参数。
 
 `[当前实现]` 服务器投影后处理 capability/摘要并接受只读 `analysisResult` 请求；应用控制器已接通 STOP 尾样本封存、硬件收尾双栅栏、`queued` 到终态的后台分析、分析期间写门禁及运行中 worker 协作取消。算法层提供五种波形与扫频伯德计算端口。`capturing` 只表示输入正在采集，只有带匹配 `{taskId, analysisGeneration}` 的分析终态才表示该轮结果可查询。
 
@@ -312,6 +312,17 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 - `disconnect`、`quit`、异常掉线和服务器内部 `DropCleanup` 在普通测试状态为 `running` 或 `paused` 时按 `stopAsync -> stopCompleted -> shutdown` 顺序执行；其他普通状态直接尝试 `shutdown`。活动 descriptor `stoppable=false` 时是显式例外：`disconnect`/异常掉线/背压只 detach，`quit` 拒绝，均不调用 stop、shutdown 或 DI 复位。DI 配置的普通停止/收尾会在 BIZ 停止后尽力 `resetDigitalStimulus`，随后按刺激设备会话、DUT 会话、HAL 的顺序释放；这不是进程崩溃、主机掉电或未验证台架的物理安全保证。shutdown 同时请求后处理协作取消并在配置时限内 join，不使用 `terminate()` 或 detach；join 超时返回 `analysis_shutdown_timeout` 并保留仍被线程引用的对象，服务器继续保持 cleanup 门禁并重试。SPA 页面内导航不等于断线，不取消分析。
 - `shutdown` 的失败必须通过对应 reply 返回；异常掉线时没有 reply，但服务器仍清理会话并恢复到可接纳下一客户端的状态。
 - 服务器停止监听或客户端对象销毁，不得先于已经排队的安全收尾。
+
+### 7.1 当前浏览器实现限制
+
+以下是现有 `front/` 的实现事实，不是服务端协议放宽：
+
+- 图表工作区从 localStorage 读取 JSON 后直接按当前结构使用，没有逐字段迁移或防御校验；损坏或旧结构可能使图表页渲染失败。
+- `parseSnapshot()` 只严格解析 descriptor、数字刺激、保存状态、运行参数和分析扩展，其他基础快照字段仍通过整体类型断言接收；类型错误可能在页面格式化阶段触发异常。
+- 参数编辑器只在浏览器侧校验当前可见字段，隐藏字段仍保留在 `start.algorithmParameters`；非法隐藏值最终由后端算法 Schema 拒绝。
+- 性能页在已选通道的 `analysisResult` 持续读取失败时没有错误锁存门禁；loading 清除后可能继续自动请求，直到结果成功、身份/选择变化或页面卸载。
+
+这些限制不得被测试报告描述为已具备损坏存储迁移、完整不可信快照防御或有界分析结果重试。
 
 ## 8. 消息顺序保证
 

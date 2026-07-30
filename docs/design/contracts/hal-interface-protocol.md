@@ -131,7 +131,7 @@ CrcMismatch, DataMismatch, BufferTooSmall, InternalError
 
 `OperationOptions.timeoutMs` 的目标语义是一次 HAL 操作的总 deadline 预算。内部 Provider 重试只能消耗剩余预算，且不得根据产品响应内容重试。
 
-当前 `HalControlTransport` 使用单调时钟把一次请求的剩余预算分别传给控制写和后续读取；Qt 串口写入也在同一 HAL 写操作预算内排空待写字节。整个 HAL 尚未统一完成该语义：`retryCount` / `retryIntervalMs` 未执行，旧 `transactSerial()` 仍把同一个 `timeoutMs` 分别交给写和读。步骤级重试由 BIZ 编排。
+当前 `HalControlTransport` 使用单调时钟把一次请求的剩余预算分别传给控制写和后续读取；Qt 串口写入也在同一 HAL 写操作预算内排空待写字节。整个 HAL 尚未统一完成该语义：`retryCount` / `retryIntervalMs` 未执行，旧 `transactSerial()` 仍把同一个 `timeoutMs` 分别交给写和读，`readAdBatch()`、`writeDaBatch()` 和 `readDiBatch()` 还会为每个通道重复使用完整 timeout。Qt UDP 只在没有待处理报文时检查剩余预算，持续到达的异源报文可能使读取超过总 deadline。步骤级重试由 BIZ 编排。
 
 ### 3.2 日志类型
 
@@ -185,7 +185,11 @@ HAL 可以转换工程单位和厂家单位，但不得把产品字段转换或�
 
 `[当前实现]` `ResourceMapper` 拒绝重复设备 alias；多设备配置中的每个资源必须显式指定已知设备，资源缺省 `adapterId` 时继承设备值，显式值不一致会失败；同一设备、模块、方向和物理索引的重复映射也会失败。单设备未声明 `device` 的既有配置仍兼容。
 
+`[当前实现限制]` `physicalIndex` 缺失或无法转换为整数时会得到 `0`，只在结果为负数时拒绝；根 `safeState` 中没有对应资源的键会在设备投影时静默丢弃。部署配置必须在进入 HAL 前保证物理索引是显式非负整数，并保证每个安全态键对应同一设备的可写输出资源。
+
 `[当前实现]` `HalDevice::close()` 在关闭底层设备前尽力应用安全态。对于同一 HAL 设备的已配置数字输出，HAL 先按 `physicalIndex` 汇总，再只调用一次底层 `writeDigitalBatch()`；模拟输出、串口和 CAN 仍按各自资源处理。这是 HAL 批处理语义，不承诺厂商 Adapter 已按端口 bank 实现原子整幅写入，也不构成物理安全验收。
+
+`[当前实现限制]` 模拟输出安全检查只比较上下界，没有拒绝 `NaN`/`Inf` 或非法量程；非有限值可能继续传给后端。文档中的“范围校验”不能据此解释为已经形成完整的非有限数门禁。
 
 `[当前实现]` BIZ `SafetyPolicy.enterSafeStateOnStop` 与 `enterSafeStateOnError` 仅被解析、保存和透传，HAL 与应用层均不按其布尔值选择分支。应用控制器的显式停止会无条件尝试复位 DI 刺激，错误终态不会因这两个字段立即触发额外复位；最终会话关闭仍执行上述 HAL safe state。该 safe state 只作用于 HAL/PXI 资源，不会向 DUT 发送产品 `DO_WRITE`；已批准的数字量输出测试在完成、停止和断开时都保留 DUT 最后状态。不得把兼容字段或 PXI 关闭写成已复位产品 DO。
 
@@ -195,7 +199,9 @@ HAL 可以转换工程单位和厂家单位，但不得把产品字段转换或�
 
 `[当前实现]` `AdapterRouter::configForAdapter()` 对 Vendor C ABI 后端只返回对应 Adapter 的驱动级配置，不再把全局 `hardware`/`safeState` 交给 `CAbiAdapter::initialize()`；Mock 后端继续接收其进程内拓扑。动态 C ABI fixture 会主动拒绝初始化 JSON 中的 `hardware`/`safeState`，`HalServiceTest.PassesOnlyDriverSettingsToVendorAdapterInitialization` 锁定初始化边界；`HalServiceTest.RoutesDriverSettingsAndDeviceProjectionIntoNiAdapter` 再经生产 NI parser 与 Fake DAQmx 锁定完整组合链。
 
-PXI-6259 配置拓扑为 AI `ai0..ai31`（硬件能力还报告最多 16 路 differential）、AO `ao0..ao3`、DIO `port0/line0..31` 或 `port1..2/line0..7`（共 48 线）以及 `ctr0..ctr1`。Adapter 已实现按需 AI/AO/DI/DO，以及 AI/AO/DI/DO 的有限和连续任务；采样任务可选择内部默认或外部时钟、start/reference/pause 触发，并支持计数边沿输入和频率脉冲输出。当前代码对 PXI-6259 施加 AI 单通道 1.25 MS/s、AI 多通道总 1 MS/s、AO 1--2 通道 2.86 MS/s / 3 通道 1.54 MS/s / 4 通道 1.25 MS/s、硬件定时 DIO 10 MHz 且仅 port0、计数器脉冲频率不高于 20 MHz 的限制。PXI-6733 profile 不声明 AI、DIO 或计数器，只接受 `ao0..ao7` 的单样本按需模拟输出（能力投影的最大 AO 速率为 1 MS/s），并要求每路 AO safe state 为 `0.0 V`。Adapter 短读以实际每通道样本数返回，部分写入、overflow/underflow 和 DAQmx 错误均归一到 HAL 状态/诊断；板级 fixture 在此基础上进一步要求通道数与每通道样本数精确等于请求值且全部为有限数，短读或 `NaN`/`Inf` 直接按 `DataMismatch` 拒绝。
+`[当前实现限制]` `HalService::initialize()` 会先调用但忽略上一轮 `shutdown()` 的失败，随后仍可重新配置；因此重新初始化成功不证明前一会话已完成安全态或原生资源收尾。
+
+PXI-6259 配置拓扑为 AI `ai0..ai31`（硬件能力还报告最多 16 路 differential）、AO `ao0..ao3`、DIO `port0/line0..31` 或 `port1..2/line0..7`（共 48 线）以及 `ctr0..ctr1`。Adapter 已实现按需 AI/AO/DI/DO，以及 AI/AO/DI/DO 的有限和连续任务；采样任务可选择内部默认或外部时钟、start/reference/pause 触发，并支持计数边沿输入和频率脉冲输出。任务式路径对 PXI-6259 施加 AI 单通道 1.25 MS/s、AI 多通道总 1 MS/s、AO 1--2 通道 2.86 MS/s / 3 通道 1.54 MS/s / 4 通道 1.25 MS/s、硬件定时 DIO 10 MHz 且仅 port0、计数器脉冲频率不高于 20 MHz 的限制；按需多样本 AI 路径当前只要求采样率大于零，没有复用同一上限校验。PXI-6733 profile 不声明 AI、DIO 或计数器，只接受 `ao0..ao7` 的单样本按需模拟输出（能力投影的最大 AO 速率为 1 MS/s），并要求每路 AO safe state 为 `0.0 V`。Adapter 短读以实际每通道样本数返回，部分写入、overflow/underflow 和 DAQmx 错误均归一到 HAL 状态/诊断；板级 fixture 在此基础上进一步要求通道数与每通道样本数精确等于请求值且全部为有限数，短读或 `NaN`/`Inf` 直接按 `DataMismatch` 拒绝。
 
 NI 的 on-demand 数字路径按 `portNumber`、方向和连续 `lineNumber` 分组，使用 `DAQmxCreateDOChan`/`DAQmxCreateDIChan` 的 `ChanForAllLines` task 和 `DAQmxWriteDigitalU32`/`DAQmxReadDigitalU32` 处理完整配置线段。设备关闭先停止并释放已跟踪的采样任务，再写 DO/AO safe state；安全写使用的临时 DAQmx task 在各自调用内清理，不调用会影响整卡其他任务的 `DAQmxResetDevice`。上述 NI 语义目前只有 Fake NIDAQmx 自动化证据。
 
@@ -258,6 +264,8 @@ int HAL_ADAPTER_CALL hal_adapter_get_api_v1(const HalAdapterHostApiV1* host,
 
 `[当前实现]` `CAbiAdapter` 通过 `AdapterLoader`/`QLibrary` 解析 `hal_adapter_get_api_v1`，校验 ABI 版本及函数表 `structSize`，并实际调用外部 DLL 的初始化、设备生命周期、能力、模拟/数字、串口和 CAN 函数。缺失函数指针返回 `NotSupported`；厂家状态码、原始 code 和诊断文本按现有 `HalStatusCode` 归一化并保留。它不再委托 `MockAdapter`。`IHalService::scanDevices()` 和 `queryCapabilities()` 当前仍返回配置映射，不是通过已加载 DLL 动态发现。
 
+`[当前实现限制]` 核心函数表允许 `openDevice` 存在而 `closeDevice` 为空。此时设备能够打开，但按会话关闭返回 `NotSupported`；`HalService` 仍消费公开会话并释放 lease。最后一次 Adapter `shutdown()` 是否回收厂家设备句柄取决于 DLL，不能由宿主当前实现保证。
+
 兼容规则：
 
 - C ABI 只使用固定宽度整数、POD、opaque handle 和调用方分配缓冲区；
@@ -289,11 +297,9 @@ int HAL_ADAPTER_CALL hal_adapter_get_task_api_v1(
 
 `[当前实现]` 仓库有 `src/adapters/ni_daqmx/` 原生 **PXI-6259/PXI-6733** Adapter。根 CMake 的 `HWTEST_ENABLE_NI_DAQMX` 默认关闭；开启时先使用显式 `NI_DAQMX_INCLUDE_DIR`/`NI_DAQMX_LIBRARY`，未提供时通过 `find_path`/`find_library` 搜索 `NIDAQmx.h` 和 `NIDAQmx`/`nicaiu` 导入库，仍缺任一项则配置失败，并生成共享 DLL `hwtest_adapter_ni_daqmx`。它导出核心 `hal_adapter_get_api_v1` 和可选 `hal_adapter_get_task_api_v1`；`AdapterRouter -> CAbiAdapter` 使用驱动级初始化配置加载该 DLL，单设备投影随后由 `openDevice()` 传入。
 
-该 Adapter 对 PXI-6259 声明 `analog`、`digital`、`counter` 模块，支持按需 AI/AO/DI/DO 和基于可选 task ABI 的有限/连续 AI/AO/DI/DO、计数边沿输入、频率脉冲输出；PXI-6733 仅声明单样本按需模拟输出。`DAQmxCfgSampClkTiming` 接收空时钟源作为内部默认时钟，非空源按外部时钟传入；start/reference/pause 触发分别映射到相应 DAQmx 调用。读取保留实际短读样本数，任务状态报告已启动/完成、可用样本、累计样本和 overflow/underflow；DAQmx 错误保留厂家码并归一化超时、设备移除、忙和 I/O 错误。
+该 Adapter 对 PXI-6259 声明 `analog`、`digital`、`counter` 模块，支持按需 AI/AO/DI/DO 和基于可选 task ABI 的有限/连续 AI/AO/DI/DO、计数边沿输入、频率脉冲输出；PXI-6733 仅声明单样本按需模拟输出。`DAQmxCfgSampClkTiming` 接收空时钟源作为内部默认时钟，非空源按外部时钟传入；start/reference/pause 触发分别映射到相应 DAQmx 调用。读取保留实际短读样本数，任务状态报告已启动/完成、可用样本、累计样本和 overflow/underflow；DAQmx 错误保留厂家码并归一化超时、设备移除、忙和 I/O 错误。通道、速率、safe state、部署模板和真机门禁只在第 5 节定义，本 ABI 章节不再复制。
 
-PXI-6259 的已实现配置校验和能力声明为：AI 32 路（硬件能力含 16 路 differential）、AO 4 路、DIO 48 线、2 个 32 位计数器；AI 单通道 1.25 MS/s、AI 多通道总 1 MS/s，AO 的每通道上限随通道数为 2.86/1.54/1.25 MS/s，硬件定时 DIO 10 MHz 且只允许 port0。通道解析限制为 `ai0..ai31`、`ao0..ao3`、`port0/line0..31` 或 `port1..2/line0..7`、`ctr0..ctr1`；计数器频率脉冲上限为 20 MHz。PXI-6733 的通道解析只接受 `ao0..ao7`，每路 AO safe state 必须为零。该配置/拓扑 parser 独立于 `ni_daqmx_adapter.cpp`，位于 `ni_daqmx_config.*`。
-
-`[当前实现]` 因而“PXI-6259/PXI-6733 NI-DAQmx 软件路径已实现、但真机未验收”才是源码/CMake/测试注册事实。`configs/mbddf_pc_hal.json` 仍是部署模板：`libraryPath` 由 `HWTEST_NI_DAQMX_ADAPTER_PATH` 提供，两张卡的 MAX 设备名位于设备 `properties.vendor.ni.deviceName`，序列号和设备名均为 `CONFIGURE_ME`。占位 serial 会在驱动级 Adapter 初始化完成后的 NI open projection 解析阶段被拒绝，占位设备名也不会发现真实板卡。在隔离台架填入真实 DLL、MAX 身份、序列号和接线前，不能把该路径写成已加载的 NI 驱动、已输出电平或已验收 PXI-6259/PXI-6733。
+`[当前实现]` 这里只证明 PXI-6259/PXI-6733 NI-DAQmx 软件路径和 ABI 接线已经存在；当前自动化仍是 Fake NIDAQmx。真实板卡前置条件与证据边界分别见 5.1 和[测试规范](../testing/testing-specification.md)。
 
 ---
 
@@ -322,13 +328,7 @@ HAL 关键生命周期和 I/O 操作应产生结构化事件，至少可追踪�
 
 也可以使用标准 Provider 连接隔离模拟目标，但必须单独标为 Qt Provider 证据，不能冒充 HAL Mock 或真实硬件证据。
 
-当前保留直连 `SystemStatusSimulator` 的 golden 测试，并已有“算法 -> HAL -> `qt.udp` -> 本机隔离模拟目标”的 `SYSTEM_STATUS`/`ELEC_HEALTH_STATUS` 集成测试。后者证明 Qt UDP Provider 路径，但不是 HAL Mock Provider、真实网口或真实 DUT 证据。`MockAdapter` 的串口 echo 和 CAN loopback 仍只证明基础原始 I/O。
-
-`[当前实现]` `hal_adapter_digital_fixture` 是仅供测试动态加载的通用 Fake ABI v1 DLL；另有把生产 PXI-6259/PXI-6733 Adapter 源码链接到 Fake NIDAQmx 的 `hal_adapter_ni_daqmx_fixture`，由真实 `AdapterLoader -> CAbiAdapter` 动态加载。`CAbiAdapterTest` 覆盖加载、逻辑 alias 到物理设备名映射、数字批量读写、厂家状态映射、缺失符号/函数、可选 task API、连续模拟输入完整块传递、close 错误后的 handle 消费，以及 I/O/close 串行化；`HalServiceTest` 覆盖 Mock 与 Fake DLL 的多 Adapter 惰性路由和设备范围 open projection；`ResourceMapperTest` 和 `HalDeviceTest` 分别锁定严格多设备映射、单设备 safe state、采样任务先 stop/close 再安全输出，以及 close 错误后不二次关闭。
-
-`NiDaqmxAdapterFakeTest` 把同一 `ni_daqmx_adapter.cpp` 和 `ni_daqmx_config.cpp` 链接仓库内 Fake `NIDAQmx` API，覆盖 PXI-6259 open projection、`CONFIGURE_ME` 门禁、拓扑/速率边界、按需 AI/AO/DI/DO、有限/连续任务路径、内部/外部时钟、start/reference/pause 触发、边沿计数输入、频率脉冲输出、短读、overflow/underflow、错误注入、任务状态和安全关闭顺序，以及 PXI-6733 的 AO-only profile 与零 AO safe state。它在 `BUILD_TESTING` 时注册为标签 `hal;adapter;ni_daqmx;fake` 的 CTest，不依赖已安装 NI SDK。两类 Fake 都不构成真实 NI SDK、实际 PXI-6259/PXI-6733、接线、电平兼容、物理输出、触发时序或物理安全态证据。
-
-完整测试分层、证据等级和真实硬件隔离要求见 [测试规范](../testing/testing-specification.md)。
+当前自动化分别覆盖协议级 Simulator、Qt UDP 隔离目标、MockAdapter、动态 Fake C ABI 和生产 NI Adapter + Fake NIDAQmx。它们只能证明各自软件边界；测试目标、当前清单和执行证据统一见[测试规范](../testing/testing-specification.md)，不得在本契约重复维护计数或用例列表。
 
 ---
 
@@ -337,12 +337,12 @@ HAL 关键生命周期和 I/O 操作应产生结构化事件，至少可追踪�
 | 能力 | 当前 | 目标验收 |
 | --- | --- | --- |
 | 后端选择 | 控制资源按 `providerId` 路由；非控制设备按 `adapterId` 经 `AdapterRouter` 惰性选择 Mock 或配置的 C ABI DLL | 补控制通道通用 Router、Provider 扫描和更多已验收后端 |
-| Qt 串口 | `qt.serial` 已实现宿主端口枚举、配置、打开、原始读写和关闭；早期 COM3 到真实 MB_DDF_v2 的 SYSTEM_STATUS 单次/三周期 smoke 每周期有 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，SYSTEM_STATUS 与 ELEC_HEALTH_STATUS 均成功复测且后端诊断不再出现该警告 | 补自动化 hardware target，并完成长时、超时、拔插、运行中停止和物理收尾验收 |
-| UDP/TCP | `qt.udp` 已实现并有本机闭环；TCP 未实现 | 明确现场 UDP 端点；另行评审 TCP |
+| Qt 串口 | `qt.serial` 已实现宿主端口枚举、配置、打开、原始读写和关闭；当前契约不预设任何一次真机运行结果 | 补自动化 hardware target，并完成长时、超时、拔插、运行中停止和物理收尾验收 |
+| UDP/TCP | `qt.udp` 已实现并有本机闭环；持续异源报文可能绕过总读取 deadline；TCP 未实现 | 明确现场 UDP 端点并验证有界读取；另行评审 TCP |
 | Vendor Adapter | 通用 `CAbiAdapter` 已实际加载并调用核心 ABI v1 与可选 task ABI；可选 `hwtest_adapter_ni_daqmx` 已实现 PXI-6259 按需/任务式模拟、数字和计数器 I/O，以及 PXI-6733 AO-only profile；自动化使用动态 Fake DLL 与 Fake NIDAQmx | 补其他原生厂家 Adapter；PXI-6259/PXI-6733 真机验收与 `hardware` CTest 标签均未实现 |
 | 设备发现 | HAL 设备来自配置；宿主串口可独立只读枚举 | Provider 设备扫描并与配置 match |
-| deadline | 部分方法传递 timeout | 一次 HAL 操作共享总预算 |
+| deadline | 部分方法传递 timeout；批量通道操作、旧串口事务和异源 UDP 路径尚未共享严格总预算 | 一次 HAL 操作共享总预算 |
 | 产品级 Mock | Simulator 绕过 HAL；另有 Qt UDP 隔离模拟目标 | 增加控制通道 Mock Provider 闭环 |
-| 生产安全 | 关闭前先停止/释放会话采样任务，再尽力应用 safeState；同一设备数字输出合并为一次后端批写；close 错误仍消费会话并禁止二次释放；NI Adapter 的任务停止、DO/AO 安全写与异常 close 仅由 Fake SDK/动态 Fake DLL 锁定，PXI-6733 AO safe state 为零 | 异常、停止和关闭路径均有可验证物理收尾；真实 PXI-6259/PXI-6733 和其他厂商端口语义另行验收 |
+| 生产安全 | 关闭前尽力应用 safeState；当前仍存在非有限模拟值未拒绝、错误 safeState 键静默丢弃、重新初始化吞掉上次 shutdown 失败，以及 open/close 函数不成对时原生句柄回收不确定 | 异常、停止和关闭路径均有可验证物理收尾；真实 PXI-6259/PXI-6733 和其他厂商端口语义另行验收 |
 
 在代码达到目标前，文档和测试报告必须继续保留“未实现”标记，不得以 Mock echo、Simulator 或已存在的接口声明替代实现证据。

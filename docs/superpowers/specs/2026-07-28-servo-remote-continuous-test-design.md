@@ -76,7 +76,7 @@ phase(t) = 2*pi*f0*f1*T/(f1-f0) * ln(f1*T/(f1*T-t*(f1-f0))) + start
 
 `dut/` 新增两个相互独立的组成部分：
 
-1. 独立 `helm_control` 可执行目标：从 `tmp/helm_control` 提升正式源码，继续使用真实 27 字节 `Helm_ins_frame` 与 41 字节 `Helm_fdb_frame` DDS payload；不修改内部舵角钳位。
+1. 独立 `helm_control` 可执行目标：正式源码位于 `dut/src/HelmControl`，使用其中 `ProtocolModel` 定义的 27 字节 `Helm_ins_frame` 与 41 字节 `Helm_fdb_frame` DDS payload；不修改内部舵角钳位。
 2. `HW_TEST` 内的 `HelmDdsTestBridge`：接收 PC START 参数，先发布零位解锁首帧再启动
    1 ms 指令生成；发布 `helm_command`，订阅 `helm_feedback`，按产品协议批量上送；
    收到 STOP 后停止生成，在关闭 DDS 前发布零位解锁尾帧并返回 ACK。
