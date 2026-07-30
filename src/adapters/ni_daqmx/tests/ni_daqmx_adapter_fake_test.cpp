@@ -72,6 +72,12 @@ void usePxiFixture()
     fake_nidaqmx::setDeviceIdentity("PXI1Slot2", "PXI-6259", 62590002u);
 }
 
+void usePxi6733Fixture()
+{
+    fake_nidaqmx::reset();
+    fake_nidaqmx::setDeviceIdentity("PXI1Slot3", "PXI-6733", 67330003u);
+}
+
 bool runLifecycleTest(const HalAdapterApiV1& api)
 {
     usePxiFixture();
@@ -309,6 +315,225 @@ bool runPxi6259IdentityAndTopologyTest(const HalAdapterApiV1& api)
                    "PXI-6259 port1 must reject line 8") && passed;
         api.shutdown(adapter);
     }
+    return passed;
+}
+
+const char* pxi6733OpenSpec()
+{
+    return R"json({
+      "schema":"hwtest.adapter-device-open","version":1,"physicalDeviceId":"PXI1Slot3",
+      "device":{"deviceId":"pxi6733","adapterId":"ni.daqmx","model":"PXI-6733","serialNumber":"67330003"},
+      "channels":[
+        {"resourceId":"AO0","module":"analog","direction":"output","physicalIndex":0,"properties":{"channelNumber":0,"minValue":-10.0,"maxValue":10.0}},
+        {"resourceId":"AO1","module":"analog","direction":"output","physicalIndex":1,"properties":{"channelNumber":1,"minValue":-10.0,"maxValue":10.0}},
+        {"resourceId":"AO2","module":"analog","direction":"output","physicalIndex":2,"properties":{"channelNumber":2,"minValue":-10.0,"maxValue":10.0}},
+        {"resourceId":"AO3","module":"analog","direction":"output","physicalIndex":3,"properties":{"channelNumber":3,"minValue":-10.0,"maxValue":10.0}},
+        {"resourceId":"AO4","module":"analog","direction":"output","physicalIndex":4,"properties":{"channelNumber":4,"minValue":-10.0,"maxValue":10.0}},
+        {"resourceId":"AO5","module":"analog","direction":"output","physicalIndex":5,"properties":{"channelNumber":5,"minValue":-10.0,"maxValue":10.0}},
+        {"resourceId":"AO6","module":"analog","direction":"output","physicalIndex":6,"properties":{"channelNumber":6,"minValue":-10.0,"maxValue":10.0}},
+        {"resourceId":"AO7","module":"analog","direction":"output","physicalIndex":7,"properties":{"channelNumber":7,"minValue":-10.0,"maxValue":10.0}}
+      ],
+      "safeState":{"AO0":0.0,"AO1":0.0,"AO2":0.0,"AO3":0.0,"AO4":0.0,"AO5":0.0,"AO6":0.0,"AO7":0.0}
+    })json";
+}
+
+bool lastAnalogOutputsAreZero(int expectedCount)
+{
+    if (fake_nidaqmx::lastAnalogOutputCount() != expectedCount) return false;
+    for (int index = 0; index < expectedCount; ++index) {
+        if (fake_nidaqmx::lastAnalogOutputAt(index) != 0.0) return false;
+    }
+    return true;
+}
+
+bool runPxi6733ProfileTest(const HalAdapterApiV1& api,
+                           const HalAdapterTaskApiV1& taskApi)
+{
+    usePxi6733Fixture();
+    HalAdapterInfo adapterInfo{};
+    bool passed = check(api.getInfo(&adapterInfo).code == HAL_ADAPTER_OK &&
+                            std::strstr(adapterInfo.name, "PXI-6259") == nullptr,
+                        "adapter information must not hard-code the PXI-6259 model");
+
+    HalAdapterHandle adapter = nullptr;
+    HalAdapterStatus status = api.initialize(validConfig(), &adapter);
+    if (!check(status.code == HAL_ADAPTER_OK && adapter != nullptr,
+               "PXI-6733 Fake driver should initialize the adapter")) return false;
+
+    HalAdapterDeviceInfo info{};
+    int count = 1;
+    status = api.enumerateDevices(adapter, &info, &count, 1000);
+    passed = check(status.code == HAL_ADAPTER_OK &&
+                       std::strcmp(info.model, "PXI-6733") == 0 &&
+                       (info.supportedModulesMask & HAL_MODULE_ANALOG) != 0u &&
+                       (info.supportedModulesMask & (HAL_MODULE_DIGITAL | HAL_MODULE_COUNTER)) == 0u,
+                   "PXI-6733 enumeration should advertise its analog-only profile") && passed;
+
+    HalAdapterDeviceHandle device = nullptr;
+    status = api.openDevice(adapter, "PXI1Slot3", pxi6733OpenSpec(), &device);
+    passed = check(status.code == HAL_ADAPTER_OK && device != nullptr,
+                   "PXI-6733 AO0..AO7 projection should open") && passed;
+    if (device != nullptr) {
+        passed = check(fake_nidaqmx::createAoCalls() == 8 &&
+                           fake_nidaqmx::createAiCalls() == 0 &&
+                           fake_nidaqmx::createDiCalls() == 0 &&
+                           fake_nidaqmx::createDoCalls() == 0 &&
+                           fake_nidaqmx::createCounterInputCalls() == 0 &&
+                           fake_nidaqmx::createCounterOutputCalls() == 0 &&
+                           std::strcmp(fake_nidaqmx::lastAoPhysicalChannel(),
+                                       "PXI1Slot3/ao7") == 0,
+                       "PXI-6733 open should expose only AO0..AO7") && passed;
+        passed = check(lastAnalogOutputsAreZero(8),
+                       "PXI-6733 open should write zero to every AO safe state") && passed;
+
+        int capabilityBytes = 0;
+        status = api.getCapabilities(device, nullptr, &capabilityBytes, 1000);
+        std::vector<char> capabilities(static_cast<std::size_t>(capabilityBytes));
+        if (status.code == HAL_ADAPTER_BUFFER_TOO_SMALL) {
+            status = api.getCapabilities(device, capabilities.data(), &capabilityBytes, 1000);
+        }
+        passed = check(status.code == HAL_ADAPTER_OK &&
+                           std::strstr(capabilities.data(), "\"supportedModules\":[\"analog\"]") != nullptr &&
+                           std::strstr(capabilities.data(), "\"analog.outputChannels\":8") != nullptr &&
+                           std::strstr(capabilities.data(), "\"analog.outputResolutionBits\":16") != nullptr &&
+                           std::strstr(capabilities.data(), "\"analog.outputMaxRateHz\":1000000") != nullptr &&
+                           std::strstr(capabilities.data(), "\"sampleModes\":[\"onDemand\"]") != nullptr &&
+                           std::strstr(capabilities.data(), "digital") == nullptr &&
+                           std::strstr(capabilities.data(), "counter") == nullptr &&
+                           std::strstr(capabilities.data(), "analog.input") == nullptr,
+                       "PXI-6733 capabilities should be AO-only, 16-bit, 1 MS/s and on-demand") && passed;
+
+        const int outputIndexes[] = {0, 7};
+        const double outputValues[] = {1.25, -2.5};
+        status = api.analogWrite(device,
+                                 outputIndexes,
+                                 outputValues,
+                                 2,
+                                 HAL_ADAPTER_ANALOG_UNIT_VOLT,
+                                 1000);
+        passed = check(status.code == HAL_ADAPTER_OK &&
+                           fake_nidaqmx::lastAnalogOutputCount() == 2 &&
+                           fake_nidaqmx::lastAnalogOutputAt(0) == 1.25 &&
+                           fake_nidaqmx::lastAnalogOutputAt(1) == -2.5,
+                       "PXI-6733 should support static on-demand writes on AO0 and AO7") && passed;
+
+        const int analogIndex[] = {0};
+        HalAdapterAnalogSample analogSample{};
+        HalAdapterDigitalSample digitalSample{};
+        passed = check(api.analogRead(device,
+                                      analogIndex,
+                                      1,
+                                      &analogSample,
+                                      1,
+                                      0,
+                                      1000).code == HAL_ADAPTER_NOT_SUPPORTED &&
+                           api.digitalRead(device, analogIndex, 1, &digitalSample, 1000).code ==
+                               HAL_ADAPTER_NOT_SUPPORTED &&
+                           api.digitalWrite(device, analogIndex, analogIndex, 1, 1000).code ==
+                               HAL_ADAPTER_NOT_SUPPORTED,
+                       "PXI-6733 must reject unprojected AI and DIO resources") && passed;
+
+        HalAdapterTaskConfig taskConfig{};
+        taskConfig.structSize = static_cast<int>(sizeof(taskConfig));
+        taskConfig.kind = HAL_ADAPTER_TASK_ANALOG_OUTPUT;
+        taskConfig.mode = HAL_ADAPTER_TASK_ON_DEMAND;
+        taskConfig.channelIndexes = analogIndex;
+        taskConfig.channelCount = 1;
+        taskConfig.samplesPerChannel = 1;
+        HalAdapterTaskHandle task = nullptr;
+        status = taskApi.createTask(device, &taskConfig, &task);
+        passed = check(status.code == HAL_ADAPTER_OK && task != nullptr,
+                       "PXI-6733 should permit an on-demand AO task") && passed;
+        if (task != nullptr) {
+            double taskValue = 0.5;
+            HalAdapterTaskBuffer buffer{};
+            buffer.structSize = static_cast<int>(sizeof(buffer));
+            buffer.sampleType = HAL_ADAPTER_SAMPLE_FLOAT64;
+            buffer.data = &taskValue;
+            buffer.capacityValues = 1;
+            buffer.channelCount = 1;
+            buffer.samplesPerChannel = 1;
+            passed = check(taskApi.writeTask(task, &buffer, 1, 1000).code == HAL_ADAPTER_OK,
+                           "PXI-6733 on-demand AO task should write one static sample") && passed;
+            passed = check(taskApi.closeTask(task).code == HAL_ADAPTER_OK,
+                           "PXI-6733 on-demand AO task should close safely") && passed;
+        }
+
+        taskConfig.mode = HAL_ADAPTER_TASK_FINITE;
+        taskConfig.sampleRateHz = 1000000.0;
+        task = nullptr;
+        passed = check(taskApi.createTask(device, &taskConfig, &task).code == HAL_ADAPTER_NOT_SUPPORTED &&
+                           task == nullptr,
+                       "PXI-6733 must not open unverified finite AO sampling") && passed;
+        taskConfig.kind = HAL_ADAPTER_TASK_ANALOG_INPUT;
+        taskConfig.mode = HAL_ADAPTER_TASK_ON_DEMAND;
+        taskConfig.sampleRateHz = 0.0;
+        task = nullptr;
+        passed = check(taskApi.createTask(device, &taskConfig, &task).code == HAL_ADAPTER_NOT_SUPPORTED &&
+                           task == nullptr,
+                       "PXI-6733 must reject AI task creation") && passed;
+        taskConfig.kind = HAL_ADAPTER_TASK_DIGITAL_INPUT;
+        task = nullptr;
+        passed = check(taskApi.createTask(device, &taskConfig, &task).code == HAL_ADAPTER_NOT_SUPPORTED &&
+                           task == nullptr,
+                       "PXI-6733 must reject DIO task creation") && passed;
+
+        passed = check(api.resetDevice(device, 1000).code == HAL_ADAPTER_OK &&
+                           lastAnalogOutputsAreZero(8),
+                       "PXI-6733 reset should restore zero AO safe states") && passed;
+        passed = check(api.closeDevice(device).code == HAL_ADAPTER_OK &&
+                           lastAnalogOutputsAreZero(8),
+                       "PXI-6733 close should restore zero AO safe states") && passed;
+    }
+
+    const char* unknownModel = R"json({
+      "schema":"hwtest.adapter-device-open","version":1,"physicalDeviceId":"PXI1Slot3",
+      "device":{"deviceId":"unknown","adapterId":"ni.daqmx","model":"PXI-9999","serialNumber":"67330003"},
+      "channels":[{"resourceId":"AO0","module":"analog","direction":"output","physicalIndex":0,"properties":{"channelNumber":0,"minValue":-10.0,"maxValue":10.0}}],
+      "safeState":{"AO0":0.0}
+    })json";
+    usePxi6733Fixture();
+    HalAdapterDeviceHandle unknown = nullptr;
+    status = api.openDevice(adapter, "PXI1Slot3", unknownModel, &unknown);
+    passed = check(status.code == HAL_ADAPTER_INVALID_ARGUMENT && unknown == nullptr &&
+                       fake_nidaqmx::createAoCalls() == 0,
+                   "unknown NI models must fail closed before any output write") && passed;
+
+    const char* unsupportedAi = R"json({
+      "schema":"hwtest.adapter-device-open","version":1,"physicalDeviceId":"PXI1Slot3",
+      "device":{"deviceId":"pxi6733","adapterId":"ni.daqmx","model":"PXI-6733","serialNumber":"67330003"},
+      "channels":[{"resourceId":"AI0","module":"analog","direction":"input","physicalIndex":0,"properties":{"channelNumber":0,"minValue":-10.0,"maxValue":10.0}}],
+      "safeState":{}
+    })json";
+    HalAdapterDeviceHandle unsupported = nullptr;
+    status = api.openDevice(adapter, "PXI1Slot3", unsupportedAi, &unsupported);
+    passed = check(status.code == HAL_ADAPTER_INVALID_ARGUMENT && unsupported == nullptr,
+                   "PXI-6733 configuration must reject AI projections") && passed;
+
+    const char* unsupportedDi = R"json({
+      "schema":"hwtest.adapter-device-open","version":1,"physicalDeviceId":"PXI1Slot3",
+      "device":{"deviceId":"pxi6733","adapterId":"ni.daqmx","model":"PXI-6733","serialNumber":"67330003"},
+      "channels":[{"resourceId":"DI0","module":"digital","direction":"input","physicalIndex":0,"properties":{"portNumber":0,"lineNumber":0}}],
+      "safeState":{}
+    })json";
+    status = api.openDevice(adapter, "PXI1Slot3", unsupportedDi, &unsupported);
+    passed = check(status.code == HAL_ADAPTER_INVALID_ARGUMENT && unsupported == nullptr,
+                   "PXI-6733 configuration must reject DIO projections") && passed;
+
+    const char* nonZeroSafeState = R"json({
+      "schema":"hwtest.adapter-device-open","version":1,"physicalDeviceId":"PXI1Slot3",
+      "device":{"deviceId":"pxi6733","adapterId":"ni.daqmx","model":"PXI-6733","serialNumber":"67330003"},
+      "channels":[{"resourceId":"AO0","module":"analog","direction":"output","physicalIndex":0,"properties":{"channelNumber":0,"minValue":-10.0,"maxValue":10.0}}],
+      "safeState":{"AO0":1.0}
+    })json";
+    HalAdapterDeviceHandle nonZero = nullptr;
+    status = api.openDevice(adapter, "PXI1Slot3", nonZeroSafeState, &nonZero);
+    passed = check(status.code == HAL_ADAPTER_INVALID_ARGUMENT && nonZero == nullptr,
+                   "PXI-6733 configuration must require a zero AO safeState") && passed;
+    if (nonZero != nullptr) api.closeDevice(nonZero);
+
+    passed = check(api.shutdown(adapter).code == HAL_ADAPTER_OK,
+                   "PXI-6733 adapter should shut down") && passed;
     return passed;
 }
 
@@ -1086,6 +1311,7 @@ int main()
     passed = runLegacyFullHalConfigRejectedTest(api) && passed;
     passed = runAnalogSurfaceTest(api) && passed;
     passed = runPxi6259IdentityAndTopologyTest(api) && passed;
+    passed = runPxi6733ProfileTest(api, taskApi) && passed;
     passed = runPxiDeploymentGateAndBoundaryTest(api) && passed;
     passed = runFakeFiniteAiTaskContractTest() && passed;
     passed = runFakeContinuousAoCounterTaskContractTest() && passed;

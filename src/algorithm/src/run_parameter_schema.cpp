@@ -198,6 +198,45 @@ const RunParameterSchema& helmSchema()
     return schema;
 }
 
+const RunParameterSchema& helmBoardSchema()
+{
+    static const RunParameterSchema schema = [] {
+        RunParameterSchema result;
+        result.version = QStringLiteral("1");
+        result.persistValues = false;
+
+        RunParameterDescriptor mode;
+        mode.id = QStringLiteral("test_mode");
+        mode.label = QStringLiteral("测试模式");
+        mode.kind = RunParameterKind::Choice;
+        mode.defaultValue = 0;
+        mode.choices = {
+            {0, QStringLiteral("自动")},
+            {1, QStringLiteral("手动")},
+        };
+        result.parameters.push_back(mode);
+
+        for (int channel = 0; channel < 4; ++channel) {
+            RunParameterDescriptor duty = integerParameter(
+                QStringLiteral("pwm_duty_percent[%1]").arg(channel),
+                QStringLiteral("舵%1 PWM 占空比").arg(channel + 1),
+                QStringLiteral("%"), 0, 0, 100);
+            duty.visibleWhenParameter = QStringLiteral("test_mode");
+            duty.visibleWhenEquals = 1;
+            result.parameters.push_back(duty);
+
+            RunParameterDescriptor direction = booleanParameter(
+                QStringLiteral("direction[%1]").arg(channel),
+                QStringLiteral("舵%1 方向").arg(channel + 1), false);
+            direction.visibleWhenParameter = QStringLiteral("test_mode");
+            direction.visibleWhenEquals = 1;
+            result.parameters.push_back(direction);
+        }
+        return result;
+    }();
+    return schema;
+}
+
 const RunParameterSchema& dhSchema()
 {
     static const RunParameterSchema schema = [] {
@@ -352,6 +391,9 @@ const RunParameterSchema* findRunParameterSchema(const QString& algorithmId)
 {
     if (algorithmId == QStringLiteral("mbddf.helm_stream")) {
         return &helmSchema();
+    }
+    if (algorithmId == QStringLiteral("mbddf.helm_board_test")) {
+        return &helmBoardSchema();
     }
     if (algorithmId == QStringLiteral("mbddf.dh_pulse_config")) {
         return &dhSchema();

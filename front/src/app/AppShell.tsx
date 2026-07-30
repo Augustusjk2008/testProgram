@@ -10,11 +10,12 @@ import type { ReactNode } from 'react'
 
 import { RunControlBar } from '../features/session/RunControlBar'
 import { useSession } from '../features/session/SessionProvider'
+import { isBoardTestAlgorithm } from '../features/board-test/board-test-navigation'
 import { isPerformanceCapabilityEnabled } from '../features/performance/performance-navigation'
 import { connectionStateLabel } from '../shared/format'
 import { useTheme } from './ThemeProvider'
 
-export type PageId = 'overview' | 'charts' | 'performance' | 'diagnostics'
+export type PageId = 'overview' | 'charts' | 'performance' | 'board-test' | 'diagnostics'
 
 const NAV_ITEMS = [
   { id: 'overview' as const, label: '任务', icon: Gauge },
@@ -22,6 +23,8 @@ const NAV_ITEMS = [
   { id: 'performance' as const, label: '性能', icon: Pulse },
   { id: 'diagnostics' as const, label: '诊断', icon: TerminalWindow },
 ]
+
+const BOARD_TEST_NAV_ITEM = { id: 'board-test' as const, label: '板级测试', icon: Pulse }
 
 interface AppShellProps {
   page: PageId
@@ -32,9 +35,11 @@ interface AppShellProps {
 export function AppShell({ page, onPageChange, children }: AppShellProps) {
   const { connectionDetail, connectionState, snapshot, wsUrl } = useSession()
   const { theme, toggleTheme } = useTheme()
-  const activePage = NAV_ITEMS.find(({ id }) => id === page) ?? NAV_ITEMS[0]
   const descriptor = snapshot.descriptor
   const performanceAvailable = isPerformanceCapabilityEnabled(descriptor.postRunAnalysis)
+  const boardTestAvailable = isBoardTestAlgorithm(snapshot.algorithmId || descriptor.algorithmId)
+  const navItems = boardTestAvailable ? [...NAV_ITEMS, BOARD_TEST_NAV_ITEM] : NAV_ITEMS
+  const displayedPage = navItems.find(({ id }) => id === page) ?? navItems[0]
 
   return (
     <div className="app-shell">
@@ -45,7 +50,7 @@ export function AppShell({ page, onPageChange, children }: AppShellProps) {
         </div>
 
         <nav aria-label="主导航">
-          {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
+          {navItems.map(({ id, label, icon: Icon }) => {
             const disabled = id === 'performance' && !performanceAvailable
             return (
               <button
@@ -73,7 +78,7 @@ export function AppShell({ page, onPageChange, children }: AppShellProps) {
 
       <div className="workspace">
         <header className="topbar">
-          <h1>{activePage.label}</h1>
+          <h1>{displayedPage.label}</h1>
           <div className="topbar__controls">
             <div className="topbar__session">
               <span><small>控制资源</small><strong>{snapshot.controlResourceId || '未配置'}</strong></span>

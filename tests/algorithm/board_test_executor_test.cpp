@@ -1,0 +1,705 @@
+#include <gtest/gtest.h>
+
+#include <algorithm/board_test_executor.h>
+#include <algorithm/mbddf_protocol.h>
+#include <algorithm/mbddf_transport.h>
+
+#include <biz/i_algorithm_executor.h>
+
+#include <hal/hal_types.h>
+
+#include <QMap>
+
+#include <array>
+#include <cmath>
+#include <functional>
+#include <memory>
+
+namespace hwtest::algorithm::mbddf {
+namespace {
+
+QString catalogDirectory()
+{
+    const QString configured = qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR");
+    return configured.isEmpty()
+        ? QStringLiteral(HWTEST_MBDDF_PROTOCOL_CATALOG_DIR)
+        : configured;
+}
+
+hwtest::hal::HalStatus failedHal(const QString& message)
+{
+    hwtest::hal::HalStatus status;
+    status.code = hwtest::hal::HalStatusCode::IoError;
+    status.error.code = status.code;
+    status.error.message = message;
+    return status;
+}
+
+class RunControl final : public hwtest::biz::IRunControl {
+public:
+    hwtest::biz::RunControl current() const override
+    {
+        return stopped ? hwtest::biz::RunControl::Stop
+                       : hwtest::biz::RunControl::Run;
+    }
+
+    bool checkpoint() const override { return !stopped; }
+
+    bool stopped = false;
+};
+
+class Observer final : public hwtest::biz::IAlgorithmObserver {
+public:
+    void onProgress(const hwtest::biz::StepId&,
+                    const hwtest::biz::TestItemId&,
+                    int value,
+                    const QString& stage) override
+    {
+        progress = value;
+        lastStage = stage;
+    }
+
+    void onSample(const hwtest::biz::StepId&,
+                  const hwtest::biz::RawSample& sample) override
+    {
+        samples.push_back(sample);
+    }
+
+    void onLog(const hwtest::logging::LogEvent&) override {}
+
+    int progress = 0;
+    QString lastStage;
+    QVector<hwtest::biz::RawSample> samples;
+};
+
+class FakeBoardFixture final : public IBoardTestFixture {
+public:
+    hwtest::hal::HalResult<QVector<hwtest::hal::DigitalSample>>
+    read6259Digital(const QVector<hwtest::hal::ResourceId>& resources,
+                    int) override
+    {
+        ++digitalReadCount;
+        hwtest::hal::HalResult<QVector<hwtest::hal::DigitalSample>> result;
+        for (const QString& resource : resources) {
+            hwtest::hal::DigitalSample sample;
+            sample.channel = resource;
+            if (resource.endsWith(QStringLiteral("TX_ENABLE_SENSE"))) {
+                sample.level = (doMask & (1u << 2)) != 0
+                    ? hwtest::hal::DigitalLevel::High
+                    : hwtest::hal::DigitalLevel::Low;
+            } else {
+                sample.level = (doMask & (1u << 1)) != 0
+                    ? hwtest::hal::DigitalLevel::High
+                    : hwtest::hal::DigitalLevel::Low;
+            }
+            if (invertDigitalReadback) {
+                sample.level = sample.level == hwtest::hal::DigitalLevel::High
+                    ? hwtest::hal::DigitalLevel::Low
+                    : hwtest::hal::DigitalLevel::High;
+            }
+            if (malformedDigitalReadback && result.value.isEmpty()) {
+                sample.channel = QStringLiteral("WRONG_RESOURCE");
+            }
+            result.value.push_back(sample);
+        }
+        return result;
+    }
+
+    hwtest::hal::HalResult<hwtest::hal::SampleTaskBlock>
+    capture6259Analog(const QVector<hwtest::hal::ResourceId>& resources,
+                      double sampleRateHz,
+                      int samplesPerChannel,
+                      int) override
+    {
+        ++analogCaptureCount;
+        hwtest::hal::HalResult<hwtest::hal::SampleTaskBlock> result;
+        result.value.sampleType = hwtest::hal::SampleValueType::Float64;
+        result.value.channelCount = resources.size();
+        result.value.samplesPerChannel = samplesPerChannel;
+        result.value.analogValues.reserve(resources.size() * samplesPerChannel);
+        for (const QString& resource : resources) {
+            int index = -1;
+            if (resource.contains(QStringLiteral("PWM"))) {
+                index = resource.mid(8, 1).toInt() - 1;
+            } else if (resource.contains(QStringLiteral("DIR"))) {
+                index = resource.mid(8, 1).toInt() - 1;
+            }
+            for (int sample = 0; sample < samplesPerChannel; ++sample) {
+                double value = 0.0;
+                if (resource.contains(QStringLiteral("PWM")) && index >= 0) {
+                    const double duty = pwmDuty[static_cast<size_t>(index)] / 100.0;
+                    const double phase = std::fmod(
+                        sample * 4000.0 / sampleRateHz, 1.0);
+                    value = phase < duty ? 5.0 : 0.0;
+                    if (badPwmChannel == index && pwmDuty[static_cast<size_t>(index)] > 0) {
+                        value = 0.0;
+                    }
+                } else if (resource.contains(QStringLiteral("DIR")) && index >= 0) {
+                    value = directions[static_cast<size_t>(index)] ? 5.0 : 0.0;
+                }
+                result.value.analogValues.push_back(value);
+            }
+        }
+        return result;
+    }
+
+    hwtest::hal::HalStatus write6733Analog(
+        const QMap<hwtest::hal::ResourceId, double>& values,
+        int) override
+    {
+        ++analogWriteCount;
+        if (failWriteAt == analogWriteCount) {
+            return failedHal(QStringLiteral("cleanup failed"));
+        }
+        for (auto it = values.cbegin(); it != values.cend(); ++it) {
+            int index = it.key().mid(7, 1).toInt() - 1;
+            if (index >= 0 && index < 4) {
+                ao[static_cast<size_t>(index)] = it.value();
+            }
+        }
+        analogWrites.push_back(values);
+        return {};
+    }
+
+    void settle(int milliseconds) override
+    {
+        settleCalls.push_back(milliseconds);
+    }
+
+    quint32 doMask = 0x0018u;
+    std::array<int, 4> pwmDuty{{0, 0, 0, 0}};
+    std::array<bool, 4> directions{{false, false, false, false}};
+    std::array<double, 4> ao{{0.0, 0.0, 0.0, 0.0}};
+    int badPwmChannel = -1;
+    int failWriteAt = -1;
+    bool invertDigitalReadback = false;
+    bool malformedDigitalReadback = false;
+    int digitalReadCount = 0;
+    int analogCaptureCount = 0;
+    int analogWriteCount = 0;
+    QVector<int> settleCalls;
+    QVector<QMap<hwtest::hal::ResourceId, double>> analogWrites;
+};
+
+class BoardTransport final : public IByteTransport {
+public:
+    BoardTransport(const ProtocolCatalog* catalog, FakeBoardFixture* fixture)
+        : m_catalog(catalog), m_fixture(fixture)
+    {
+    }
+
+    bool configure(const QVariantMap&, QString* error) override
+    {
+        if (error != nullptr) error->clear();
+        return true;
+    }
+
+    bool open(QString* error) override
+    {
+        openState = true;
+        if (error != nullptr) error->clear();
+        return true;
+    }
+
+    TransportResult transact(const QByteArray& frame, int) override
+    {
+        ++transactions;
+        if (failTransaction == transactions) {
+            TransportResult result;
+            result.errorCode = TransportResult::Error::Io;
+            result.error = QStringLiteral("injected transport failure");
+            return result;
+        }
+
+        QString error;
+        QByteArray payload;
+        if (!decodeFrame(frame, &payload, &error) || payload.size() < 5) {
+            return failed(error);
+        }
+        const auto* request = m_catalog->findByCommand(
+            static_cast<quint8>(payload.at(1)),
+            static_cast<quint8>(payload.at(2)), Direction::Request);
+        if (request == nullptr) return failed(QStringLiteral("unknown request"));
+
+        QVariantMap requestValues;
+        if (!decodePayload(*request, payload, &requestValues, &error)) {
+            return failed(error);
+        }
+        requests.push_back(requestValues);
+
+        QVariantMap responseValues;
+        QString responseName;
+        if (request->name == QStringLiteral("do_write_request")) {
+            const quint32 mask = requestValues.value(QStringLiteral("channel[0]")).toUInt();
+            m_fixture->doMask = mask;
+            responseName = QStringLiteral("do_write_response");
+            responseValues.insert(QStringLiteral("applied_state[0]"), mask);
+            responseValues.insert(QStringLiteral("applied_state[1]"), 0u);
+        } else {
+            responseName = QStringLiteral("helm_board_test_response");
+            for (int channel = 0; channel < 4; ++channel) {
+                const int duty = requestValues
+                    .value(QStringLiteral("pwm_duty_percent[%1]").arg(channel))
+                    .toInt();
+                const bool direction = requestValues
+                    .value(QStringLiteral("direction[%1]").arg(channel))
+                    .toBool();
+                m_fixture->pwmDuty[static_cast<size_t>(channel)] = duty;
+                m_fixture->directions[static_cast<size_t>(channel)] = direction;
+                responseValues.insert(
+                    QStringLiteral("pwm_duty_match[%1]").arg(channel), true);
+                responseValues.insert(
+                    QStringLiteral("direction_readback[%1]").arg(channel), direction);
+                responseValues.insert(
+                    QStringLiteral("pwm_duty[%1]").arg(channel), duty);
+                const double encodedFeedback = qMin(
+                    m_fixture->ao[static_cast<size_t>(channel)],
+                    32767.0 * 5.0 / 32768.0);
+                responseValues.insert(
+                    QStringLiteral("helm_AD_value[%1]").arg(channel), encodedFeedback);
+            }
+            responseValues.insert(QStringLiteral("pwm_peak"), 0u);
+            responseValues.insert(QStringLiteral("pwm_enable_mask"), 0x0Fu);
+            responseValues.insert(QStringLiteral("pwm_update_enabled"), 1u);
+            responseValues.insert(QStringLiteral("ad_acquisition_enabled"), 1u);
+            responseValues.insert(QStringLiteral("ad_filter_enabled"), 1u);
+        }
+        responseValues.insert(QStringLiteral("status"), 0u);
+        responseValues.insert(QStringLiteral("err_code"), 0u);
+
+        const auto* response = m_catalog->findByName(responseName);
+        QByteArray responsePayload;
+        if (response == nullptr ||
+            !encodePayload(*response, responseValues,
+                           static_cast<quint16>(requestValues.value(QStringLiteral("seq")).toUInt()),
+                           &responsePayload, &error)) {
+            return failed(error);
+        }
+        TransportResult result;
+        result.ok = encodeFrame(responsePayload, &result.frame, &error);
+        result.error = error;
+        return result;
+    }
+
+    void close() override { openState = false; }
+
+    static TransportResult failed(const QString& message)
+    {
+        TransportResult result;
+        result.errorCode = TransportResult::Error::Io;
+        result.error = message;
+        return result;
+    }
+
+    const ProtocolCatalog* m_catalog = nullptr;
+    FakeBoardFixture* m_fixture = nullptr;
+    QVector<QVariantMap> requests;
+    int transactions = 0;
+    int failTransaction = -1;
+    bool openState = false;
+};
+
+QVariantMap commonExecutionConfig()
+{
+    return {
+        {QStringLiteral("protocolAssetRoot"), catalogDirectory()},
+        {QStringLiteral("transport"), QVariantMap{}},
+        {QStringLiteral("boardFixture"),
+         QVariantMap{
+             {QStringLiteral("doSenseResources"),
+              QVariantList{QStringLiteral("DUT_TX_ENABLE_SENSE"),
+                           QStringLiteral("DUT_ATTENUATOR_SENSE")}},
+             {QStringLiteral("pwmResources"),
+              QVariantList{QStringLiteral("HELM_PWM1_SENSE"),
+                           QStringLiteral("HELM_PWM2_SENSE"),
+                           QStringLiteral("HELM_PWM3_SENSE"),
+                           QStringLiteral("HELM_PWM4_SENSE")}},
+             {QStringLiteral("directionResources"),
+              QVariantList{QStringLiteral("HELM_DIR1_SENSE"),
+                           QStringLiteral("HELM_DIR2_SENSE"),
+                           QStringLiteral("HELM_DIR3_SENSE"),
+                           QStringLiteral("HELM_DIR4_SENSE")}},
+             {QStringLiteral("feedbackResources"),
+              QVariantList{QStringLiteral("HELM_FK1_STIM"),
+                           QStringLiteral("HELM_FK2_STIM"),
+                           QStringLiteral("HELM_FK3_STIM"),
+                           QStringLiteral("HELM_FK4_STIM")}},
+             {QStringLiteral("settlingMs"), 100},
+             {QStringLiteral("pwmSampleRateHz"), 1250000.0},
+             {QStringLiteral("pwmSamplesPerChannel"), 7500},
+         }},
+    };
+}
+
+hwtest::biz::TestPlan plan(const QString& algorithmId)
+{
+    hwtest::biz::TestPlan plan;
+    hwtest::biz::TestStep step;
+    step.stepId = QStringLiteral("step-board");
+    step.testItemId = QStringLiteral("item-board");
+    step.algorithmId = algorithmId;
+    step.timeoutMs = 1000;
+    step.retryCount = 0;
+    plan.steps.push_back(step);
+    return plan;
+}
+
+hwtest::biz::TestContext context(const QVariantMap& parameters = {})
+{
+    hwtest::biz::TestContext context;
+    context.runId = QStringLiteral("run-board");
+    context.requestId = QStringLiteral("request-board");
+    context.tags.insert(QStringLiteral("runMode"), QStringLiteral("single"));
+    context.runParameters = parameters;
+    return context;
+}
+
+TEST(PwmMeasurementTest, MeasuresInterpolatedDutyAndFrequencyAcrossCompleteCycles)
+{
+    QVector<double> samples;
+    constexpr double sampleRate = 1250000.0;
+    constexpr double duty = 0.25;
+    for (int index = 0; index < 7500; ++index) {
+        const double phase = std::fmod(index * 4000.0 / sampleRate, 1.0);
+        samples.push_back(phase < duty ? 5.0 : 0.0);
+    }
+
+    const PwmMeasurement measured = measurePwm(samples, sampleRate, 20);
+
+    ASSERT_TRUE(measured.valid) << measured.reason.toStdString();
+    EXPECT_GE(measured.validCycles, 20);
+    EXPECT_NEAR(measured.dutyPercent, 25.0, 0.15);
+    EXPECT_NEAR(measured.frequencyHz, 4000.0, 5.0);
+    EXPECT_LE(measured.lowVolts, 0.8);
+    EXPECT_GE(measured.highVolts, 3.8);
+}
+
+TEST(PwmMeasurementTest, PreservesOneAndNinetyNinePercentPlateaus)
+{
+    constexpr double sampleRate = 1250000.0;
+    for (const double dutyPercent : {1.0, 99.0}) {
+        QVector<double> samples;
+        for (int index = 0; index < 7500; ++index) {
+            const double phase = std::fmod(index * 4000.0 / sampleRate, 1.0);
+            samples.push_back(phase < dutyPercent / 100.0 ? 5.0 : 0.0);
+        }
+
+        const PwmMeasurement measured = measurePwm(samples, sampleRate, 20);
+
+        EXPECT_TRUE(measured.valid)
+            << dutyPercent << "%: " << measured.reason.toStdString();
+        EXPECT_NEAR(measured.dutyPercent, dutyPercent, 0.2);
+        EXPECT_LE(measured.lowVolts, 0.8);
+        EXPECT_GE(measured.highVolts, 3.8);
+    }
+}
+
+TEST(DoWriteExecutorTest, ExecutesFixedFiveStepClosedLoopWithoutRetry)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error))
+        << error.toStdString();
+    FakeBoardFixture fixture;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    BoardTransport* rawTransport = transport.get();
+    DoWriteAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.do_write"));
+    ASSERT_TRUE(executor.prepare(testPlan, context(), commonExecutionConfig()).ok());
+    RunControl control;
+    Observer observer;
+
+    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
+
+    ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
+    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Pass);
+    EXPECT_EQ(rawTransport->transactions, 5);
+    EXPECT_EQ(fixture.digitalReadCount, 5);
+    const QVariantMap board = outcome.value.rawData
+                                  .value(QStringLiteral("boardTest")).toMap();
+    EXPECT_EQ(board.value(QStringLiteral("kind")).toString(),
+              QStringLiteral("do_write"));
+    EXPECT_EQ(board.value(QStringLiteral("doSteps")).toList().size(), 5);
+    EXPECT_EQ(rawTransport->requests.back()
+                  .value(QStringLiteral("channel[0]")).toUInt(), 0x0018u);
+}
+
+TEST(DoWriteExecutorTest, CountsEveryMismatchAndRejectsMalformedDigitalData)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
+    FakeBoardFixture fixture;
+    fixture.invertDigitalReadback = true;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    BoardTransport* rawTransport = transport.get();
+    DoWriteAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.do_write"));
+    ASSERT_TRUE(executor.prepare(testPlan, context(), commonExecutionConfig()).ok());
+    RunControl control;
+    Observer observer;
+
+    const auto mismatch = executor.executeStep(testPlan.steps.front(), control, observer);
+
+    ASSERT_TRUE(mismatch.ok());
+    EXPECT_EQ(mismatch.value.verdict, hwtest::biz::TestVerdict::Fail);
+    EXPECT_EQ(rawTransport->transactions, 5);
+    const QVariantMap mismatchBoard = mismatch.value.rawData
+                                         .value(QStringLiteral("boardTest")).toMap();
+    EXPECT_EQ(mismatchBoard.value(QStringLiteral("summary")).toMap()
+                  .value(QStringLiteral("failedPoints")).toInt(), 5);
+    const std::array<quint32, 5> expected{{0x0018u, 0x001Cu, 0x0018u,
+                                           0x001Au, 0x0018u}};
+    ASSERT_EQ(rawTransport->requests.size(), static_cast<int>(expected.size()));
+    for (int index = 0; index < rawTransport->requests.size(); ++index) {
+        EXPECT_EQ(rawTransport->requests.at(index)
+                      .value(QStringLiteral("channel[0]")).toUInt(),
+                  expected.at(static_cast<size_t>(index)));
+    }
+
+    ASSERT_TRUE(executor.finishRun().ok());
+    fixture.invertDigitalReadback = false;
+    fixture.malformedDigitalReadback = true;
+    ASSERT_TRUE(executor.prepare(testPlan, context(), commonExecutionConfig()).ok());
+    const auto malformed = executor.executeStep(testPlan.steps.front(), control, observer);
+    ASSERT_TRUE(malformed.ok());
+    EXPECT_EQ(malformed.value.verdict, hwtest::biz::TestVerdict::Error);
+}
+
+TEST(BoardTestExecutorTest, RejectsMutableFixedAcquisitionContract)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
+    FakeBoardFixture fixture;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
+    QVariantMap config = commonExecutionConfig();
+    QVariantMap fixtureConfig = config.value(QStringLiteral("boardFixture")).toMap();
+    fixtureConfig.insert(QStringLiteral("settlingMs"), 99);
+    config.insert(QStringLiteral("boardFixture"), fixtureConfig);
+
+    const auto prepared = executor.prepare(
+        testPlan, context({{QStringLiteral("test_mode"), 0}}), config);
+
+    EXPECT_FALSE(prepared.ok());
+}
+
+TEST(HelmBoardExecutorTest, ManualModeSendsOnceAndNeverTouchesFixture)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
+    FakeBoardFixture fixture;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    BoardTransport* rawTransport = transport.get();
+    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
+    const QVariantMap parameters{
+        {QStringLiteral("test_mode"), 1},
+        {QStringLiteral("pwm_duty_percent[0]"), 10},
+        {QStringLiteral("pwm_duty_percent[1]"), 20},
+        {QStringLiteral("pwm_duty_percent[2]"), 30},
+        {QStringLiteral("pwm_duty_percent[3]"), 40},
+        {QStringLiteral("direction[0]"), false},
+        {QStringLiteral("direction[1]"), true},
+        {QStringLiteral("direction[2]"), false},
+        {QStringLiteral("direction[3]"), true},
+    };
+    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
+                                 commonExecutionConfig()).ok());
+    RunControl control;
+    Observer observer;
+
+    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
+
+    ASSERT_TRUE(outcome.ok());
+    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Pass);
+    EXPECT_EQ(rawTransport->transactions, 1);
+    EXPECT_EQ(fixture.digitalReadCount, 0);
+    EXPECT_EQ(fixture.analogCaptureCount, 0);
+    EXPECT_EQ(fixture.analogWriteCount, 0);
+    const QVariantMap board = outcome.value.rawData
+                                  .value(QStringLiteral("boardTest")).toMap();
+    EXPECT_EQ(board.value(QStringLiteral("mode")).toString(),
+              QStringLiteral("manual"));
+    EXPECT_FALSE(board.value(QStringLiteral("manualResponse")).toMap().isEmpty());
+}
+
+TEST(HelmBoardExecutorTest, ManualModeHonorsStopBeforeItsOnlyCommand)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
+    FakeBoardFixture fixture;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    BoardTransport* rawTransport = transport.get();
+    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
+    ASSERT_TRUE(executor.prepare(
+        testPlan, context({{QStringLiteral("test_mode"), 1}}),
+        commonExecutionConfig()).ok());
+    RunControl control;
+    control.stopped = true;
+    Observer observer;
+
+    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
+
+    ASSERT_TRUE(outcome.ok());
+    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Skipped);
+    EXPECT_EQ(outcome.value.errorCode, hwtest::biz::ErrorCode::Cancelled);
+    EXPECT_EQ(rawTransport->transactions, 0);
+    EXPECT_EQ(fixture.analogWriteCount, 0);
+}
+
+TEST(HelmBoardExecutorTest, AutomaticModeCompletesDirectionPwmAndFeedbackSweeps)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
+    FakeBoardFixture fixture;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    BoardTransport* rawTransport = transport.get();
+    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
+    const QVariantMap parameters{
+        {QStringLiteral("test_mode"), 0},
+        {QStringLiteral("pwm_duty_percent[0]"), 0},
+        {QStringLiteral("pwm_duty_percent[1]"), 0},
+        {QStringLiteral("pwm_duty_percent[2]"), 0},
+        {QStringLiteral("pwm_duty_percent[3]"), 0},
+        {QStringLiteral("direction[0]"), false},
+        {QStringLiteral("direction[1]"), false},
+        {QStringLiteral("direction[2]"), false},
+        {QStringLiteral("direction[3]"), false},
+    };
+    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
+                                 commonExecutionConfig()).ok());
+    RunControl control;
+    Observer observer;
+
+    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
+
+    ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
+    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Pass)
+        << outcome.value.message.toStdString();
+    EXPECT_EQ(rawTransport->transactions, 85);
+    const QVariantMap board = outcome.value.rawData
+                                  .value(QStringLiteral("boardTest")).toMap();
+    EXPECT_EQ(board.value(QStringLiteral("directionPoints")).toList().size(), 5);
+    EXPECT_EQ(board.value(QStringLiteral("pwmPoints")).toList().size(), 36);
+    EXPECT_EQ(board.value(QStringLiteral("feedbackPoints")).toList().size(), 44);
+    ASSERT_FALSE(fixture.analogWrites.isEmpty());
+    const auto finalWrite = fixture.analogWrites.back();
+    ASSERT_EQ(finalWrite.size(), 4);
+    for (double value : finalWrite) EXPECT_DOUBLE_EQ(value, 0.0);
+}
+
+TEST(HelmBoardExecutorTest, AutomaticStopBeforeFirstPointStillClearsAllAo)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
+    FakeBoardFixture fixture;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    BoardTransport* rawTransport = transport.get();
+    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
+    ASSERT_TRUE(executor.prepare(
+        testPlan, context({{QStringLiteral("test_mode"), 0}}),
+        commonExecutionConfig()).ok());
+    RunControl control;
+    control.stopped = true;
+    Observer observer;
+
+    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
+
+    ASSERT_TRUE(outcome.ok());
+    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Skipped);
+    EXPECT_EQ(outcome.value.errorCode, hwtest::biz::ErrorCode::Cancelled);
+    EXPECT_EQ(rawTransport->transactions, 0);
+    EXPECT_EQ(fixture.analogWriteCount, 2);
+    ASSERT_EQ(fixture.analogWrites.back().size(), 4);
+    for (double value : fixture.analogWrites.back()) EXPECT_DOUBLE_EQ(value, 0.0);
+}
+
+TEST(HelmBoardExecutorTest, CriteriaFailureContinuesSweepAndCleanupFailureIsError)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
+    FakeBoardFixture fixture;
+    fixture.badPwmChannel = 1;
+    // Initial zero + 44 feedback writes precede the final cleanup write.
+    fixture.failWriteAt = 46;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    BoardTransport* rawTransport = transport.get();
+    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
+    QVariantMap parameters;
+    parameters.insert(QStringLiteral("test_mode"), 0);
+    for (int channel = 0; channel < 4; ++channel) {
+        parameters.insert(QStringLiteral("pwm_duty_percent[%1]").arg(channel), 0);
+        parameters.insert(QStringLiteral("direction[%1]").arg(channel), false);
+    }
+    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
+                                 commonExecutionConfig()).ok());
+    RunControl control;
+    Observer observer;
+
+    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
+
+    ASSERT_TRUE(outcome.ok());
+    EXPECT_EQ(rawTransport->transactions, 85);
+    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Error);
+    EXPECT_NE(outcome.value.message.indexOf(QStringLiteral("cleanup"),
+                                            0, Qt::CaseInsensitive), -1);
+}
+
+TEST(HelmBoardExecutorTest, CriteriaFailureIsFiniteFailWithAccuratePointCount)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
+    FakeBoardFixture fixture;
+    fixture.badPwmChannel = 1;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    BoardTransport* rawTransport = transport.get();
+    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
+    QVariantMap parameters;
+    parameters.insert(QStringLiteral("test_mode"), 0);
+    for (int channel = 0; channel < 4; ++channel) {
+        parameters.insert(QStringLiteral("pwm_duty_percent[%1]").arg(channel), 0);
+        parameters.insert(QStringLiteral("direction[%1]").arg(channel), false);
+    }
+    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
+                                 commonExecutionConfig()).ok());
+    RunControl control;
+    Observer observer;
+
+    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
+
+    ASSERT_TRUE(outcome.ok());
+    EXPECT_EQ(rawTransport->transactions, 85);
+    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Fail);
+    const QVariantMap board = outcome.value.rawData
+                                  .value(QStringLiteral("boardTest")).toMap();
+    EXPECT_EQ(board.value(QStringLiteral("summary")).toMap()
+                  .value(QStringLiteral("failedPoints")).toInt(), 9);
+    const QVariantList pwm = board.value(QStringLiteral("pwmPoints")).toList();
+    ASSERT_EQ(pwm.size(), 36);
+    for (const QVariant& item : pwm) {
+        const QVariantMap point = item.toMap();
+        for (auto it = point.cbegin(); it != point.cend(); ++it) {
+            if (it.value().userType() == QMetaType::Double) {
+                EXPECT_TRUE(std::isfinite(it.value().toDouble()))
+                    << it.key().toStdString();
+            }
+        }
+    }
+}
+
+} // namespace
+} // namespace hwtest::algorithm::mbddf

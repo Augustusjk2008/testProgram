@@ -180,6 +180,22 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     snapshot.rawData.insert(QStringLiteral("cpu_usage"), 12.5);
     snapshot.rawData.insert(QStringLiteral("flags"),
                             QVariantList{true, QStringLiteral("ok")});
+    snapshot.rawData.insert(
+        QStringLiteral("boardTest"),
+        QVariantMap{
+            {QStringLiteral("schema"),
+             QStringLiteral("hwtest.mbddf-board-test-result")},
+            {QStringLiteral("version"), 1},
+            {QStringLiteral("kind"), QStringLiteral("helm_board_test")},
+            {QStringLiteral("mode"), QStringLiteral("automatic")},
+            {QStringLiteral("completedPoints"), 1},
+            {QStringLiteral("totalPoints"), 85},
+            {QStringLiteral("pwmPoints"),
+             QVariantList{QVariantMap{
+                 {QStringLiteral("valid"), false},
+                 {QStringLiteral("errorPercentagePoints"), QVariant()},
+             }}},
+        });
     snapshot.runMode = QStringLiteral("pc_periodic");
     snapshot.intervalMs = 250;
     snapshot.maxCycles = 0;
@@ -221,6 +237,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     frequency.minimumExclusive = true;
     frequency.visibleWhenParameter = QStringLiteral("waveform");
     frequency.visibleWhenEquals = 4;
+    frequency.persistValues = false;
     snapshot.descriptor.runParameters = {frequency};
     snapshot.descriptor.runParameterDefaults.insert(QStringLiteral("freq"), 1.0);
 
@@ -323,6 +340,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
               QStringLiteral("number"));
     EXPECT_DOUBLE_EQ(frequencyParameter.value(QStringLiteral("minimum")).toDouble(), 0.0);
     EXPECT_TRUE(frequencyParameter.value(QStringLiteral("minimumExclusive")).toBool());
+    EXPECT_FALSE(frequencyParameter.value(QStringLiteral("persistValues")).toBool(true));
     const QJsonObject visibility =
         frequencyParameter.value(QStringLiteral("visibleWhen")).toObject();
     EXPECT_EQ(visibility.value(QStringLiteral("parameter")).toString(),
@@ -339,6 +357,13 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_TRUE(rawData.value(QStringLiteral("flags")).toArray().at(0).toBool());
     EXPECT_EQ(rawData.value(QStringLiteral("flags")).toArray().at(1).toString(),
               QStringLiteral("ok"));
+    const QJsonObject boardTest = rawData.value(QStringLiteral("boardTest")).toObject();
+    EXPECT_EQ(boardTest.value(QStringLiteral("schema")).toString(),
+              QStringLiteral("hwtest.mbddf-board-test-result"));
+    const QJsonObject pwmPoint = boardTest.value(QStringLiteral("pwmPoints"))
+                                     .toArray().at(0).toObject();
+    EXPECT_FALSE(pwmPoint.value(QStringLiteral("valid")).toBool(true));
+    EXPECT_TRUE(pwmPoint.value(QStringLiteral("errorPercentagePoints")).isNull());
 }
 
 TEST(WebProtocolTest, RejectsAnalysisGenerationOutsideJsonSafeIntegerRange)

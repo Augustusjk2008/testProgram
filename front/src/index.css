@@ -735,6 +735,15 @@ code,
   font-size: 10px;
 }
 
+.run-console__warning {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 5px;
+  color: var(--amber);
+  font-size: 10px;
+}
+
 .algorithm-parameters {
   min-width: 0;
   grid-column: 1 / -1;
@@ -1894,6 +1903,330 @@ code,
   min-height: 150px;
 }
 
+.board-test-page {
+  align-content: start;
+}
+
+.board-summary {
+  display: grid;
+  grid-template-columns: minmax(230px, .7fr) minmax(0, 1.3fr);
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+}
+
+.board-summary__eyebrow {
+  color: var(--lime);
+  font: 10px "Geist Mono", monospace;
+  letter-spacing: .08em;
+}
+
+.board-summary h2 {
+  margin: 3px 0 4px;
+  color: var(--text);
+  font-size: 21px;
+}
+
+.board-summary p {
+  margin: 0;
+  color: var(--cyan);
+  font-size: 11px;
+}
+
+.board-summary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.board-summary dl > div {
+  min-width: 0;
+  padding: 7px 9px;
+  background: var(--surface-muted);
+}
+
+.board-summary dt {
+  display: block;
+  color: var(--muted);
+  font: 9px "Geist Mono", monospace;
+}
+
+.board-summary dd {
+  overflow: hidden;
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font: 11px "Geist Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-test-empty {
+  min-height: 150px;
+}
+
+.board-table-panel,
+.board-key-values-panel,
+.board-plot {
+  overflow: hidden;
+}
+
+.board-table-wrap {
+  overflow: auto;
+}
+
+.board-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  color: var(--text-soft);
+  font: 11px "Geist Mono", monospace;
+}
+
+.board-table th,
+.board-table td {
+  min-width: 90px;
+  padding: 8px 10px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.board-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--muted);
+  background: var(--panel-strong);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.board-table td:last-child,
+.board-table th:last-child {
+  border-right: 0;
+}
+
+.board-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font: 9px "Geist Mono", monospace;
+  white-space: nowrap;
+}
+
+.board-status--pass {
+  border-color: color-mix(in srgb, var(--lime) 55%, var(--line));
+  color: var(--lime);
+}
+
+.board-status--fail,
+.board-status--error {
+  border-color: var(--alert-line);
+  color: var(--red);
+}
+
+.board-direction-grid {
+  display: grid;
+  grid-template-columns: minmax(110px, .5fr) repeat(2, minmax(170px, 1fr));
+  overflow: auto;
+  background: var(--line);
+}
+
+.board-direction-grid__head,
+.board-direction-grid__row > * {
+  min-width: 0;
+  padding: 8px 10px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-muted);
+}
+
+.board-direction-grid__head {
+  color: var(--muted);
+  background: var(--panel-strong);
+  font: 10px "Geist Mono", monospace;
+}
+
+.board-direction-grid__row {
+  display: contents;
+}
+
+.board-direction-grid__row > strong {
+  display: flex;
+  align-items: center;
+  color: var(--text-soft);
+  font: 11px "Geist Mono", monospace;
+}
+
+.board-direction-cell {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+}
+
+.board-direction-cell > span {
+  overflow: hidden;
+  color: var(--muted);
+  font: 10px "Geist Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-plot__canvas {
+  padding: 10px 10px 0;
+}
+
+.board-plot svg {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  overflow: visible;
+}
+
+.board-plot__grid,
+.board-plot__axis-line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.board-plot__axis {
+  fill: var(--muted);
+  font: 9px "Geist Mono", monospace;
+}
+
+.board-plot__command,
+.board-plot__measured,
+.board-plot__tolerance {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.board-plot__command {
+  stroke: var(--cyan);
+  stroke-dasharray: 5 4;
+  stroke-width: 1.5;
+}
+
+.board-plot__measured {
+  stroke: var(--lime);
+  stroke-width: 2;
+}
+
+.board-plot__tolerance {
+  stroke: var(--amber);
+  stroke-dasharray: 2 3;
+  stroke-width: 1;
+  opacity: .8;
+}
+
+.board-plot__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 2px 9px 42px;
+}
+
+.board-plot__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font: 9px "Geist Mono", monospace;
+}
+
+.board-plot__legend-item i {
+  display: block;
+  width: 16px;
+  height: 2px;
+  background: var(--muted);
+}
+
+.board-plot__legend-item--command i {
+  background: repeating-linear-gradient(90deg, var(--cyan) 0 5px, transparent 5px 9px);
+}
+
+.board-plot__legend-item--measured i {
+  background: var(--lime);
+}
+
+.board-plot__legend-item--tolerance i {
+  background: repeating-linear-gradient(90deg, var(--amber) 0 2px, transparent 2px 5px);
+}
+
+.board-point-list {
+  max-height: 280px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.board-point-list__row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) repeat(4, minmax(120px, .8fr)) auto;
+  align-items: center;
+  min-width: 760px;
+  min-height: 34px;
+  border-bottom: 1px solid var(--line);
+}
+
+.board-point-list__row > span,
+.board-point-list__row > strong,
+.board-point-list__row > .board-status {
+  overflow: hidden;
+  padding: 0 10px;
+  color: var(--text-soft);
+  font: 10px "Geist Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-point-list__row > span {
+  color: var(--muted);
+}
+
+.board-point-list__row > .board-status {
+  margin-right: 10px;
+}
+
+.board-key-values {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+
+.board-key-values > div {
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--surface-muted);
+}
+
+.board-key-values span,
+.board-key-values strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-key-values span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.board-key-values strong {
+  margin-top: 4px;
+  color: var(--text-soft);
+  font: 11px "Geist Mono", monospace;
+}
+
 .diagnostics-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(360px, .9fr);
@@ -2090,6 +2423,18 @@ code,
 
   .performance-summary dl {
     grid-template-columns: 1fr;
+  }
+
+  .board-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .board-summary dl {
+    grid-template-columns: 1fr;
+  }
+
+  .board-direction-grid {
+    grid-template-columns: 100px repeat(2, minmax(155px, 1fr));
   }
 
   .performance-channel-picker__body {

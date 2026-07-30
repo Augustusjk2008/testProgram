@@ -1,5 +1,6 @@
 #include "mbddf_algorithm_registry.h"
 
+#include <algorithm/board_test_executor.h>
 #include <algorithm/bus_echo_transport.h>
 #include <algorithm/elec_health_status_executor.h>
 #include <algorithm/dh_ignite_stream_executor.h>
@@ -56,6 +57,14 @@ const QVector<MbdDfAlgorithmRegistration>& mbddfAlgorithmRegistry()
          QStringLiteral("di_read_request"),
          QStringLiteral("di_read_response"),
          QStringLiteral("DI_READ")},
+        {QStringLiteral("mbddf.do_write"),
+         QStringLiteral("do_write_request"),
+         QStringLiteral("do_write_response"),
+         QStringLiteral("DO_WRITE")},
+        {QStringLiteral("mbddf.helm_board_test"),
+         QStringLiteral("helm_board_test_request"),
+         QStringLiteral("helm_board_test_response"),
+         QStringLiteral("HELM_BOARD_TEST")},
         {QStringLiteral("mbddf.imu_stream"),
          QStringLiteral("imu_stream_start_request"),
          QStringLiteral("imu_stream_feedback_response"),
@@ -89,7 +98,8 @@ std::unique_ptr<hwtest::biz::IAlgorithmExecutor> createMbdDfExecutor(
     const QString& algorithmId,
     std::unique_ptr<hwtest::algorithm::mbddf::IByteTransport> transport,
     hwtest::hal::IControlChannel* auxiliaryControlChannel,
-    const QString& controlResourceId)
+    const QString& controlResourceId,
+    hwtest::algorithm::mbddf::IBoardTestFixture* boardTestFixture)
 {
     using namespace hwtest::algorithm::mbddf;
     if (algorithmId == QStringLiteral("mbddf.system_status")) {
@@ -107,6 +117,14 @@ std::unique_ptr<hwtest::biz::IAlgorithmExecutor> createMbdDfExecutor(
     }
     if (algorithmId == QStringLiteral("mbddf.helm_stream")) {
         return std::make_unique<HelmStreamAlgorithmExecutor>(std::move(transport));
+    }
+    if (algorithmId == QStringLiteral("mbddf.do_write")) {
+        return std::make_unique<DoWriteAlgorithmExecutor>(
+            std::move(transport), boardTestFixture);
+    }
+    if (algorithmId == QStringLiteral("mbddf.helm_board_test")) {
+        return std::make_unique<HelmBoardTestAlgorithmExecutor>(
+            std::move(transport), boardTestFixture);
     }
     if (algorithmId == QStringLiteral("mbddf.bus_echo")) {
         transport = std::make_unique<BusEchoTransport>(

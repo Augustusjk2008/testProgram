@@ -5,6 +5,8 @@ import { ChartsPage } from '../pages/ChartsPage'
 import { DiagnosticsPage } from '../pages/DiagnosticsPage'
 import { OverviewPage } from '../pages/OverviewPage'
 import { PerformancePage } from '../pages/PerformancePage'
+import { BoardTestPage } from '../pages/BoardTestPage'
+import { isBoardTestAlgorithm } from '../features/board-test/board-test-navigation'
 import { useSession } from '../features/session/SessionProvider'
 import { isPerformanceCapabilityEnabled } from '../features/performance/performance-navigation'
 import { analysisIdentityKey } from '../features/performance/analysis-session-state'
@@ -14,6 +16,7 @@ export function App() {
   const { performanceNavigationIdentity, snapshot } = useSession()
   const navigatedIdentityKey = useRef('')
   const performanceAvailable = isPerformanceCapabilityEnabled(snapshot.descriptor.postRunAnalysis)
+  const boardTestAvailable = isBoardTestAlgorithm(snapshot.algorithmId || snapshot.descriptor.algorithmId)
 
   useEffect(() => {
     if (!performanceNavigationIdentity || !performanceAvailable) return
@@ -25,7 +28,8 @@ export function App() {
 
   useEffect(() => {
     if (page === 'performance' && !performanceAvailable) setPage('overview')
-  }, [page, performanceAvailable])
+    if (page === 'board-test' && !boardTestAvailable) setPage('overview')
+  }, [boardTestAvailable, page, performanceAvailable])
 
   return (
     <AppShell onPageChange={setPage} page={page}>
@@ -33,6 +37,7 @@ export function App() {
       {page === 'charts' && <ChartsPage />}
       {page === 'diagnostics' && <DiagnosticsPage />}
       {page === 'performance' && <PerformancePage />}
+      {page === 'board-test' && boardTestAvailable && <BoardTestPage />}
     </AppShell>
   )
 }

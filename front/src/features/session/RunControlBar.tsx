@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { RunMode, TestRunOptions } from '../../shared/protocol'
 import { phaseLabel } from '../../shared/format'
-import { setLocalStorageValue } from '../../shared/storage'
+import { removeLocalStorageValue, setLocalStorageValue } from '../../shared/storage'
 import {
   analysisStageLabel,
   isAnalysisBlockingWrites,
@@ -18,6 +18,7 @@ import {
 import { normalizeRunOptionsForStart, validatePcPeriodicOptions } from './run-options'
 import {
   loadRunParameterValues,
+  persistableRunParameterValues,
   runParameterStorageKey,
   validateRunParameterValues,
   type RunParameterValues,
@@ -149,6 +150,10 @@ export function RunControlBar() {
   const activeRunParameters = Object.keys(snapshot.effectiveRunParameters).length > 0
     ? snapshot.effectiveRunParameters
     : options.algorithmParameters
+  const helmBoardAutomatic =
+    (snapshot.algorithmId || snapshot.descriptor.algorithmId) === 'mbddf.helm_board_test' &&
+    Number(options.algorithmParameters.test_mode ??
+      snapshot.descriptor.runParameterDefaults.test_mode ?? 0) === 0
 
   useEffect(() => {
     const descriptor = snapshot.descriptor
@@ -194,7 +199,13 @@ export function RunControlBar() {
     setOptions((current) => ({ ...current, algorithmParameters: values }))
     const descriptor = snapshot.descriptor
     if (descriptor.configId && descriptor.runParameterSchemaVersion) {
-      setLocalStorageValue(runParameterStorageKey(descriptor), JSON.stringify(values))
+      const storageKey = runParameterStorageKey(descriptor)
+      const persisted = persistableRunParameterValues(descriptor, values)
+      if (Object.keys(persisted).length === 0) {
+        removeLocalStorageValue(storageKey)
+      } else {
+        setLocalStorageValue(storageKey, JSON.stringify(persisted))
+      }
     }
   }
 
@@ -368,6 +379,12 @@ export function RunControlBar() {
         onReset={() => saveRunParameters({ ...snapshot.descriptor.runParameterDefaults })}
         values={options.algorithmParameters}
       />
+
+      {helmBoardAutomatic && (
+        <div className="run-console__warning" role="status">
+          <WarningCircle size={16} />自动测试前请确保 MB_DDF_v2_HelmControl 已停止
+        </div>
+      )}
 
       {snapshot.descriptor.postRunAnalysis.supported && active && (
         <AnalysisRunHint activeRunParameters={activeRunParameters} />

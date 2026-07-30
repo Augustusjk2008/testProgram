@@ -33,6 +33,30 @@ std::string lower(std::string value)
     return value;
 }
 
+const DeviceProfile kPxi6259Profile{
+    DeviceModel::Pxi6259,
+    "PXI-6259",
+    32,
+    4,
+    16,
+    2860000.0,
+    true,
+    true,
+    false,
+};
+
+const DeviceProfile kPxi6733Profile{
+    DeviceModel::Pxi6733,
+    "PXI-6733",
+    0,
+    8,
+    16,
+    1000000.0,
+    false,
+    false,
+    true,
+};
+
 class JsonValue {
 public:
     enum class Type { Null, Boolean, Number, String, Object, Array };
@@ -366,34 +390,61 @@ bool parseSafeValue(const JsonValue* safeState,
     return false;
 }
 
-bool validateTopology(const ChannelConfig& channel, std::string* error)
+bool validateTopology(const DeviceProfile& profile,
+                      const ChannelConfig& channel,
+                      std::string* error)
 {
-    switch (channel.module) {
-    case ChannelModule::Analog:
-        if (channel.direction == ChannelDirection::Input) {
-            if (channel.channelNumber < 0 || channel.channelNumber > 31) {
-                return fail(error, "PXI-6259 analog input channel must be ai0..ai31");
-            }
-        } else if (channel.channelNumber < 0 || channel.channelNumber > 3) {
-            return fail(error, "PXI-6259 analog output channel must be ao0..ao3");
+    if (profile.model == DeviceModel::Pxi6733) {
+        if (channel.module != ChannelModule::Analog ||
+            channel.direction != ChannelDirection::Output) {
+            return fail(error, std::string(profile.name) +
+                                   " supports analog output channels only");
+        }
+        if (channel.channelNumber < 0 ||
+            channel.channelNumber >= profile.analogOutputChannels) {
+            return fail(error, std::string(profile.name) +
+                                   " analog output channel must be ao0..ao" +
+                                   std::to_string(profile.analogOutputChannels - 1));
         }
         if (!std::isfinite(channel.minValue) || !std::isfinite(channel.maxValue) ||
             channel.minValue >= channel.maxValue || channel.minValue < -10.0 ||
             channel.maxValue > 10.0) {
-            return fail(error, "PXI-6259 analog range must be ordered within -10..10 V");
+            return fail(error, std::string(profile.name) +
+                                   " analog range must be ordered within -10..10 V");
+        }
+        return true;
+    }
+    switch (channel.module) {
+    case ChannelModule::Analog:
+        if (channel.direction == ChannelDirection::Input) {
+            if (channel.channelNumber < 0 || channel.channelNumber > 31) {
+                return fail(error, std::string(profile.name) +
+                                       " analog input channel must be ai0..ai31");
+            }
+        } else if (channel.channelNumber < 0 || channel.channelNumber > 3) {
+            return fail(error, std::string(profile.name) +
+                                   " analog output channel must be ao0..ao3");
+        }
+        if (!std::isfinite(channel.minValue) || !std::isfinite(channel.maxValue) ||
+            channel.minValue >= channel.maxValue || channel.minValue < -10.0 ||
+            channel.maxValue > 10.0) {
+            return fail(error, std::string(profile.name) +
+                                   " analog range must be ordered within -10..10 V");
         }
         return true;
     case ChannelModule::Digital: {
         const int maxLine = channel.portNumber == 0 ? 31 : 7;
         if (channel.portNumber < 0 || channel.portNumber > 2 ||
             channel.lineNumber < 0 || channel.lineNumber > maxLine) {
-            return fail(error, "PXI-6259 digital channel must be port0/line0..31 or port1..2/line0..7");
+            return fail(error, std::string(profile.name) +
+                                   " digital channel must be port0/line0..31 or port1..2/line0..7");
         }
         return true;
     }
     case ChannelModule::Counter:
         if (channel.counterNumber < 0 || channel.counterNumber > 1) {
-            return fail(error, "PXI-6259 counter channel must be ctr0 or ctr1");
+            return fail(error, std::string(profile.name) +
+                                   " counter channel must be ctr0 or ctr1");
         }
         return true;
     }
@@ -401,6 +452,19 @@ bool validateTopology(const ChannelConfig& channel, std::string* error)
 }
 
 } // namespace
+
+const DeviceProfile* findDeviceProfile(const std::string& model)
+{
+    const std::string normalized = lower(trim(model));
+    if (normalized == lower(kPxi6259Profile.name)) return &kPxi6259Profile;
+    if (normalized == lower(kPxi6733Profile.name)) return &kPxi6733Profile;
+    return nullptr;
+}
+
+const DeviceProfile& deviceProfile(DeviceModel model)
+{
+    return model == DeviceModel::Pxi6733 ? kPxi6733Profile : kPxi6259Profile;
+}
 
 bool parseDriverConfig(const char* json,
                        DriverConfig* config,
@@ -475,11 +539,19 @@ bool parseDeviceOpenSpec(const char* json,
     parsed.logicalDeviceId = trim(parsed.logicalDeviceId);
     parsed.model = trim(parsed.model);
     parsed.serialNumber = trim(parsed.serialNumber);
+    const DeviceProfile* profile = findDeviceProfile(parsed.model);
     if (parsed.physicalDeviceId.empty() || parsed.logicalDeviceId.empty() ||
-        lower(trim(adapterId)) != "ni.daqmx" || lower(parsed.model) != "pxi-6259" ||
+        lower(trim(adapterId)) != "ni.daqmx" ||
         parsed.serialNumber.empty() || isPlaceholder(parsed.serialNumber)) {
-        return fail(error, "PXI-6259 identity and deployed serialNumber must be explicit");
+        return fail(error,
+                    "Supported NI device model and deployed serialNumber must be explicit");
     }
+    if (profile == nullptr) {
+        return fail(error,
+                    "Unsupported NI device.model; supported models are PXI-6259 and PXI-6733");
+    }
+    parsed.model = profile->name;
+    parsed.modelKind = profile->model;
     const JsonValue* taskProfiles = root.member("taskProfiles");
     if (taskProfiles != nullptr && taskProfiles->type != JsonValue::Type::Array) {
         return fail(error, "taskProfiles must be an array");
@@ -537,7 +609,7 @@ bool parseDeviceOpenSpec(const char* json,
         }
         const JsonValue* properties = value.member("properties");
         if (properties == nullptr || properties->type != JsonValue::Type::Object) {
-            return fail(error, "Each PXI-6259 channel requires a properties object");
+            return fail(error, "Each NI channel requires a properties object");
         }
         if (channel.module == ChannelModule::Digital) {
             if (!integerValue(properties->member("portNumber"), &channel.portNumber) ||
@@ -569,8 +641,12 @@ bool parseDeviceOpenSpec(const char* json,
                 return fail(error, "Counter counterNumber must equal physicalIndex");
             }
         }
-        if (!validateTopology(channel, error) || !parseSafeValue(safeState, &channel, error)) {
+        if (!validateTopology(*profile, channel, error) ||
+            !parseSafeValue(safeState, &channel, error)) {
             return false;
+        }
+        if (profile->model == DeviceModel::Pxi6733 && channel.safeAnalog != 0.0) {
+            return fail(error, "PXI-6733 analog output safeState must be zero");
         }
         std::string physicalKey;
         if (channel.module == ChannelModule::Digital) {

@@ -41,6 +41,9 @@ struct RunParameterDescriptor {
 struct RunParameterSchema {
     QString version;
     QVector<RunParameterDescriptor> parameters;
+    // Defaults to the historical browser behavior. Run-scoped hardware
+    // controls can opt out so values are reset for every invocation.
+    bool persistValues = true;
 };
 
 const RunParameterSchema* findRunParameterSchema(const QString& algorithmId);

@@ -75,6 +75,7 @@ struct TestRunParameterDescriptor {
     QVector<TestRunParameterChoice> choices;
     QString visibleWhenParameter;
     QVariant visibleWhenEquals;
+    bool persistValues = true;
 };
 
 struct PostRunAnalysisCapability {

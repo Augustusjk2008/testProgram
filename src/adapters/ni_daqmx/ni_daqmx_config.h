@@ -11,6 +11,19 @@ struct DriverConfig {
 
 enum class ChannelModule { Analog, Digital, Counter };
 enum class ChannelDirection { Input, Output };
+enum class DeviceModel { Pxi6259, Pxi6733 };
+
+struct DeviceProfile {
+    DeviceModel model = DeviceModel::Pxi6259;
+    const char* name = "";
+    int analogInputChannels = 0;
+    int analogOutputChannels = 0;
+    int analogOutputResolutionBits = 0;
+    double analogOutputMaxRateHz = 0.0;
+    bool supportsDigital = false;
+    bool supportsCounter = false;
+    bool analogOutputOnDemandOnly = false;
+};
 
 struct ChannelConfig {
     std::string resourceId;
@@ -36,9 +49,13 @@ struct DeviceConfig {
     std::string logicalDeviceId;
     std::string physicalDeviceId;
     std::string model;
+    DeviceModel modelKind = DeviceModel::Pxi6259;
     std::string serialNumber;
     std::vector<ChannelConfig> channels;
 };
+
+const DeviceProfile* findDeviceProfile(const std::string& model);
+const DeviceProfile& deviceProfile(DeviceModel model);
 
 bool parseDriverConfig(const char* json,
                        DriverConfig* config,

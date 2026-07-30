@@ -1,6 +1,7 @@
 #include <app/test_application_controller.h>
 
 #include "continuous_data_recorder.h"
+#include "hal_board_test_fixture.h"
 #include "mbddf_algorithm_registry.h"
 #include "post_run_analysis_config.h"
 #include "post_run_analysis_coordinator.h"
@@ -307,6 +308,7 @@ TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
             projected.maximumExclusive = parameter.maximumExclusive;
             projected.visibleWhenParameter = parameter.visibleWhenParameter;
             projected.visibleWhenEquals = parameter.visibleWhenEquals;
+            projected.persistValues = schema->persistValues;
             for (const auto& choice : parameter.choices) {
                 projected.choices.push_back(
                     TestRunParameterChoice{choice.value, choice.label});
@@ -408,9 +410,14 @@ public:
     HalServicePtr hal{nullptr, &hwtest::hal::destroyHalService};
     hwtest::hal::SessionId dutSessionId;
     hwtest::hal::SessionId stimulusSessionId;
+    hwtest::hal::SessionId pxi6259SessionId;
+    hwtest::hal::SessionId pxi6733SessionId;
     hwtest::hal::IHalDevice* device = nullptr;
     hwtest::hal::IHalDevice* stimulusDevice = nullptr;
+    hwtest::hal::IHalDevice* pxi6259Device = nullptr;
+    hwtest::hal::IHalDevice* pxi6733Device = nullptr;
     std::unique_ptr<hwtest::algorithm::mbddf::DiStimulusController> stimulusController;
+    std::unique_ptr<HalBoardTestFixture> boardFixture;
     std::unique_ptr<hwtest::biz::IAlgorithmExecutor> executor;
     QString selectedAlgorithmId;
     TestDescriptor descriptor;
@@ -425,6 +432,123 @@ public:
     bool waitInProgress = false;
     bool asyncStopInProgress = false;
     std::thread asyncStopThread;
+
+    ActionResult releaseBoardFixtureSessions()
+    {
+        if (boardFixture) boardFixture->clear();
+        pxi6259Device = nullptr;
+        pxi6733Device = nullptr;
+        ActionResult firstFailure;
+        if (hal && !pxi6733SessionId.isEmpty()) {
+            const hwtest::hal::HalStatus closed = hal->closeDevice(
+                pxi6733SessionId, hwtest::hal::OperationOptions{});
+            if (!closed.ok()) {
+                firstFailure = halFailure(
+                    closed, QStringLiteral("Unable to close PXI-6733 fixture device"));
+            }
+        }
+        pxi6733SessionId.clear();
+        if (hal && !pxi6259SessionId.isEmpty()) {
+            const hwtest::hal::HalStatus closed = hal->closeDevice(
+                pxi6259SessionId, hwtest::hal::OperationOptions{});
+            if (!closed.ok() && firstFailure.ok) {
+                firstFailure = halFailure(
+                    closed, QStringLiteral("Unable to close PXI-6259 fixture device"));
+            }
+        }
+        pxi6259SessionId.clear();
+        return firstFailure;
+    }
+
+    ActionResult bindBoardFixtureSessions(const BoardFixtureRequirement& requirement)
+    {
+        const ActionResult released = releaseBoardFixtureSessions();
+        if (!released.ok) return released;
+        if (!requirement.pxi6259 && !requirement.pxi6733) return {};
+        if (!hal || !boardFixture) {
+            return failure(QStringLiteral("hal_fixture"),
+                           QStringLiteral("Board fixture HAL is unavailable"));
+        }
+        const QVariantMap fixtureConfig = executionConfig
+            .value(QStringLiteral("boardFixture")).toMap();
+        const QString pxi6259DeviceId = fixtureConfig
+            .value(QStringLiteral("pxi6259DeviceId")).toString().trimmed();
+        const QString pxi6733DeviceId = fixtureConfig
+            .value(QStringLiteral("pxi6733DeviceId")).toString().trimmed();
+        QStringList missingFixtureDevices;
+        if (requirement.pxi6259 && pxi6259DeviceId.isEmpty()) {
+            missingFixtureDevices.push_back(QStringLiteral("PXI-6259"));
+        }
+        if (requirement.pxi6733 && pxi6733DeviceId.isEmpty()) {
+            missingFixtureDevices.push_back(QStringLiteral("PXI-6733"));
+        }
+        if (!missingFixtureDevices.isEmpty()) {
+            return failure(
+                QStringLiteral("hal_config"),
+                QStringLiteral("Required %1 board fixture deviceId is not configured")
+                    .arg(missingFixtureDevices.join(QStringLiteral("/"))));
+        }
+
+        const auto openAndResolve = [this](
+            const QString& deviceId,
+            hwtest::hal::SessionId* sessionId,
+            hwtest::hal::IHalDevice** device,
+            const QString& label) -> ActionResult {
+            const auto opened = hal->openDevice(
+                deviceId, hwtest::hal::OperationOptions{});
+            if (!opened.ok()) {
+                const QString context = QStringLiteral("Unable to open %1 fixture device")
+                                            .arg(label);
+                return failure(
+                    hwtest::hal::toString(opened.status.code),
+                    opened.status.error.message.isEmpty()
+                        ? context
+                        : QStringLiteral("%1: %2")
+                              .arg(context, opened.status.error.message));
+            }
+            *sessionId = opened.value;
+            const auto resolved = hal->device(*sessionId);
+            if (!resolved.ok() || resolved.value == nullptr) {
+                if (resolved.ok()) {
+                    return failure(QStringLiteral("hal_device"),
+                                   QStringLiteral("HAL returned a null %1 fixture device")
+                                       .arg(label));
+                }
+                const QString context = QStringLiteral("Unable to get %1 fixture device")
+                                            .arg(label);
+                return failure(
+                    hwtest::hal::toString(resolved.status.code),
+                    resolved.status.error.message.isEmpty()
+                        ? context
+                        : QStringLiteral("%1: %2")
+                              .arg(context, resolved.status.error.message));
+            }
+            *device = resolved.value;
+            return {};
+        };
+
+        if (requirement.pxi6259) {
+            const ActionResult opened = openAndResolve(
+                pxi6259DeviceId, &pxi6259SessionId, &pxi6259Device,
+                QStringLiteral("PXI-6259"));
+            if (!opened.ok) {
+                releaseBoardFixtureSessions();
+                return opened;
+            }
+            boardFixture->bind6259(pxi6259Device);
+        }
+        if (requirement.pxi6733) {
+            const ActionResult opened = openAndResolve(
+                pxi6733DeviceId, &pxi6733SessionId, &pxi6733Device,
+                QStringLiteral("PXI-6733"));
+            if (!opened.ok) {
+                releaseBoardFixtureSessions();
+                return opened;
+            }
+            boardFixture->bind6733(pxi6733Device);
+        }
+        return {};
+    }
 };
 
 TestApplicationController::TestApplicationController(QObject* parent)
@@ -838,10 +962,12 @@ ActionResult TestApplicationController::prepare()
 
     auto transport = std::make_unique<hwtest::algorithm::mbddf::HalControlTransport>(
         m_impl->device, m_impl->snapshot.controlResourceId);
+    m_impl->boardFixture = std::make_unique<HalBoardTestFixture>();
     m_impl->executor = createMbdDfExecutor(m_impl->selectedAlgorithmId,
                                            std::move(transport),
                                            m_impl->device->controlChannel(),
-                                           m_impl->snapshot.controlResourceId);
+                                           m_impl->snapshot.controlResourceId,
+                                           m_impl->boardFixture.get());
     if (!m_impl->executor) {
         const ActionResult result = failure(QStringLiteral("unsupported_algorithm"),
                                             QStringLiteral("Unsupported MB_DDF algorithm '%1'")
@@ -995,6 +1121,17 @@ ActionResult TestApplicationController::prepare()
                              m_impl->snapshot.phase == QStringLiteral("finished") ||
                              m_impl->snapshot.phase == QStringLiteral("stopped") ||
                              m_impl->snapshot.phase == QStringLiteral("error");
+                         if (terminal) {
+                             const ActionResult released =
+                                 m_impl->releaseBoardFixtureSessions();
+                             if (!released.ok) {
+                                 m_impl->snapshot.phase = QStringLiteral("error");
+                                 m_impl->snapshot.testState = QStringLiteral("Error");
+                                 m_impl->snapshot.verdict = QStringLiteral("Error");
+                                 m_impl->snapshot.errorCode = released.code;
+                                 m_impl->snapshot.message = released.message;
+                             }
+                         }
                          if (terminal && m_impl->dataRecorder.active()) {
                              QString finalStatus = QStringLiteral("已完成");
                              if (m_impl->snapshot.phase == QStringLiteral("stopped")) {
@@ -1170,6 +1307,12 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     }
     runOptions.parameters = normalizedParameters.value;
 
+    const BoardFixtureRequirement fixtureRequirement = boardFixtureRequirement(
+        m_impl->selectedAlgorithmId, normalizedParameters.value);
+    const ActionResult fixtureBound =
+        m_impl->bindBoardFixtureSessions(fixtureRequirement);
+    if (!fixtureBound.ok) return fixtureBound;
+
     if (m_impl->descriptor.postRunAnalysis.supported) {
         PostRunAnalysisStartSpec analysisSpec;
         analysisSpec.algorithmId = m_impl->selectedAlgorithmId;
@@ -1227,6 +1370,7 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     }
     const auto started = m_impl->runner->startTestWithOptions(runOptions);
     if (!started.ok()) {
+        m_impl->releaseBoardFixtureSessions();
         m_impl->analysisCoordinator.discardPrepared();
         m_impl->dataRecorder.cancel();
         m_impl->snapshot.dataSaveEnabled = false;
@@ -1579,7 +1723,8 @@ ActionResult TestApplicationController::shutdown()
                        QStringLiteral("Cannot shut down while an asynchronous stop is active"));
     }
     if (!m_impl->latchedShutdownFailure.ok && !m_impl->runner && !m_impl->hal &&
-        !m_impl->executor && !m_impl->stimulusController) {
+        !m_impl->executor && !m_impl->stimulusController &&
+        !m_impl->boardFixture) {
         if (m_impl->latchedShutdownFailure.code ==
             QStringLiteral("analysis_shutdown_timeout")) {
             const ActionResult retried = m_impl->analysisCoordinator.cancelAndWait(
@@ -1638,6 +1783,11 @@ ActionResult TestApplicationController::shutdown()
     m_impl->executor.reset();
 
     if (m_impl->hal) {
+        const ActionResult fixtureReleased =
+            m_impl->releaseBoardFixtureSessions();
+        if (!fixtureReleased.ok && firstFailure.ok) {
+            firstFailure = fixtureReleased;
+        }
         if (m_impl->stimulusController &&
             m_impl->stimulusController->state().configured) {
             const hwtest::hal::HalStatus safe =
@@ -1677,9 +1827,14 @@ ActionResult TestApplicationController::shutdown()
     }
     m_impl->fileSink.reset();
     m_impl->hal.reset();
+    m_impl->boardFixture.reset();
     m_impl->dutSessionId.clear();
     m_impl->stimulusSessionId.clear();
+    m_impl->pxi6259SessionId.clear();
+    m_impl->pxi6733SessionId.clear();
     m_impl->device = nullptr;
+    m_impl->pxi6259Device = nullptr;
+    m_impl->pxi6733Device = nullptr;
 
     m_impl->snapshot = {};
     if (configured) {

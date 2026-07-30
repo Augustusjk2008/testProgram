@@ -19,6 +19,7 @@ else()
 endif()
 
 add_executable(hwtest_algorithm_tests
+    board_test_executor_test.cpp
     bus_echo_transport_test.cpp
     bus_executor_test.cpp
     di_stimulus_controller_test.cpp

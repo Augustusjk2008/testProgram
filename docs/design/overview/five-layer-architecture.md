@@ -41,7 +41,7 @@
 
 | 层 | 负责 | 不负责 |
 | --- | --- | --- |
-| UI / 应用 | 配置选择、算法参数 Schema 投影和本次覆盖合并、组合生命周期、DTO/动作/快照/样本适配、有序关闭；后处理的身份、封存、后台编排、取消与小型结果投影 | 自行定义产品参数语义或范围、产品协议解释、直接打开 DUT 或测试设备、绕过 BIZ 执行判定、在浏览器从实时缓存重算权威性能 |
+| UI / 应用 | 配置选择、算法参数 Schema 投影和本次覆盖合并、组合生命周期、DTO/动作/快照/样本适配、有序关闭；按算法/参数条件组合板级夹具；后处理的身份、封存、后台编排、取消与小型结果投影 | 自行定义产品参数语义或范围、产品协议解释、直接打开 DUT 或测试设备、绕过 BIZ 执行判定、在浏览器从实时缓存重算权威性能 |
 | BIZ | 配置、计划、拓扑顺序、运行模式、重试、状态、结果和报告编排 | Socket/串口/设备句柄、产品帧编解码、物理安全动作、缓存或解释性能分析输入/结果 |
 | 算法 | CSV 协议、编解码、序号、可编辑运行参数 Schema/语义校验、交互流程、样本和判定；产品性能输入解释、五种波形指标和扫频伯德数学 | Provider/Adapter 选择、厂家 SDK、资源生命周期所有权、应用/前端的任务门禁或 UI 状态 |
 | HAL | 逻辑资源映射、会话、Provider/Adapter 路由、原始 I/O、deadline、错误和关闭安全态 | 产品命令、产品阈值和业务报告 |
@@ -63,11 +63,13 @@
 - `SafetyPolicy.enterSafeStateOnStop` 和 `enterSafeStateOnError` 当前仅为兼容字段，不驱动运行期分支；实际停止复位和 HAL 关闭安全态以对应契约的 `[当前实现]` 描述为准。
 - HAL 会话关闭前尽力停止/释放已跟踪任务并应用已配置 safe state。该软件行为不等于真实设备、接线、供电或台架的物理安全验收。
 
-### 5.1 舵机后处理 sidecar
+### 5.1 板级夹具组合
+
+`[当前实现]` 应用组合根只在需要时创建和绑定板级夹具：`mbddf.do_write` 使用 PXI-6259；`mbddf.helm_board_test` 的 `automatic` 使用 PXI-6259 与 PXI-6733，`manual` 不打开两张卡。算法层保持产品步骤、判定和 AO 清零编排的所有权，HAL 保持端点、原始 I/O 与关闭安全态的所有权；BIZ 不解释板卡或模式。精确流程、端点和 Web 结果投影分别以对应产品、HAL 与 WebSocket 契约为准。
+
+### 5.2 舵机后处理 sidecar
 
 `[当前实现]` `mbddf.helm_stream` 在用户手动 STOP 后继续完成既有 DUT STOP、BIZ 收敛和 HAL 安全收尾；应用层先封存包含尾样本的输入并发布 `queued` 门禁，只有捕获封存与 `stopCompleted` 两个栅栏都满足后，才以 `{taskId, analysisGeneration}` 在独立工作线程启动 sidecar。算法层从不透明通用样本解释 `ins[0..3]`/`fdb[0..3]`，计算正弦、方波、三角波、恒值和连续对数扫频；只有扫频发布伯德曲线。性能结果是应用 sidecar artifact，不修改 `snapshot.phase`、`snapshot.verdict`、采集 `errorCode`、`biz::TestResult` 或 BIZ 报告输入。`snapshot.analysis` 只广播进度和通道摘要，曲线由 WebSocket `analysisResult` 按通道读取；浏览器性能页不使用 `SampleBuffer` 作为分析输入。分析从 `queued` 到终态期间拒绝新会话写操作但保留只读查询，disconnect/quit/异常 cleanup 协作取消；SPA 页面切换不取消。TUI 和 Qt GUI 本轮不增加性能 UI。
-
-`[当前实现]` 算法端口、descriptor/snapshot/查询 DTO、WebSocket action 与浏览器性能页已经存在，但控制器尚未把 RawSample append、封存、后台 analyzer、`queued` 写门禁、真实结果投影和 worker cancel/join 接入生命周期。因而上述完整 sidecar 时序是现行架构契约，而非已经完成的自动舵机实测行为；真实台架验收仍需要隔离、明确授权的 DDS/舵机环境和独立参考测量。
 
 ## 6. 构建边界
 

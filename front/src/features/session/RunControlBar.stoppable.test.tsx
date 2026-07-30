@@ -49,6 +49,35 @@ function testConfigSelect(markup: string): string {
   return select ?? ''
 }
 
+function renderHelmBoardControlBar(testMode: number): string {
+  const snapshot: ApplicationSnapshot = {
+    ...EMPTY_SNAPSHOT,
+    phase: 'ready',
+    descriptor: {
+      ...EMPTY_TEST_DESCRIPTOR,
+      configId: 'mbddf-helm-board-test',
+      algorithmId: 'mbddf.helm_board_test',
+      title: '舵机板级测试',
+      supportedRunModes: ['single'],
+      runParameterSchemaVersion: '1',
+      runParameterDefaults: { test_mode: testMode },
+    },
+  }
+  sessionHooks.useSession.mockReturnValue({
+    actionError: '',
+    busyAction: null,
+    connectionState: 'connected',
+    connect: vi.fn(),
+    invoke: vi.fn(),
+    snapshot,
+    selectedConfigId: 'mbddf-helm-board-test',
+    start: vi.fn(),
+    testConfigs: [{ configId: 'mbddf-helm-board-test', title: '舵机板级测试', description: '', algorithmId: 'mbddf.helm_board_test' }],
+    testConfigsReady: true,
+  })
+  return renderToStaticMarkup(<RunControlBar />)
+}
+
 beforeEach(() => {
   sessionHooks.useTelemetry.mockReturnValue({
     telemetryStats: {
@@ -81,5 +110,12 @@ describe('RunControlBar stoppable descriptor capability', () => {
     const markup = renderControlBar(phase, false)
 
     expect(testConfigSelect(markup)).not.toContain('disabled')
+  })
+})
+
+describe('RunControlBar helm board fixture warning', () => {
+  it('warns that HelmControl must be stopped for automatic mode only', () => {
+    expect(renderHelmBoardControlBar(0)).toContain('MB_DDF_v2_HelmControl 已停止')
+    expect(renderHelmBoardControlBar(1)).not.toContain('MB_DDF_v2_HelmControl 已停止')
   })
 })

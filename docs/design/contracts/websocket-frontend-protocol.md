@@ -6,7 +6,7 @@
 
 `[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；前端既可使用开发服务器，也可使用构建后的单文件 HTML，二者都与 `hwtest_web` 分开运行，浏览器仍只连接回环 WebSocket。
 
-`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider、`DigitalStimulusPanel` 和通用运行参数编辑器接入总览页。参数编辑器只消费后端 descriptor 中由算法层提供的 Schema，按 `configId + runParameterSchemaVersion` 在浏览器保存编辑值，并把覆盖值放入本次 `start.algorithmParameters`；它不写回测试配置。数字刺激面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。descriptor 的 `stoppable=false` 时，浏览器在运行/暂停态隐藏 pause/resume/stop，配置选择保持禁用，终态后恢复；不能从 algorithmId 推断该能力。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。浏览器也已接入性能导航、`snapshot.analysis`、四通道身份缓存和 uPlot 伯德图输入；性能页只消费后端 `analysisResult`，不从实时 `SampleBuffer` 重算。此浏览器控制面实现不等价于 PXI-6259、DH 点火或舵机真机已连接或已验收。
+`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider、`DigitalStimulusPanel` 和通用运行参数编辑器接入总览页。参数编辑器只消费后端 descriptor 中由算法层提供的 Schema，按 `configId + runParameterSchemaVersion` 在浏览器保存编辑值，并把覆盖值放入本次 `start.algorithmParameters`；它不写回测试配置。某个 `runParameters[]` 项显式 `persistValues=false` 时，浏览器既不从 localStorage 恢复也不向其中写入该项，缺失时仍兼容为 true；这不改变该项随本次 `start.algorithmParameters` 发送的行为。数字刺激面板在快照声明可用、配置 1..16 路且 `switchId`/`dutBit` 唯一、位号全部为 0..15 时显示，标题按实际通道数展示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。descriptor 的 `stoppable=false` 时，浏览器在运行/暂停态隐藏 pause/resume/stop，配置选择保持禁用，终态后恢复；不能从 algorithmId 推断该能力。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。浏览器还只为 `mbddf.do_write` 与 `mbddf.helm_board_test` 显示板级测试导航，消费 `rawData.boardTest` 的当前快照结果。浏览器也已接入性能导航、`snapshot.analysis`、四通道身份缓存和 uPlot 伯德图输入；性能页只消费后端 `analysisResult`，不从实时 `SampleBuffer` 重算。此浏览器控制面实现不等价于 PXI-6259、PXI-6733、DH 点火或舵机真机已连接或已验收。
 
 `[当前实现]` 服务器投影后处理 capability/摘要并接受只读 `analysisResult` 请求；应用控制器已接通 STOP 尾样本封存、硬件收尾双栅栏、`queued` 到终态的后台分析、分析期间写门禁及运行中 worker 协作取消。算法层提供五种波形与扫频伯德计算端口。`capturing` 只表示输入正在采集，只有带匹配 `{taskId, analysisGeneration}` 的分析终态才表示该轮结果可查询。
 
@@ -32,7 +32,7 @@
 - 服务器发送紧凑 JSON，不依赖空白或对象成员顺序。
 - 每个有效请求恰好产生一个相同 `id` 的 reply。快照和样本是独立异步事件，可以出现在请求与 reply 之间。
 - 所有对浏览器可见的事件序号必须是 `0..9007199254740991` 内的整数。服务端不得把超出 JavaScript 安全整数范围的 `snapshot.seq`、`sample.seq`、`sampleBatch.firstSeq` 或 `sampleBatch.lastSeq` 转成 JSON number 后发送。
-- `setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`setTelemetryDelivery`、descriptor 中的 `stoppable`/`postRunAnalysis`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。新客户端收到旧服务端缺失的 `stoppable` 时兼容回退为 true；缺失后处理字段时安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。显式 `stoppable` 必须为 boolean，其他类型是协议边界错误。
+- `setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`setTelemetryDelivery`、descriptor 中的 `stoppable`/`postRunAnalysis`/`runParameters[].persistValues`、快照 `rawData.boardTest`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。新客户端收到旧服务端缺失的 `stoppable` 时兼容回退为 true；缺失后处理字段时安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。显式 `stoppable` 与 `persistValues` 必须为 boolean，其他类型是协议边界错误。
 
 ## 4. 消息结构
 
@@ -101,7 +101,7 @@
 | `digitalStimulus` | object；当前数字刺激状态，字段见下表 |
 | `analysis` | object；后处理 capability、当前分析身份、进度和通道摘要，字段与可用性见 4.4.1；不含完整伯德数组 |
 
-`rawData` 使用 Qt 的 JSON-compatible QVariant 转换规则；其嵌套 map/list、布尔值、数值、字符串和空值保持对应 JSON 类型。
+`rawData` 使用 Qt 的 JSON-compatible QVariant 转换规则；其嵌套 map/list、布尔值、数值、字符串和空值保持对应 JSON 类型。`rawData.boardTest` 存在时遵循 4.4.2 的版本化结果投影；它不是 `analysisResult` 或连续数据文件。
 
 `descriptor` 是后端从当前已验证测试配置投影出的展示元数据，前端不得读取或解析原始配置文件、协议 CSV 或 `executionConfig`：
 
@@ -114,7 +114,7 @@
 | `stoppable` | boolean | 当前测试在活动态是否允许 pause/resume/stop/shutdown；配置缺失时为 true，false 只允许恰好支持 `device_stream` 的配置，当前用于 DH 点火有限流 |
 | `measurements` | object[] | 待测量元数据；每项包含 `id`、`label`、`unit`、`primary` |
 | `runParameterSchemaVersion` | string | 算法层运行参数 Schema 版本；无可编辑参数时为空 |
-| `runParameters` | object[] | 参数定义；每项包含 `id`、`label`、`description`、`kind`、`unit`、`required`、独占边界标志和 `choices`，可选 `minimum`、`maximum`、`visibleWhen` |
+| `runParameters` | object[] | 参数定义；每项包含 `id`、`label`、`description`、`kind`、`unit`、`required`、独占边界标志和 `choices`，可选 `minimum`、`maximum`、`visibleWhen`、`persistValues`。后者缺失时按 true 兼容；显式 false 时浏览器不得读写该项 localStorage，但仍发送本次有效参数 |
 | `runParameterDefaults` | object | 当前配置值覆盖算法 Schema 默认值后得到的完整默认参数 |
 | `postRunAnalysis` | object | `{supported, analyzerId, schemaVersion}`；仅当前测试支持后处理时 `supported=true`，旧服务端/非支持配置安全回退为 false 和空字符串 |
 
@@ -153,6 +153,40 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 摘要不携带完整伯德数组，避免每次快照或重连重复广播大载荷。摘要在结果提交前按 `maxAnalysisSummaryBytes` 验证，每通道警告最多 16 条、单条 UTF-8 最多 512 字节，超出部分只反映为 `omittedWarningCount`；无法满足限制时整体进入 `failed`。`failed`/`cancelled` 只能是整体基础设施终态，不得携带半成品曲线。
 
 分析状态独立于 `snapshot.phase` 和 BIZ `TestState`：性能结果不改变采集 `verdict`、`errorCode`、`TestResult` 或 STOP 硬件语义。`[当前实现]` 控制器已接通 STOP 尾样本封存、`queued` 起写门禁、硬件收尾栅栏、后台分析/持久化/取消和终态投影；Web 只按当前 `{taskId, analysisGeneration}` 暴露摘要与只读查询结果。
+
+### 4.4.2 板级测试结果投影
+
+`mbddf.do_write` 与 `mbddf.helm_board_test` 的终态或中途失败结果可由当前完整快照的 `snapshot.rawData.boardTest` 取得。其 v1 顶层对象固定为：
+
+```json
+{
+  "schema": "hwtest.mbddf-board-test-result",
+  "version": 1,
+  "kind": "do_write",
+  "mode": "automatic",
+  "completedPoints": 5,
+  "totalPoints": 5,
+  "summary": {},
+  "doSteps": [],
+  "pwmPoints": [],
+  "directionPoints": [],
+  "feedbackPoints": []
+}
+```
+
+| 字段 | 类型与约束 |
+| --- | --- |
+| `schema`、`version` | 必须分别为 `"hwtest.mbddf-board-test-result"` 与整数 `1` |
+| `kind` | `"do_write"` 或 `"helm_board_test"` |
+| `mode` | `"automatic"` 或 `"manual"` |
+| `completedPoints`、`totalPoints` | 非负整数；Error 或取消时列表可以是部分结果 |
+| `summary` | object；可为空，automatic 当前可提供最大 PWM/反馈误差和最差点摘要 |
+| `doSteps`、`pwmPoints`、`directionPoints`、`feedbackPoints` | array；元素是后端逐点记录，页面只依赖已知字段，允许其尾部扩展 |
+| `manualResponse` | 可选 object；manual 的一次 `07/02` 响应 |
+
+总体 `Pass`/`Fail`/`Error` 仍以 `snapshot.verdict`、`errorCode` 和 `message` 为准，不在 `boardTest` 顶层复制。客户端必须防御性解析：未知 schema/version/kind/mode、非对象根、错误类型或缺失列表均不得导致页面异常；应安全降级为不显示板级结果或以空对象、空数组、零计数呈现，并忽略未知字段。逐点结果中不可用的数值以 JSON `null` 表示，服务端不得发送 `NaN`/`Inf` 或伪造为零。
+
+前端只在两个上述 algorithmId 显示“板级测试”导航。DO_WRITE 显示五步命令/读回矩阵；HELM automatic 显示方向 0/1 矩阵、PWM 与反馈的指令/实测/误差/容差图形或等价清晰表格，以及最大误差/最差点摘要；manual 显示一次响应表。浏览器重连会从服务器收到仍在内存中的当前完整 snapshot，因而可恢复当前结果视图；新的任务会清空该 `rawData`，进程重启后也不承诺保留。`single` 不保存连续 TXT，`boardTest` 也不构成独立磁盘结果工件或真机验收记录。
 
 ### 4.5 样本事件
 

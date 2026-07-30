@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { TestDescriptor } from '../../shared/protocol'
 import {
   loadRunParameterValues,
+  persistableRunParameterValues,
   runParameterStorageKey,
   validateRunParameterValues,
   visibleRunParameters,
@@ -81,5 +82,32 @@ describe('algorithm-owned run parameters', () => {
     expect(validateRunParameterValues(descriptor, {
       waveform: 4, ampl: 1, max_freq: 0,
     })).toMatch(/终止频率/)
+  })
+
+  it('does not load or serialize parameters explicitly marked as non-persistent', () => {
+    const nonPersistentDescriptor = {
+      ...descriptor,
+      runParameters: [
+        ...descriptor.runParameters,
+        {
+          id: 'test_mode', label: '测试模式', description: '', kind: 'choice', unit: '', required: true,
+          minimumExclusive: false, maximumExclusive: false,
+          choices: [{ value: 'automatic', label: '自动' }, { value: 'manual', label: '手动' }],
+          persistValues: false,
+        },
+      ],
+      runParameterDefaults: { ...descriptor.runParameterDefaults, test_mode: 'automatic' },
+    } as TestDescriptor
+
+    expect(loadRunParameterValues(nonPersistentDescriptor, JSON.stringify({
+      waveform: 4,
+      test_mode: 'manual',
+    }))).toEqual({ waveform: 4, ampl: 1.8, max_freq: 80, test_mode: 'automatic' })
+    expect(persistableRunParameterValues(nonPersistentDescriptor, {
+      waveform: 4,
+      ampl: 1.8,
+      max_freq: 80,
+      test_mode: 'manual',
+    })).toEqual({ waveform: 4, ampl: 1.8, max_freq: 80 })
   })
 })

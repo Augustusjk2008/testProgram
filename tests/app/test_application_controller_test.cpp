@@ -477,12 +477,14 @@ TEST(TestApplicationControllerTest, LoadsDiSwitchDescriptorsWithoutOpeningHardwa
     const DigitalStimulusSnapshot stimulus = controller.snapshot().digitalStimulus;
     EXPECT_TRUE(stimulus.available);
     EXPECT_FALSE(stimulus.configured);
-    ASSERT_EQ(stimulus.switches.size(), 16);
-    EXPECT_EQ(stimulus.switches.at(8).switchId, QStringLiteral("di8"));
-    EXPECT_EQ(stimulus.switches.at(8).activeLevel, QStringLiteral("Low"));
+    ASSERT_EQ(stimulus.switches.size(), 3);
+    EXPECT_EQ(stimulus.switches.at(0).switchId, QStringLiteral("di3"));
+    EXPECT_EQ(stimulus.switches.at(0).dutBit, 3);
+    EXPECT_EQ(stimulus.switches.at(1).switchId, QStringLiteral("di1"));
+    EXPECT_EQ(stimulus.switches.at(2).switchId, QStringLiteral("di2"));
 
     const ActionResult rejected = controller.setDigitalStimulus(
-        QStringLiteral("di0"), true, 0);
+        QStringLiteral("di3"), true, 0);
     EXPECT_FALSE(rejected.ok);
     EXPECT_EQ(rejected.code, QStringLiteral("invalid_state"));
 }
@@ -495,7 +497,7 @@ TEST(TestApplicationControllerTest, RejectsDiSafeStateThatDisagreesWithInactiveL
     ASSERT_TRUE(document.isObject());
     QJsonObject root = document.object();
     QJsonObject safeState = root.value(QStringLiteral("safeState")).toObject();
-    safeState.insert(QStringLiteral("DUT_DI0_STIM"), QStringLiteral("High"));
+    safeState.insert(QStringLiteral("DUT_DI3_STIM"), QStringLiteral("High"));
     root.insert(QStringLiteral("safeState"), safeState);
 
     QTemporaryDir directory;
@@ -573,17 +575,17 @@ TEST(TestApplicationControllerTest, DiPreparationOpensStimulusAndUsesRevisionedA
     EXPECT_EQ(stimulus.revision, 1u);
 
     const ActionResult set = controller.setDigitalStimulus(
-        QStringLiteral("di0"), true, stimulus.revision);
+        QStringLiteral("di3"), true, stimulus.revision);
     ASSERT_TRUE(set.ok) << set.message.toStdString();
     stimulus = controller.snapshot().digitalStimulus;
-    EXPECT_EQ(stimulus.appliedMask, 1u);
+    EXPECT_EQ(stimulus.appliedMask, 1u << 3);
     EXPECT_EQ(stimulus.revision, 2u);
 
     const ActionResult stale = controller.setDigitalStimulus(
         QStringLiteral("di1"), true, 1);
     EXPECT_FALSE(stale.ok);
     EXPECT_EQ(stale.code, QStringLiteral("DataMismatch"));
-    EXPECT_EQ(controller.snapshot().digitalStimulus.appliedMask, 1u);
+    EXPECT_EQ(controller.snapshot().digitalStimulus.appliedMask, 1u << 3);
 
     ASSERT_TRUE(controller.resetDigitalStimulus().ok);
     EXPECT_EQ(controller.snapshot().digitalStimulus.appliedMask, 0u);
@@ -622,8 +624,8 @@ TEST(TestApplicationControllerTest, AsyncStopReturnsDiStimulusToSafeState)
     ASSERT_TRUE(controller.prepare().ok);
     const quint64 revision = controller.snapshot().digitalStimulus.revision;
     ASSERT_TRUE(controller.setDigitalStimulus(
-        QStringLiteral("di0"), true, revision).ok);
-    ASSERT_EQ(controller.snapshot().digitalStimulus.appliedMask, 1u);
+        QStringLiteral("di3"), true, revision).ok);
+    ASSERT_EQ(controller.snapshot().digitalStimulus.appliedMask, 1u << 3);
     ASSERT_TRUE(controller.start().ok);
     ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
 
@@ -683,7 +685,7 @@ TEST(TestApplicationControllerTest, SynchronousStopReturnsDiStimulusToSafeState)
     ASSERT_TRUE(controller.prepare().ok);
     const quint64 revision = controller.snapshot().digitalStimulus.revision;
     ASSERT_TRUE(controller.setDigitalStimulus(
-        QStringLiteral("di0"), true, revision).ok);
+        QStringLiteral("di3"), true, revision).ok);
     ASSERT_TRUE(controller.start().ok);
     ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
 
@@ -2257,6 +2259,86 @@ TEST(TestApplicationControllerTest, AsyncStopStillProjectsSampleQueuedBeforeStop
     ASSERT_EQ(samples.size(), 1);
     EXPECT_EQ(samples.first().taskId, controller.snapshot().taskId);
     EXPECT_EQ(controller.snapshot().sampleCount, 1u);
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest, HelmBoardManualModeRunsWithoutPxiAndAutomaticFailsClosed)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol catalog directory is unavailable";
+    }
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(
+        QStringLiteral(HWTEST_PROJECT_SOURCE_DIR "/tests/app/fixtures/mbddf_udp_hal.json"),
+        &directory, &halConfigPath, &peerError)) << peerError.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_HELM_BOARD_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    ASSERT_EQ(controller.snapshot().descriptor.runParameters.size(), 9);
+    for (const auto& parameter : controller.snapshot().descriptor.runParameters) {
+        EXPECT_FALSE(parameter.persistValues);
+    }
+
+    TestRunOptions manual;
+    manual.algorithmParameters.insert(QStringLiteral("test_mode"), 1);
+    for (int channel = 0; channel < 4; ++channel) {
+        manual.algorithmParameters.insert(
+            QStringLiteral("pwm_duty_percent[%1]").arg(channel),
+            (channel + 1) * 10);
+        manual.algorithmParameters.insert(
+            QStringLiteral("direction[%1]").arg(channel),
+            (channel % 2) != 0);
+    }
+    ASSERT_TRUE(controller.start(manual).ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+    QVariantMap response{
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("err_code"), 0},
+        {QStringLiteral("pwm_peak"), 0u},
+        {QStringLiteral("pwm_enable_mask"), 0x0Fu},
+        {QStringLiteral("pwm_update_enabled"), 1u},
+        {QStringLiteral("ad_acquisition_enabled"), 1u},
+        {QStringLiteral("ad_filter_enabled"), 1u},
+    };
+    for (int channel = 0; channel < 4; ++channel) {
+        response.insert(QStringLiteral("pwm_duty_match[%1]").arg(channel), true);
+        response.insert(QStringLiteral("direction_readback[%1]").arg(channel),
+                        (channel % 2) != 0);
+        response.insert(QStringLiteral("pwm_duty[%1]").arg(channel),
+                        static_cast<quint32>((channel + 1) * 10));
+        response.insert(QStringLiteral("helm_AD_value[%1]").arg(channel), 0.0);
+    }
+    ASSERT_TRUE(peer.replyToLastRequest(
+        QStringLiteral("helm_board_test_response"), response, &peerError))
+        << peerError.toStdString();
+    ASSERT_TRUE(controller.waitForTerminal(5000).ok);
+    ASSERT_TRUE(controller.snapshot().hasResult);
+    EXPECT_EQ(controller.snapshot().verdict, QStringLiteral("Pass"));
+    EXPECT_EQ(controller.snapshot().rawData
+                  .value(QStringLiteral("boardTest")).toMap()
+                  .value(QStringLiteral("mode")).toString(),
+              QStringLiteral("manual"));
+
+    TestRunOptions automatic;
+    automatic.algorithmParameters.insert(QStringLiteral("test_mode"), 0);
+    for (int channel = 0; channel < 4; ++channel) {
+        automatic.algorithmParameters.insert(
+            QStringLiteral("pwm_duty_percent[%1]").arg(channel), 0);
+        automatic.algorithmParameters.insert(
+            QStringLiteral("direction[%1]").arg(channel), false);
+    }
+    const ActionResult rejected = controller.start(automatic);
+    EXPECT_FALSE(rejected.ok);
+    EXPECT_NE(rejected.message.indexOf(QStringLiteral("PXI-6259")), -1)
+        << rejected.message.toStdString();
     EXPECT_TRUE(controller.shutdown().ok);
 }
 

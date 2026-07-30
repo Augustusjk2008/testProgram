@@ -25,7 +25,11 @@ using hwtest::adapters::ni_daqmx::ChannelConfig;
 using hwtest::adapters::ni_daqmx::ChannelDirection;
 using hwtest::adapters::ni_daqmx::ChannelModule;
 using hwtest::adapters::ni_daqmx::DeviceConfig;
+using hwtest::adapters::ni_daqmx::DeviceModel;
+using hwtest::adapters::ni_daqmx::DeviceProfile;
 using hwtest::adapters::ni_daqmx::DriverConfig;
+using hwtest::adapters::ni_daqmx::deviceProfile;
+using hwtest::adapters::ni_daqmx::findDeviceProfile;
 
 HalAdapterStatus makeStatus(int code = HAL_ADAPTER_OK,
                             int vendorCode = 0,
@@ -174,6 +178,40 @@ int32 terminalConfigValue(const std::string& terminal)
 long long nowUs(const HalAdapterHostApiV1& host)
 {
     return host.nowUs == nullptr ? 0 : host.nowUs();
+}
+
+unsigned int supportedModulesMask(const DeviceProfile& profile)
+{
+    unsigned int result = 0;
+    if (profile.analogInputChannels > 0 || profile.analogOutputChannels > 0) {
+        result |= HAL_MODULE_ANALOG;
+    }
+    if (profile.supportsDigital) result |= HAL_MODULE_DIGITAL;
+    if (profile.supportsCounter) result |= HAL_MODULE_COUNTER;
+    return result;
+}
+
+bool supportsTaskKind(const DeviceProfile& profile, int kind)
+{
+    switch (kind) {
+    case HAL_ADAPTER_TASK_ANALOG_INPUT: return profile.analogInputChannels > 0;
+    case HAL_ADAPTER_TASK_ANALOG_OUTPUT: return profile.analogOutputChannels > 0;
+    case HAL_ADAPTER_TASK_DIGITAL_INPUT:
+    case HAL_ADAPTER_TASK_DIGITAL_OUTPUT: return profile.supportsDigital;
+    case HAL_ADAPTER_TASK_COUNTER_INPUT:
+    case HAL_ADAPTER_TASK_COUNTER_OUTPUT: return profile.supportsCounter;
+    default: return false;
+    }
+}
+
+bool isKnownTaskKind(int kind)
+{
+    return kind == HAL_ADAPTER_TASK_ANALOG_INPUT ||
+        kind == HAL_ADAPTER_TASK_ANALOG_OUTPUT ||
+        kind == HAL_ADAPTER_TASK_DIGITAL_INPUT ||
+        kind == HAL_ADAPTER_TASK_DIGITAL_OUTPUT ||
+        kind == HAL_ADAPTER_TASK_COUNTER_INPUT ||
+        kind == HAL_ADAPTER_TASK_COUNTER_OUTPUT;
 }
 
 struct AdapterState;
@@ -696,6 +734,15 @@ HalAdapterStatus configureTaskChannels(TaskState* task,
 HalAdapterStatus configureTaskTiming(TaskState* task,
                                      const HalAdapterTaskConfig* config)
 {
+    const DeviceProfile& profile = deviceProfile(task->owner->config.modelKind);
+    if (profile.analogOutputOnDemandOnly &&
+        config->kind == HAL_ADAPTER_TASK_ANALOG_OUTPUT &&
+        config->mode != HAL_ADAPTER_TASK_ON_DEMAND) {
+        return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
+                          0,
+                          std::string(profile.name) +
+                              " supports on-demand analog output only");
+    }
     if (config->mode == HAL_ADAPTER_TASK_ON_DEMAND) return makeStatus();
     if (config->mode != HAL_ADAPTER_TASK_FINITE &&
         config->mode != HAL_ADAPTER_TASK_CONTINUOUS) {
@@ -750,14 +797,17 @@ HalAdapterStatus configureTaskTiming(TaskState* task,
                 if (channel == nullptr || channel->portNumber != 0) {
                     return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
                                       0,
-                                      "PXI-6259 hardware-timed DIO is available on port0; port1/2 are static/PFI lines");
+                                      std::string(profile.name) +
+                                          " hardware-timed DIO is available on port0; "
+                                          "port1/2 are static/PFI lines");
                 }
             }
         }
         if (config->sampleRateHz > maximumRateHz) {
             return makeStatus(HAL_ADAPTER_INVALID_ARGUMENT,
                               0,
-                              "Requested sample rate exceeds the PXI-6259 subsystem limit");
+                              "Requested sample rate exceeds the " +
+                                  std::string(profile.name) + " subsystem limit");
         }
         status = fromDaq(DAQmxCfgSampClkTiming(task->native,
                                               config->sampleClockSource == nullptr
@@ -915,8 +965,8 @@ HalAdapterStatus HAL_ADAPTER_CALL adapterGetInfo(HalAdapterInfo* output)
     *output = HalAdapterInfo{};
     copyText(output->adapterId, sizeof(output->adapterId), "ni.daqmx");
     copyText(output->vendor, sizeof(output->vendor), "National Instruments");
-    copyText(output->name, sizeof(output->name), "HWTest NI-DAQmx PXI-6259 Adapter");
-    copyText(output->version, sizeof(output->version), "2.0.0");
+    copyText(output->name, sizeof(output->name), "HWTest NI-DAQmx Adapter");
+    copyText(output->version, sizeof(output->version), "2.1.0");
     output->supportedModulesMask = HAL_MODULE_ANALOG | HAL_MODULE_DIGITAL |
         HAL_MODULE_COUNTER;
     return makeStatus();
@@ -1013,11 +1063,14 @@ HalAdapterStatus HAL_ADAPTER_CALL adapterEnumerate(HalAdapterHandle handle,
         copyText(output[index].serialNumber,
                  sizeof(output[index].serialNumber),
                  std::to_string(serial));
-        output[index].supportedModulesMask = HAL_MODULE_ANALOG | HAL_MODULE_DIGITAL |
-            HAL_MODULE_COUNTER;
+        const DeviceProfile* profile = findDeviceProfile(product);
+        output[index].supportedModulesMask = profile == nullptr
+            ? 0u
+            : supportedModulesMask(*profile);
         copyText(output[index].propertiesJson,
                  sizeof(output[index].propertiesJson),
-                 "{\"driver\":\"NI-DAQmx\",\"bus\":\"PXI\"}");
+                 std::string("{\"driver\":\"NI-DAQmx\",\"bus\":\"PXI\",\"profile\":\"") +
+                     (profile == nullptr ? "unsupported" : profile->name) + "\"}");
     }
     return makeStatus();
 }
@@ -1120,21 +1173,27 @@ HalAdapterStatus HAL_ADAPTER_CALL adapterCapabilities(HalAdapterDeviceHandle han
     if (device == nullptr || bytes == nullptr) {
         return makeStatus(HAL_ADAPTER_INVALID_ARGUMENT);
     }
-    const std::string json =
-        "{\"supportedModules\":[\"analog\",\"digital\",\"counter\"],"
-        "\"limits\":{"
-        "\"analog.inputChannels\":32,\"analog.differentialInputChannels\":16,"
-        "\"analog.inputResolutionBits\":16,\"analog.inputMaxSingleRateHz\":1250000,"
-        "\"analog.inputMaxAggregateRateHz\":1000000,\"analog.outputChannels\":4,"
-        "\"analog.outputResolutionBits\":16,\"analog.outputMaxRateHz\":2860000,"
-        "\"digital.lines\":48,\"digital.port0Lines\":32,"
-        "\"digital.hardwareTimedMaxRateHz\":10000000,\"counter.channels\":2,"
-        "\"counter.resolutionBits\":32,\"dmaChannels\":6,"
-        "\"sampleModes\":[\"onDemand\",\"finite\",\"continuous\"],"
-        "\"clockSources\":[\"internal\",\"externalTerminal\"],"
-        "\"triggerRoles\":[\"start\",\"reference\",\"pause\"],"
-        "\"triggerSources\":[\"digitalEdge\",\"analogEdge\",\"digitalLevel\"],"
-        "\"counterModes\":[\"countEdges\",\"pulseFrequency\"]}}";
+    const DeviceProfile& profile = deviceProfile(device->config.modelKind);
+    const std::string json = profile.model == DeviceModel::Pxi6733
+        ? "{\"supportedModules\":[\"analog\"],"
+          "\"limits\":{"
+          "\"analog.outputChannels\":8,\"analog.outputResolutionBits\":16,"
+          "\"analog.outputMaxRateHz\":1000000,"
+          "\"sampleModes\":[\"onDemand\"]}}"
+        : "{\"supportedModules\":[\"analog\",\"digital\",\"counter\"],"
+          "\"limits\":{"
+          "\"analog.inputChannels\":32,\"analog.differentialInputChannels\":16,"
+          "\"analog.inputResolutionBits\":16,\"analog.inputMaxSingleRateHz\":1250000,"
+          "\"analog.inputMaxAggregateRateHz\":1000000,\"analog.outputChannels\":4,"
+          "\"analog.outputResolutionBits\":16,\"analog.outputMaxRateHz\":2860000,"
+          "\"digital.lines\":48,\"digital.port0Lines\":32,"
+          "\"digital.hardwareTimedMaxRateHz\":10000000,\"counter.channels\":2,"
+          "\"counter.resolutionBits\":32,\"dmaChannels\":6,"
+          "\"sampleModes\":[\"onDemand\",\"finite\",\"continuous\"],"
+          "\"clockSources\":[\"internal\",\"externalTerminal\"],"
+          "\"triggerRoles\":[\"start\",\"reference\",\"pause\"],"
+          "\"triggerSources\":[\"digitalEdge\",\"analogEdge\",\"digitalLevel\"],"
+          "\"counterModes\":[\"countEdges\",\"pulseFrequency\"]}}";
     const int required = static_cast<int>(json.size() + 1);
     if (output == nullptr || *bytes < required) {
         *bytes = required;
@@ -1156,11 +1215,18 @@ HalAdapterStatus HAL_ADAPTER_CALL adapterAnalogConfigure(HalAdapterDeviceHandle 
         !std::isfinite(range->maxValue) || range->minValue >= range->maxValue) {
         return makeStatus(HAL_ADAPTER_INVALID_ARGUMENT);
     }
+    const DeviceProfile& profile = deviceProfile(device->config.modelKind);
+    if (isOutput == 0 && profile.analogInputChannels == 0) {
+        return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
+                          0,
+                          std::string(profile.name) + " does not expose analog input");
+    }
     if (range->unit != HAL_ADAPTER_ANALOG_UNIT_VOLT &&
         range->unit != HAL_ADAPTER_ANALOG_UNIT_MILLIVOLT) {
         return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
                           0,
-                          "PXI-6259 voltage channels accept Volt or MilliVolt ranges");
+                          std::string(profile.name) +
+                              " voltage channels accept Volt or MilliVolt ranges");
     }
     const double scale = range->unit == HAL_ADAPTER_ANALOG_UNIT_MILLIVOLT
         ? 0.001
@@ -1198,6 +1264,12 @@ HalAdapterStatus HAL_ADAPTER_CALL adapterAnalogRead(HalAdapterDeviceHandle handl
     if (device == nullptr || channelIndexes == nullptr || output == nullptr ||
         channelCount <= 0 || samplesPerChannel <= 0) {
         return makeStatus(HAL_ADAPTER_INVALID_ARGUMENT);
+    }
+    const DeviceProfile& profile = deviceProfile(device->config.modelKind);
+    if (profile.analogInputChannels == 0) {
+        return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
+                          0,
+                          std::string(profile.name) + " does not expose analog input");
     }
     std::vector<ChannelConfig> channels;
     {
@@ -1293,11 +1365,18 @@ HalAdapterStatus HAL_ADAPTER_CALL adapterAnalogWrite(HalAdapterDeviceHandle hand
         channelCount <= 0) {
         return makeStatus(HAL_ADAPTER_INVALID_ARGUMENT);
     }
+    const DeviceProfile& profile = deviceProfile(device->config.modelKind);
+    if (profile.analogOutputChannels == 0) {
+        return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
+                          0,
+                          std::string(profile.name) + " does not expose analog output");
+    }
     if (unit != HAL_ADAPTER_ANALOG_UNIT_VOLT &&
         unit != HAL_ADAPTER_ANALOG_UNIT_MILLIVOLT) {
         return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
                           0,
-                          "PXI-6259 voltage channels accept Volt or MilliVolt values");
+                          std::string(profile.name) +
+                              " voltage channels accept Volt or MilliVolt values");
     }
     const double scale = unit == HAL_ADAPTER_ANALOG_UNIT_MILLIVOLT ? 0.001 : 1.0;
     std::vector<const ChannelConfig*> channels;
@@ -1328,6 +1407,12 @@ HalAdapterStatus HAL_ADAPTER_CALL adapterDigitalWrite(HalAdapterDeviceHandle han
     auto* device = static_cast<DeviceState*>(handle);
     if (device == nullptr || indexes == nullptr || levels == nullptr || count <= 0) {
         return makeStatus(HAL_ADAPTER_INVALID_ARGUMENT);
+    }
+    const DeviceProfile& profile = deviceProfile(device->config.modelKind);
+    if (!profile.supportsDigital) {
+        return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
+                          0,
+                          std::string(profile.name) + " does not expose digital I/O");
     }
     std::lock_guard<std::mutex> lock(device->mutex);
     std::map<std::size_t, uInt32> staged;
@@ -1366,6 +1451,12 @@ HalAdapterStatus HAL_ADAPTER_CALL adapterDigitalRead(HalAdapterDeviceHandle hand
     auto* device = static_cast<DeviceState*>(handle);
     if (device == nullptr || indexes == nullptr || output == nullptr || count <= 0) {
         return makeStatus(HAL_ADAPTER_INVALID_ARGUMENT);
+    }
+    const DeviceProfile& profile = deviceProfile(device->config.modelKind);
+    if (!profile.supportsDigital) {
+        return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
+                          0,
+                          std::string(profile.name) + " does not expose digital I/O");
     }
     std::lock_guard<std::mutex> lock(device->mutex);
     std::map<std::size_t, uInt32> masks;
@@ -1409,6 +1500,27 @@ HalAdapterStatus HAL_ADAPTER_CALL adapterTaskCreate(HalAdapterDeviceHandle handl
         return makeStatus(HAL_ADAPTER_INVALID_ARGUMENT);
     }
     *output = nullptr;
+    const DeviceProfile& profile = deviceProfile(device->config.modelKind);
+    if (!isKnownTaskKind(config->kind)) {
+        return makeStatus(HAL_ADAPTER_INVALID_ARGUMENT, 0, "Unknown sample task kind");
+    }
+    if (!supportsTaskKind(profile, config->kind)) {
+        return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
+                          0,
+                          std::string(profile.name) +
+                              " does not expose the requested sample task kind");
+    }
+    if (profile.analogOutputOnDemandOnly &&
+        (config->kind != HAL_ADAPTER_TASK_ANALOG_OUTPUT ||
+         config->mode != HAL_ADAPTER_TASK_ON_DEMAND ||
+         config->triggerType != HAL_ADAPTER_TRIGGER_NONE ||
+         config->samplesPerChannel != 1 ||
+         config->bufferSamplesPerChannel != 0)) {
+        return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
+                          0,
+                          std::string(profile.name) +
+                              " supports one-sample on-demand analog output tasks only");
+    }
     auto task = std::make_unique<TaskState>();
     task->owner = device;
     task->kind = config->kind;
@@ -1526,6 +1638,15 @@ HalAdapterStatus HAL_ADAPTER_CALL adapterTaskWrite(HalAdapterTaskHandle handle,
         return makeStatus(HAL_ADAPTER_INVALID_ARGUMENT);
     }
     std::lock_guard<std::mutex> lock(task->mutex);
+    const DeviceProfile& profile = deviceProfile(task->owner->config.modelKind);
+    if (profile.analogOutputOnDemandOnly &&
+        task->kind == HAL_ADAPTER_TASK_ANALOG_OUTPUT &&
+        buffer->samplesPerChannel != 1) {
+        return makeStatus(HAL_ADAPTER_NOT_SUPPORTED,
+                          0,
+                          std::string(profile.name) +
+                              " supports one-sample on-demand analog output writes only");
+    }
     int32 written = 0;
     HalAdapterStatus status;
     if (task->kind == HAL_ADAPTER_TASK_ANALOG_OUTPUT) {

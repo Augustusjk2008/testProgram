@@ -3,11 +3,9 @@
   "control": {
     "deviceId": "mbddf_dut",
     "resourceId": "CONTROL_SERIAL",
-    "runTimeoutMs": 5000
+    "runTimeoutMs": 180000
   },
-  "logging": {
-    "filePath": "../logs/mbddf_pc.jsonl"
-  },
+  "logging": {"filePath": "../logs/mbddf_pc.jsonl"},
   "dataStorage": {
     "directory": "../data",
     "analysis": {
@@ -28,9 +26,7 @@
     "ni.daqmx": {
       "providerId": "vendor.cabi",
       "libraryPath": "${HWTEST_NI_DAQMX_ADAPTER_PATH}",
-      "settings": {
-        "timeoutSeconds": 1.0
-      }
+      "settings": {"timeoutSeconds": 1.0}
     }
   },
   "hardware": {
@@ -48,59 +44,19 @@
         "model": "PXI-6259",
         "serialNumber": "CONFIGURE_ME",
         "properties": {
-          "vendor": {
-            "ni": {
-              "deviceName": "PXI1Slot2"
-            }
-          },
-          "taskProfiles": [
-            {
-              "id": "ai-finite",
-              "kind": "analogInput",
-              "mode": "finite",
-              "resources": ["PXI_AI_0", "PXI_AI_1"],
-              "sampleRateHz": 50000.0,
-              "samplesPerChannel": 1024
-            },
-            {
-              "id": "ao-continuous",
-              "kind": "analogOutput",
-              "mode": "continuous",
-              "resources": ["PXI_AO_0"],
-              "sampleRateHz": 10000.0,
-              "bufferSamplesPerChannel": 4096
-            },
-            {
-              "id": "dio-finite",
-              "kind": "digitalOutput",
-              "mode": "finite",
-              "resources": ["DUT_DI0_STIM", "DUT_DI1_STIM"],
-              "sampleRateHz": 1000.0,
-              "samplesPerChannel": 16
-            },
-            {
-              "id": "di-continuous",
-              "kind": "digitalInput",
-              "mode": "continuous",
-              "resources": ["PXI_DI_16"],
-              "sampleRateHz": 10000.0,
-              "bufferSamplesPerChannel": 4096
-            },
-            {
-              "id": "counter-edge",
-              "kind": "counterInput",
-              "mode": "continuous",
-              "resources": ["PXI_CTR_0"]
-            },
-            {
-              "id": "counter-pulse",
-              "kind": "counterOutput",
-              "mode": "continuous",
-              "resources": ["PXI_CTR_1"],
-              "counterFrequencyHz": 1000.0,
-              "counterDutyCycle": 0.5
-            }
-          ]
+          "vendor": {"ni": {"deviceName": "CONFIGURE_ME"}},
+          "taskProfiles": []
+        }
+      },
+      {
+        "alias": "ni6733_fixture",
+        "adapterId": "ni.daqmx",
+        "vendor": "NI",
+        "model": "PXI-6733",
+        "serialNumber": "CONFIGURE_ME",
+        "properties": {
+          "vendor": {"ni": {"deviceName": "CONFIGURE_ME"}},
+          "taskProfiles": []
         }
       }
     ],
@@ -111,117 +67,53 @@
         "direction": "bidirectional",
         "providerId": "qt.serial",
         "physicalIndex": 0,
-        "properties": {
-          "portName": "COM_CHANGE_ME",
-          "baudRate": 614400,
-          "dataBits": 8,
-          "parity": "Even",
-          "stopBits": 1,
-          "flowControl": "None"
-        }
+        "properties": {"portName": "COM_CHANGE_ME", "baudRate": 614400, "dataBits": 8, "parity": "Even", "stopBits": 1, "flowControl": "None"}
       },
       "BUS_ECHO_COM1": {
-        "device": "mbddf_dut",
-        "module": "control",
-        "direction": "bidirectional",
-        "providerId": "qt.serial",
-        "physicalIndex": 2,
-        "properties": {
-          "role": "auxiliary-link",
-          "portName": "COM_CHANGE_ME_BUS_ECHO_COM1",
-          "baudRate": 614400,
-          "dataBits": 8,
-          "parity": "Even",
-          "stopBits": 1,
-          "flowControl": "None"
-        }
+        "device": "mbddf_dut", "module": "control", "direction": "bidirectional", "providerId": "qt.serial", "physicalIndex": 2,
+        "properties": {"role": "auxiliary-link", "portName": "COM_CHANGE_ME_BUS_ECHO_COM1", "baudRate": 614400, "dataBits": 8, "parity": "Even", "stopBits": 1, "flowControl": "None"}
       },
       "BUS_ECHO_COM2": {
-        "device": "mbddf_dut",
-        "module": "control",
-        "direction": "bidirectional",
-        "providerId": "qt.serial",
-        "physicalIndex": 3,
-        "properties": {
-          "role": "auxiliary-link",
-          "portName": "COM_CHANGE_ME_BUS_ECHO_COM2",
-          "baudRate": 614400,
-          "dataBits": 8,
-          "parity": "Even",
-          "stopBits": 1,
-          "flowControl": "None"
-        }
+        "device": "mbddf_dut", "module": "control", "direction": "bidirectional", "providerId": "qt.serial", "physicalIndex": 3,
+        "properties": {"role": "auxiliary-link", "portName": "COM_CHANGE_ME_BUS_ECHO_COM2", "baudRate": 614400, "dataBits": 8, "parity": "Even", "stopBits": 1, "flowControl": "None"}
       },
       "BUS_ECHO_COM4": {
-        "device": "mbddf_dut",
-        "module": "control",
-        "direction": "bidirectional",
-        "providerId": "qt.serial",
-        "physicalIndex": 4,
-        "properties": {
-          "role": "auxiliary-link",
-          "portName": "COM_CHANGE_ME_BUS_ECHO_COM4",
-          "baudRate": 614400,
-          "dataBits": 8,
-          "parity": "Even",
-          "stopBits": 1,
-          "flowControl": "None"
-        }
+        "device": "mbddf_dut", "module": "control", "direction": "bidirectional", "providerId": "qt.serial", "physicalIndex": 4,
+        "properties": {"role": "auxiliary-link", "portName": "COM_CHANGE_ME_BUS_ECHO_COM4", "baudRate": 614400, "dataBits": 8, "parity": "Even", "stopBits": 1, "flowControl": "None"}
       },
       "CONTROL_NETWORK": {
-        "device": "mbddf_dut",
-        "module": "control",
-        "direction": "bidirectional",
-        "providerId": "qt.udp",
-        "physicalIndex": 1,
-        "properties": {
-          "localAddress": "0.0.0.0",
-          "localPort": 0,
-          "remoteAddress": "127.0.0.1",
-          "remotePort": 3003
-        }
+        "device": "mbddf_dut", "module": "control", "direction": "bidirectional", "providerId": "qt.udp", "physicalIndex": 1,
+        "properties": {"localAddress": "0.0.0.0", "localPort": 0, "remoteAddress": "127.0.0.1", "remotePort": 3003}
       },
-      "DUT_DI0_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 0, "properties": {"portNumber": 0, "lineNumber": 0}},
-      "DUT_DI1_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 1, "properties": {"portNumber": 0, "lineNumber": 1}},
-      "DUT_DI2_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 2, "properties": {"portNumber": 0, "lineNumber": 2}},
-      "DUT_DI3_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 3, "properties": {"portNumber": 0, "lineNumber": 3}},
-      "DUT_DI4_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 4, "properties": {"portNumber": 0, "lineNumber": 4}},
-      "DUT_DI5_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 5, "properties": {"portNumber": 0, "lineNumber": 5}},
-      "DUT_DI6_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 6, "properties": {"portNumber": 0, "lineNumber": 6}},
-      "DUT_DI7_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 7, "properties": {"portNumber": 0, "lineNumber": 7}},
-      "DUT_DI8_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 8, "properties": {"portNumber": 0, "lineNumber": 8}},
-      "DUT_DI9_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 9, "properties": {"portNumber": 0, "lineNumber": 9}},
-      "DUT_DI10_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 10, "properties": {"portNumber": 0, "lineNumber": 10}},
-      "DUT_DI11_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 11, "properties": {"portNumber": 0, "lineNumber": 11}},
-      "DUT_DI12_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 12, "properties": {"portNumber": 0, "lineNumber": 12}},
-      "DUT_DI13_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 13, "properties": {"portNumber": 0, "lineNumber": 13}},
-      "DUT_DI14_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 14, "properties": {"portNumber": 0, "lineNumber": 14}},
-      "DUT_DI15_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 15, "properties": {"portNumber": 0, "lineNumber": 15}},
-      "PXI_AI_0": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 0, "properties": {"channel": "ai0", "terminalConfig": "Differential", "minValue": -10.0, "maxValue": 10.0}},
-      "PXI_AI_1": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 1, "properties": {"channel": "ai1", "terminalConfig": "Differential", "minValue": -10.0, "maxValue": 10.0}},
-      "PXI_AO_0": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "output", "physicalIndex": 0, "properties": {"channel": "ao0", "minValue": -10.0, "maxValue": 10.0}},
-      "PXI_DI_16": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "input", "physicalIndex": 16, "properties": {"portNumber": 0, "lineNumber": 16}},
-      "PXI_CTR_0": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "counter", "direction": "input", "physicalIndex": 0, "properties": {"counterNumber": 0}},
-      "PXI_CTR_1": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "counter", "direction": "output", "physicalIndex": 1, "properties": {"counterNumber": 1}}
+
+      "DUT_DI3_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 0, "properties": {"portNumber": 0, "lineNumber": 0, "connectorPin": 52}},
+      "DUT_DI1_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 1, "properties": {"portNumber": 0, "lineNumber": 1, "connectorPin": 17}},
+      "DUT_DI2_STIM": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "output", "physicalIndex": 2, "properties": {"portNumber": 0, "lineNumber": 2, "connectorPin": 49}},
+      "DUT_TX_ENABLE_SENSE": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "input", "physicalIndex": 3, "properties": {"portNumber": 0, "lineNumber": 3, "connectorPin": 47}},
+      "DUT_ATTENUATOR_SENSE": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "digital", "direction": "input", "physicalIndex": 4, "properties": {"portNumber": 0, "lineNumber": 4, "connectorPin": 19}},
+
+      "HELM_PWM1_SENSE": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 0, "properties": {"channel": "ai0", "terminalConfig": "RSE", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 68}},
+      "HELM_PWM2_SENSE": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 1, "properties": {"channel": "ai1", "terminalConfig": "RSE", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 33}},
+      "HELM_PWM3_SENSE": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 2, "properties": {"channel": "ai2", "terminalConfig": "RSE", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 65}},
+      "HELM_PWM4_SENSE": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 3, "properties": {"channel": "ai3", "terminalConfig": "RSE", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 30}},
+      "HELM_DIR1_SENSE": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 4, "properties": {"channel": "ai4", "terminalConfig": "RSE", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 28}},
+      "HELM_DIR2_SENSE": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 5, "properties": {"channel": "ai5", "terminalConfig": "RSE", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 60}},
+      "HELM_DIR3_SENSE": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 6, "properties": {"channel": "ai6", "terminalConfig": "RSE", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 25}},
+      "HELM_DIR4_SENSE": {"device": "ni6259_stimulus", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "input", "physicalIndex": 7, "properties": {"channel": "ai7", "terminalConfig": "RSE", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 57}},
+
+      "HELM_FK1_STIM": {"device": "ni6733_fixture", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "output", "physicalIndex": 0, "properties": {"channel": "ao0", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 22}},
+      "HELM_FK2_STIM": {"device": "ni6733_fixture", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "output", "physicalIndex": 1, "properties": {"channel": "ao1", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 21}},
+      "HELM_FK3_STIM": {"device": "ni6733_fixture", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "output", "physicalIndex": 2, "properties": {"channel": "ao2", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 57}},
+      "HELM_FK4_STIM": {"device": "ni6733_fixture", "adapterId": "ni.daqmx", "providerId": "vendor.cabi", "module": "analog", "direction": "output", "physicalIndex": 3, "properties": {"channel": "ao3", "minValue": 0.0, "maxValue": 5.0, "connectorPin": 25}}
     }
   },
   "safeState": {
-    "DUT_DI0_STIM": "Low",
+    "DUT_DI3_STIM": "Low",
     "DUT_DI1_STIM": "Low",
     "DUT_DI2_STIM": "Low",
-    "DUT_DI3_STIM": "Low",
-    "DUT_DI4_STIM": "Low",
-    "DUT_DI5_STIM": "Low",
-    "DUT_DI6_STIM": "Low",
-    "DUT_DI7_STIM": "Low",
-    "DUT_DI8_STIM": "High",
-    "DUT_DI9_STIM": "Low",
-    "DUT_DI10_STIM": "Low",
-    "DUT_DI11_STIM": "Low",
-    "DUT_DI12_STIM": "Low",
-    "DUT_DI13_STIM": "Low",
-    "DUT_DI14_STIM": "Low",
-    "DUT_DI15_STIM": "Low",
-    "PXI_AO_0": 0.0
+    "HELM_FK1_STIM": 0.0,
+    "HELM_FK2_STIM": 0.0,
+    "HELM_FK3_STIM": 0.0,
+    "HELM_FK4_STIM": 0.0
   }
 }

@@ -447,6 +447,7 @@ describe('HwtestClient protocol boundary', () => {
               kind: 'choice',
               unit: '',
               required: true,
+              persistValues: false,
               minimumExclusive: false,
               maximumExclusive: false,
               choices: [
@@ -482,6 +483,7 @@ describe('HwtestClient protocol boundary', () => {
         equals: 4,
       })
       expect(snapshot.snapshot.descriptor.runParameterDefaults.max_freq).toBe(80)
+      expect(snapshot.snapshot.descriptor.runParameters[0].persistValues).toBe(false)
       expect(snapshot.snapshot.effectiveRunParameters.ampl).toBe(250)
       expect(snapshot.snapshot.digitalStimulus).toEqual({
         available: false,

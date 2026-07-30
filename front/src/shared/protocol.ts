@@ -40,6 +40,82 @@ export interface TestRunParameterDescriptor {
   maximumExclusive: boolean
   choices: TestRunParameterChoice[]
   visibleWhen?: TestRunParameterVisibility
+  /** Defaults to true for descriptors that predate this opt-out. */
+  persistValues?: boolean
+}
+
+export type BoardTestKind = 'do_write' | 'helm_board_test'
+
+export type BoardTestMode = 'automatic' | 'manual'
+
+/**
+ * The backend owns the fields inside each point.  Keeping the point payload
+ * opaque here lets the board-test page remain compatible with future fields
+ * while still rejecting non-object entries before rendering.
+ */
+export type BoardTestPoint = Record<string, unknown>
+
+export interface BoardTestResult {
+  schema: 'hwtest.mbddf-board-test-result'
+  version: 1
+  kind: BoardTestKind
+  mode: BoardTestMode
+  completedPoints: number
+  totalPoints: number
+  summary: BoardTestPoint
+  doSteps: BoardTestPoint[]
+  pwmPoints: BoardTestPoint[]
+  directionPoints: BoardTestPoint[]
+  feedbackPoints: BoardTestPoint[]
+  manualResponse?: BoardTestPoint
+}
+
+function isBoardTestObject(value: unknown): value is BoardTestPoint {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function boardTestPoints(value: unknown): BoardTestPoint[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isBoardTestObject).map((point) => ({ ...point }))
+}
+
+function boardTestCount(value: unknown): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : 0
+}
+
+/**
+ * Converts the versioned result held in snapshot.rawData into a display-safe
+ * view model.  Unknown fields are deliberately discarded at the top level;
+ * point records retain their backend-owned fields for forward compatibility.
+ */
+export function parseBoardTestResult(value: unknown): BoardTestResult | null {
+  if (!isBoardTestObject(value) ||
+      value.schema !== 'hwtest.mbddf-board-test-result' ||
+      value.version !== 1 ||
+      (value.kind !== 'do_write' && value.kind !== 'helm_board_test') ||
+      (value.mode !== 'automatic' && value.mode !== 'manual')) {
+    return null
+  }
+
+  const manualResponse = isBoardTestObject(value.manualResponse)
+    ? { ...value.manualResponse }
+    : undefined
+  return {
+    schema: 'hwtest.mbddf-board-test-result',
+    version: 1,
+    kind: value.kind,
+    mode: value.mode,
+    completedPoints: boardTestCount(value.completedPoints),
+    totalPoints: boardTestCount(value.totalPoints),
+    summary: isBoardTestObject(value.summary) ? { ...value.summary } : {},
+    doSteps: boardTestPoints(value.doSteps),
+    pwmPoints: boardTestPoints(value.pwmPoints),
+    directionPoints: boardTestPoints(value.directionPoints),
+    feedbackPoints: boardTestPoints(value.feedbackPoints),
+    ...(manualResponse === undefined ? {} : { manualResponse }),
+  }
 }
 
 export interface PostRunAnalysisCapability {

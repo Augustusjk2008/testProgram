@@ -329,6 +329,9 @@ function parseDescriptor(value: JsonObject): TestDescriptor {
       const maximum = item.maximum === undefined
         ? undefined
         : requiredNumber(item, 'maximum')
+      const persistValues = item.persistValues === undefined
+        ? undefined
+        : requiredBoolean(item, 'persistValues')
       let visibleWhen
       if (item.visibleWhen !== undefined) {
         if (!isObject(item.visibleWhen)) throw new Error('run parameter visibility')
@@ -350,6 +353,7 @@ function parseDescriptor(value: JsonObject): TestDescriptor {
         maximumExclusive: requiredBoolean(item, 'maximumExclusive'),
         choices,
         visibleWhen,
+        ...(persistValues === undefined ? {} : { persistValues }),
       }
     })
     const runParameterDefaults = Object.prototype.hasOwnProperty.call(value, 'runParameterDefaults')

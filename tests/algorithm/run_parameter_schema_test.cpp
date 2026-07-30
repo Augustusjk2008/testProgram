@@ -63,6 +63,51 @@ TEST(RunParameterSchemaTest, HelmSchemaOwnsUiSemanticsWithoutAngleLimits)
     EXPECT_EQ(duration->visibleWhenEquals.toInt(), 4);
 }
 
+TEST(RunParameterSchemaTest, HelmBoardSchemaIsRunScopedAndShowsManualFieldsOnlyInManualMode)
+{
+    const RunParameterSchema* schema = findRunParameterSchema(
+        QStringLiteral("mbddf.helm_board_test"));
+    ASSERT_NE(schema, nullptr);
+    EXPECT_EQ(schema->version, QStringLiteral("1"));
+    EXPECT_FALSE(schema->persistValues);
+    ASSERT_EQ(schema->parameters.size(), 9);
+
+    const RunParameterDescriptor* mode = parameter(
+        *schema, QStringLiteral("test_mode"));
+    ASSERT_NE(mode, nullptr);
+    EXPECT_EQ(mode->kind, RunParameterKind::Choice);
+    ASSERT_EQ(mode->choices.size(), 2);
+    EXPECT_EQ(mode->defaultValue.toInt(), 0);
+
+    for (int channel = 0; channel < 4; ++channel) {
+        const RunParameterDescriptor* duty = parameter(
+            *schema,
+            QStringLiteral("pwm_duty_percent[%1]").arg(channel));
+        const RunParameterDescriptor* direction = parameter(
+            *schema,
+            QStringLiteral("direction[%1]").arg(channel));
+        ASSERT_NE(duty, nullptr);
+        ASSERT_NE(direction, nullptr);
+        EXPECT_EQ(duty->kind, RunParameterKind::Integer);
+        EXPECT_EQ(duty->minimum.toInt(), 0);
+        EXPECT_EQ(duty->maximum.toInt(), 100);
+        EXPECT_EQ(duty->visibleWhenParameter, QStringLiteral("test_mode"));
+        EXPECT_EQ(duty->visibleWhenEquals.toInt(), 1);
+        EXPECT_EQ(direction->kind, RunParameterKind::Boolean);
+        EXPECT_EQ(direction->visibleWhenParameter, QStringLiteral("test_mode"));
+        EXPECT_EQ(direction->visibleWhenEquals.toInt(), 1);
+    }
+
+    const auto defaults = normalizeRunParameters(
+        QStringLiteral("mbddf.helm_board_test"), {}, {});
+    ASSERT_TRUE(defaults.ok()) << defaults.status.error.message.toStdString();
+    EXPECT_EQ(defaults.value.value(QStringLiteral("test_mode")).toInt(), 0);
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.helm_board_test"), {},
+                     {{QStringLiteral("pwm_duty_percent[0]"), 101}})
+                     .ok());
+}
+
 TEST(RunParameterSchemaTest, HelmNormalizationAllowsUnboundedAnglesAndRejectsUnknownFields)
 {
     const QVariantMap overrides{

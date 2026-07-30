@@ -10,6 +10,7 @@ class IAlgorithmExecutor;
 }
 
 namespace hwtest::algorithm::mbddf {
+class IBoardTestFixture;
 class IByteTransport;
 }
 
@@ -35,6 +36,7 @@ std::unique_ptr<hwtest::biz::IAlgorithmExecutor> createMbdDfExecutor(
     const QString& algorithmId,
     std::unique_ptr<hwtest::algorithm::mbddf::IByteTransport> transport,
     hwtest::hal::IControlChannel* auxiliaryControlChannel = nullptr,
-    const QString& controlResourceId = {});
+    const QString& controlResourceId = {},
+    hwtest::algorithm::mbddf::IBoardTestFixture* boardTestFixture = nullptr);
 
 } // namespace hwtest::app

@@ -68,9 +68,16 @@ export function OverviewPage() {
   const secondaryValues = numericValues.filter(([field]) => !visibleFields.includes(field))
   const testTitle = snapshot.descriptor.title || snapshot.testItemId || snapshot.algorithmId || '当前测试'
   const digitalStimulus = snapshot.digitalStimulus
+  const digitalSwitchBits = digitalStimulus.switches.map(({ dutBit }) => dutBit)
+  const digitalSwitchIds = digitalStimulus.switches.map(({ switchId }) => switchId)
   const showDigitalStimulus = digitalStimulus.available &&
-    digitalStimulus.switches.length === 16 &&
-    digitalStimulus.switches.every(({ dutBit }) => Number.isInteger(dutBit) && dutBit >= 0 && dutBit < 16)
+    digitalStimulus.switches.length > 0 &&
+    digitalStimulus.switches.length <= 16 &&
+    digitalStimulus.switches.every(({ dutBit, switchId }) => (
+      Number.isInteger(dutBit) && dutBit >= 0 && dutBit < 16 && switchId.length > 0
+    )) &&
+    new Set(digitalSwitchBits).size === digitalStimulus.switches.length &&
+    new Set(digitalSwitchIds).size === digitalStimulus.switches.length
   const digitalStimulusTransport = useMemo(() => ({
     set: setDigitalStimulus,
     reset: resetDigitalStimulus,

@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-do-write",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF digital output closed loop",
+  "configVersion": "1.0.0",
+  "steps": [
+    {
+      "stepId": "DO_WRITE",
+      "testItemId": "do_write",
+      "name": "数字量输出闭环",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.do_write",
+      "parameters": {"protocol": {"requestValues": {}}},
+      "timeoutMs": 2000,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": []
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "requirementId": "pxi6259.do_sense",
+      "deviceId": "ni6259_stimulus",
+      "adapterId": "ni.daqmx",
+      "requiredModules": ["digital"],
+      "requiredResources": ["DUT_TX_ENABLE_SENSE", "DUT_ATTENUATOR_SENSE"],
+      "priority": 0,
+      "match": {"vendor": "NI", "model": "PXI-6259"}
+    }
+  ],
+  "protocolProfiles": [
+    {"id": "do_write_request", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 2000}},
+    {"id": "do_write_response", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 2000}}
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {"requestProfileId": "do_write_request", "responseProfileId": "do_write_response"},
+    "transport": {"openTimeoutMs": 1000, "readChunkBytes": 260},
+    "initialSequence": 4660,
+    "boardFixture": {
+      "pxi6259DeviceId": "ni6259_stimulus",
+      "doSenseResources": ["DUT_TX_ENABLE_SENSE", "DUT_ATTENUATOR_SENSE"],
+      "settlingMs": 100
+    }
+  },
+  "safetyPolicy": {"enterSafeStateOnStop": true, "enterSafeStateOnError": true},
+  "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 2000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
+  "reportFields": {
+    "title": "数字量输出闭环",
+    "description": "固定五步写入并通过 PXI-6259 P0.3/P0.4 回采。",
+    "supportedRunModes": ["single"],
+    "measurements": []
+  }
+}

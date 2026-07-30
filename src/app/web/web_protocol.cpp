@@ -161,6 +161,7 @@ QJsonObject descriptorObject(const TestDescriptor& descriptor)
             {QStringLiteral("required"), parameter.required},
             {QStringLiteral("minimumExclusive"), parameter.minimumExclusive},
             {QStringLiteral("maximumExclusive"), parameter.maximumExclusive},
+            {QStringLiteral("persistValues"), parameter.persistValues},
             {QStringLiteral("choices"), choices},
         };
         if (parameter.minimum.isValid()) {

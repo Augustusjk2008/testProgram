@@ -1,4 +1,5 @@
 set(ALGORITHM_PUBLIC_HEADERS
+    include/algorithm/board_test_executor.h
     include/algorithm/bus_echo_transport.h
     include/algorithm/di_stimulus_controller.h
     include/algorithm/dh_ignite_stream_executor.h
@@ -14,6 +15,7 @@ set(ALGORITHM_PUBLIC_HEADERS
 )
 
 set(ALGORITHM_SOURCES
+    src/board_test_executor.cpp
     src/bus_echo_transport.cpp
     src/di_stimulus_controller.cpp
     src/dh_ignite_stream_executor.cpp

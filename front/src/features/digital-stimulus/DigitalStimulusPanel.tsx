@@ -124,7 +124,7 @@ export function DigitalStimulusPanel({
     <section className="panel digital-stimulus" aria-label="DUT 数字激励控制">
       <header className="panel__header digital-stimulus__header">
         <div className="digital-stimulus__title">
-          <h3>16 路 DI 激励</h3>
+          <h3>{descriptors.length} 路 DI 激励</h3>
           <span aria-atomic="true" aria-live="polite">{liveMessage}</span>
         </div>
         <div className="digital-stimulus__tools">
@@ -142,7 +142,7 @@ export function DigitalStimulusPanel({
         </div>
       </header>
 
-      <div className="digital-stimulus__grid" role="group" aria-label="16 路数字激励开关">
+      <div className="digital-stimulus__grid" role="group" aria-label={`${descriptors.length} 路数字激励开关`}>
         {descriptors.map((descriptor) => {
           const active = appliedBit(optimistic.appliedMask, descriptor.dutBit)
           const status = readbackStatus(optimistic, descriptor, latestSample, nowUs)

@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-helm-board-test",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF servo board test",
+  "configVersion": "1.0.0",
+  "steps": [
+    {
+      "stepId": "HELM_BOARD_TEST",
+      "testItemId": "helm_board_test",
+      "name": "舵机板级测试",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.helm_board_test",
+      "parameters": {
+        "protocol": {
+          "requestValues": {
+            "test_mode": 0,
+            "pwm_duty_percent[0]": 0,
+            "direction[0]": false,
+            "pwm_duty_percent[1]": 0,
+            "direction[1]": false,
+            "pwm_duty_percent[2]": 0,
+            "direction[2]": false,
+            "pwm_duty_percent[3]": 0,
+            "direction[3]": false
+          }
+        }
+      },
+      "timeoutMs": 2000,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": []
+    }
+  ],
+  "hardwareRequirements": [],
+  "protocolProfiles": [
+    {"id": "helm_board_test_request", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 2000}},
+    {"id": "helm_board_test_response", "busType": "CONTROL", "payloadEncoding": "raw", "frameFormat": {"header": "55AA", "lengthBytes": 1, "crc": "CRC-16/XMODEM", "crcByteOrder": "little"}, "timing": {"timeoutMs": 2000}}
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {"requestProfileId": "helm_board_test_request", "responseProfileId": "helm_board_test_response"},
+    "transport": {"openTimeoutMs": 1000, "readChunkBytes": 260},
+    "initialSequence": 4660,
+    "boardFixture": {
+      "pxi6259DeviceId": "ni6259_stimulus",
+      "pxi6733DeviceId": "ni6733_fixture",
+      "pwmResources": ["HELM_PWM1_SENSE", "HELM_PWM2_SENSE", "HELM_PWM3_SENSE", "HELM_PWM4_SENSE"],
+      "directionResources": ["HELM_DIR1_SENSE", "HELM_DIR2_SENSE", "HELM_DIR3_SENSE", "HELM_DIR4_SENSE"],
+      "feedbackResources": ["HELM_FK1_STIM", "HELM_FK2_STIM", "HELM_FK3_STIM", "HELM_FK4_STIM"],
+      "settlingMs": 100,
+      "directionSampleRateHz": 10000.0,
+      "directionSamplesPerChannel": 100,
+      "pwmSampleRateHz": 1250000.0,
+      "pwmSamplesPerChannel": 7500
+    }
+  },
+  "safetyPolicy": {"enterSafeStateOnStop": true, "enterSafeStateOnError": true},
+  "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 2000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
+  "reportFields": {
+    "title": "舵机板级测试",
+    "description": "四路方向、PWM 与反馈电压测试。",
+    "supportedRunModes": ["single"],
+    "measurements": []
+  }
+}

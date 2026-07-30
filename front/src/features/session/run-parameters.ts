@@ -23,7 +23,9 @@ export function loadRunParameterValues(
   try {
     const parsed: unknown = JSON.parse(storedJson)
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return values
-    const known = new Set(descriptor.runParameters.map((parameter) => parameter.id))
+    const known = new Set(descriptor.runParameters
+      .filter((parameter) => parameter.persistValues !== false)
+      .map((parameter) => parameter.id))
     for (const [key, value] of Object.entries(parsed)) {
       if (known.has(key) && isPersistableValue(value)) values[key] = value
     }
@@ -31,6 +33,20 @@ export function loadRunParameterValues(
     // Invalid or unavailable browser state falls back to configuration defaults.
   }
   return values
+}
+
+/** Returns the browser-persistable subset; absent persistValues remains compatible as true. */
+export function persistableRunParameterValues(
+  descriptor: TestDescriptor,
+  values: RunParameterValues,
+): RunParameterValues {
+  const persisted: RunParameterValues = {}
+  for (const parameter of descriptor.runParameters) {
+    if (parameter.persistValues === false) continue
+    const value = values[parameter.id]
+    if (isPersistableValue(value)) persisted[parameter.id] = value
+  }
+  return persisted
 }
 
 export function visibleRunParameters(
