@@ -339,18 +339,13 @@ Status prepareState(BoardTestExecutorState* state,
     state->context = context;
     state->stopRequested.store(false);
 
-    if (state->kind == BoardKind::HelmBoard) {
-        const auto normalized = normalizeRunParameters(
-            QStringLiteral("mbddf.helm_board_test"), {}, context.runParameters);
-        if (!normalized.ok()) return normalized.status;
-        state->parameters = normalized.value;
-    } else if (!context.runParameters.isEmpty()) {
-        return failedStatus(ErrorCode::ParameterRangeError,
-                            QStringLiteral("DO_WRITE has no editable run parameters"),
-                            QStringLiteral("mbddf.board.prepare"));
-    } else {
-        state->parameters.clear();
-    }
+    const QString runParameterAlgorithmId = state->kind == BoardKind::DoWrite
+        ? QStringLiteral("mbddf.do_write")
+        : QStringLiteral("mbddf.helm_board_test");
+    const auto normalized = normalizeRunParameters(
+        runParameterAlgorithmId, {}, context.runParameters);
+    if (!normalized.ok()) return normalized.status;
+    state->parameters = normalized.value;
 
     const QString root = assetRoot(executionConfig);
     if (root.isEmpty() || !QFileInfo(root).isDir()) {
@@ -520,6 +515,26 @@ QVariantMap helmRequest(const std::array<int, 4>& duties,
     return values;
 }
 
+std::array<quint32, 2> doWriteState(const QVariantMap& parameters)
+{
+    quint32 state = 0;
+    for (int channel = 0; channel < 16; ++channel) {
+        if (parameters.value(QStringLiteral("channel_enabled[%1]").arg(channel))
+                .toBool()) {
+            state |= (1u << channel);
+        }
+    }
+    return {{state, 0u}};
+}
+
+QVariantList doWriteStateList(const std::array<quint32, 2>& state)
+{
+    return {
+        QVariant::fromValue(state[0]),
+        QVariant::fromValue(state[1]),
+    };
+}
+
 QVector<double> channelValues(const hwtest::hal::SampleTaskBlock& block,
                               int channel)
 {
@@ -658,108 +673,106 @@ Result<TestResult> DoWriteAlgorithmExecutor::executeStep(
 {
     TestResult result = initialResult(step);
     QVariantMap board = baseBoardResult(QStringLiteral("do_write"),
-                                        QStringLiteral("automatic"), 5);
+                                         QStringLiteral("automatic"), 1);
     QVariantList points;
-    int failedPoints = 0;
-    const std::array<quint32, 5> masks{{0x0018u, 0x001Cu, 0x0018u,
-                                        0x001Au, 0x0018u}};
     if (m_state->fixture == nullptr) {
         finishResult(&result, TestVerdict::Error, ErrorCode::FatalHardwareError,
                      QStringLiteral("PXI-6259 board fixture is unavailable"), board);
         return {Status{}, result};
     }
-    for (int index = 0; index < static_cast<int>(masks.size()); ++index) {
-        if (shouldStop(*m_state, control)) {
-            board.insert(QStringLiteral("doSteps"), points);
-            board.insert(QStringLiteral("completedPoints"), points.size());
-            return cancelledResult(result, board,
-                                   QStringLiteral("DO_WRITE stopped between points"));
-        }
-        QVariantMap requestValues{
-            {QStringLiteral("channel[0]"), masks[static_cast<size_t>(index)]},
-            {QStringLiteral("channel[1]"), 0u},
-        };
-        const ExchangeResult exchange = m_state->exchange(requestValues, step.timeoutMs);
-        if (!exchange.ok) {
-            board.insert(QStringLiteral("doSteps"), points);
-            board.insert(QStringLiteral("completedPoints"), points.size());
-            finishResult(&result, TestVerdict::Error, exchange.errorCode,
-                         exchange.message, board);
-            return {Status{}, result};
-        }
-        m_state->fixture->settle(m_state->settlingMs);
-        const auto digital = m_state->fixture->read6259Digital(
-            m_state->doSenseResources, step.timeoutMs);
-        if (!digital.ok()) {
-            board.insert(QStringLiteral("doSteps"), points);
-            board.insert(QStringLiteral("completedPoints"), points.size());
-            finishResult(&result, TestVerdict::Error, ErrorCode::FatalHardwareError,
-                         halMessage(digital.status,
-                                    QStringLiteral("PXI-6259 digital input failed")),
-                         board);
-            return {Status{}, result};
-        }
-        bool digitalShapeOk = digital.value.size() == m_state->doSenseResources.size();
-        if (digitalShapeOk) {
-            for (int sampleIndex = 0; sampleIndex < digital.value.size(); ++sampleIndex) {
-                const auto& sample = digital.value.at(sampleIndex);
-                if (sample.channel != m_state->doSenseResources.at(sampleIndex) ||
-                    sample.level == hwtest::hal::DigitalLevel::Unknown) {
-                    digitalShapeOk = false;
-                    break;
-                }
+    if (shouldStop(*m_state, control)) {
+        board.insert(QStringLiteral("doSteps"), points);
+        return cancelledResult(result, board,
+                               QStringLiteral("DO_WRITE stopped before command"));
+    }
+    const std::array<quint32, 2> commandState = doWriteState(m_state->parameters);
+    const QVariantMap requestValues{
+        {QStringLiteral("channel[0]"), commandState[0]},
+        {QStringLiteral("channel[1]"), commandState[1]},
+    };
+    const ExchangeResult exchange = m_state->exchange(requestValues, step.timeoutMs);
+    if (!exchange.ok) {
+        board.insert(QStringLiteral("doSteps"), points);
+        finishResult(&result, TestVerdict::Error, exchange.errorCode,
+                     exchange.message, board);
+        return {Status{}, result};
+    }
+    m_state->fixture->settle(m_state->settlingMs);
+    const auto digital = m_state->fixture->read6259Digital(
+        m_state->doSenseResources, step.timeoutMs);
+    if (!digital.ok()) {
+        board.insert(QStringLiteral("doSteps"), points);
+        finishResult(&result, TestVerdict::Error, ErrorCode::FatalHardwareError,
+                     halMessage(digital.status,
+                                QStringLiteral("PXI-6259 digital input failed")),
+                     board);
+        return {Status{}, result};
+    }
+    bool digitalShapeOk = digital.value.size() == m_state->doSenseResources.size();
+    if (digitalShapeOk) {
+        for (int sampleIndex = 0; sampleIndex < digital.value.size(); ++sampleIndex) {
+            const auto& sample = digital.value.at(sampleIndex);
+            if (sample.channel != m_state->doSenseResources.at(sampleIndex) ||
+                sample.level == hwtest::hal::DigitalLevel::Unknown) {
+                digitalShapeOk = false;
+                break;
             }
         }
-        if (!digitalShapeOk) {
-            board.insert(QStringLiteral("doSteps"), points);
-            board.insert(QStringLiteral("completedPoints"), points.size());
-            finishResult(&result, TestVerdict::Error,
-                         ErrorCode::FatalHardwareError,
-                         QStringLiteral("PXI-6259 returned malformed digital input data"),
-                         board);
-            return {Status{}, result};
-        }
-        const quint32 mask = masks[static_cast<size_t>(index)];
-        const bool expectedTx = (mask & (1u << 2)) != 0;
-        const bool expectedAttenuator = (mask & (1u << 1)) != 0;
-        const bool measuredTx =
-            digital.value.at(0).level == hwtest::hal::DigitalLevel::High;
-        const bool measuredAttenuator =
-            digital.value.at(1).level == hwtest::hal::DigitalLevel::High;
-        const bool appliedOk = exchange.values
-                                   .value(QStringLiteral("applied_state[0]")).toUInt() == mask &&
-            exchange.values.value(QStringLiteral("applied_state[1]")).toUInt() == 0u;
-        const bool passed = appliedOk &&
-            measuredTx == expectedTx &&
-            measuredAttenuator == expectedAttenuator;
-        if (!passed) ++failedPoints;
-        QVariantMap point{
-            {QStringLiteral("index"), index},
-            {QStringLiteral("commandMask"), mask},
-            {QStringLiteral("appliedMask"), exchange.values
-                 .value(QStringLiteral("applied_state[0]")).toUInt()},
-            {QStringLiteral("expectedTxEnable"), expectedTx},
-            {QStringLiteral("measuredTxEnable"), measuredTx},
-            {QStringLiteral("expectedAttenuator"), expectedAttenuator},
-            {QStringLiteral("measuredAttenuator"), measuredAttenuator},
-            {QStringLiteral("passed"), passed},
-            {QStringLiteral("reason"), passed ? QString{} :
-                 QStringLiteral("DUT applied state or PXI digital readback mismatch")},
-        };
-        points.push_back(point);
-        board.insert(QStringLiteral("completedPoints"), points.size());
-        publishPoint(step, observer, point, QStringLiteral("do_write"),
-                     points.size(), masks.size());
     }
+    if (!digitalShapeOk) {
+        board.insert(QStringLiteral("doSteps"), points);
+        finishResult(&result, TestVerdict::Error,
+                     ErrorCode::FatalHardwareError,
+                     QStringLiteral("PXI-6259 returned malformed digital input data"),
+                     board);
+        return {Status{}, result};
+    }
+
+    const std::array<quint32, 2> appliedState{{
+        exchange.values.value(QStringLiteral("applied_state[0]")).toUInt(),
+        exchange.values.value(QStringLiteral("applied_state[1]")).toUInt(),
+    }};
+    const bool expectedTx = (commandState[0] & (1u << 2)) != 0;
+    const bool expectedAttenuator = (commandState[0] & (1u << 1)) != 0;
+    const bool measuredTx =
+        digital.value.at(0).level == hwtest::hal::DigitalLevel::High;
+    const bool measuredAttenuator =
+        digital.value.at(1).level == hwtest::hal::DigitalLevel::High;
+    const bool appliedOk = appliedState == commandState;
+    const bool physicalReadbackOk = measuredTx == expectedTx &&
+        measuredAttenuator == expectedAttenuator;
+    const bool passed = appliedOk && physicalReadbackOk;
+    QVariantMap point{
+        {QStringLiteral("index"), 0},
+        {QStringLiteral("commandMask"), commandState[0]},
+        {QStringLiteral("appliedMask"), appliedState[0]},
+        {QStringLiteral("commandState"), commandState[0]},
+        {QStringLiteral("appliedState"), appliedState[0]},
+        {QStringLiteral("commandStateWords"), doWriteStateList(commandState)},
+        {QStringLiteral("appliedStateWords"), doWriteStateList(appliedState)},
+        {QStringLiteral("appliedStateMatched"), appliedOk},
+        {QStringLiteral("expectedTxEnable"), expectedTx},
+        {QStringLiteral("measuredTxEnable"), measuredTx},
+        {QStringLiteral("expectedAttenuator"), expectedAttenuator},
+        {QStringLiteral("measuredAttenuator"), measuredAttenuator},
+        {QStringLiteral("externalValidatedBits"), QVariantList{1, 2}},
+        {QStringLiteral("passed"), passed},
+        {QStringLiteral("reason"), passed ? QString{} :
+             QStringLiteral("DUT applied state or PXI digital readback mismatch")},
+    };
+    points.push_back(point);
+    board.insert(QStringLiteral("completedPoints"), points.size());
+    publishPoint(step, observer, point, QStringLiteral("do_write"),
+                 points.size(), 1);
     board.insert(QStringLiteral("doSteps"), points);
     board.insert(QStringLiteral("summary"), QVariantMap{
-        {QStringLiteral("failedPoints"), failedPoints},
+        {QStringLiteral("failedPoints"), passed ? 0 : 1},
     });
     finishResult(&result,
-                 failedPoints > 0 ? TestVerdict::Fail : TestVerdict::Pass,
+                 passed ? TestVerdict::Pass : TestVerdict::Fail,
                  ErrorCode::Ok,
-                 failedPoints > 0 ? QStringLiteral("DO_WRITE closed-loop mismatch")
-                                  : QStringLiteral("DO_WRITE closed-loop test passed"),
+                 passed ? QStringLiteral("Digital output test passed")
+                        : QStringLiteral("Digital output mismatch"),
                  board);
     return {Status{}, result};
 }

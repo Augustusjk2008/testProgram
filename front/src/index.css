@@ -590,6 +590,22 @@ code,
   white-space: nowrap;
 }
 
+.run-parameters .serial-auxiliary-port {
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.serial-auxiliary-port select {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 5px;
+  border: 1px solid var(--line-bright);
+  background: var(--input);
+  color: var(--text);
+  font-size: 11px;
+}
+
 .number-input {
   display: grid;
   grid-template-columns: 1fr 26px;
@@ -846,6 +862,89 @@ code,
   accent-color: var(--lime);
 }
 
+.algorithm-channel-grid {
+  min-width: 0;
+  margin: 8px 0 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-subtle);
+}
+
+.algorithm-channel-grid legend {
+  padding: 0 5px;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.algorithm-channel-grid__toolbar {
+  display: flex;
+  gap: 5px;
+  margin: 0 0 7px;
+}
+
+.algorithm-channel-grid__toolbar button {
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--line-bright);
+  background: var(--input);
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+.algorithm-channel-grid__toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.algorithm-channel-grid__items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 4px;
+}
+
+.algorithm-channel-grid--do .algorithm-channel-grid__items {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.algorithm-channel {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 4px 5px;
+  border: 1px solid var(--line);
+  background: var(--input);
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+.algorithm-channel input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--lime);
+}
+
+.algorithm-channel > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.algorithm-channel small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.3;
+}
+
+.algorithm-channel.is-guarded {
+  cursor: not-allowed;
+  opacity: .62;
+}
+
 .page-viewport {
   min-width: 0;
   min-height: 0;
@@ -1068,6 +1167,74 @@ code,
 
 .empty-state.metric-grid__empty h3 {
   margin: 0;
+}
+
+.timer-jitter-histogram {
+  overflow: hidden;
+}
+
+.timer-jitter-histogram .panel__header {
+  align-items: flex-start;
+}
+
+.timer-jitter-histogram .panel__header p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.timer-jitter-histogram__bars {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(62px, 1fr));
+  min-height: 168px;
+  overflow-x: auto;
+  gap: 1px;
+  padding: 10px;
+  background: var(--line);
+}
+
+.timer-jitter-histogram__bucket {
+  display: grid;
+  min-width: 62px;
+  grid-template-rows: 96px auto auto;
+  align-items: end;
+  gap: 4px;
+  padding: 6px;
+  background: var(--surface-muted);
+  text-align: center;
+}
+
+.timer-jitter-histogram__bar-area {
+  display: flex;
+  min-height: 0;
+  align-items: end;
+  justify-content: center;
+  border-bottom: 1px solid var(--line-bright);
+}
+
+.timer-jitter-histogram__bar-area i {
+  width: min(34px, 65%);
+  background: linear-gradient(180deg, var(--cyan), var(--lime));
+}
+
+.timer-jitter-histogram__bucket strong {
+  color: var(--text);
+  font: 12px "Geist Mono", monospace;
+}
+
+.timer-jitter-histogram__bucket span {
+  color: var(--muted);
+  font: 9px "Geist Mono", monospace;
+  line-height: 1.35;
+}
+
+.timer-jitter-histogram__warning {
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--alert-line);
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 7%, var(--surface-muted));
+  font-size: 11px;
 }
 
 .mono-count,
@@ -1977,6 +2144,16 @@ code,
   overflow: auto;
 }
 
+.board-do-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  background: var(--surface-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .board-table {
   width: 100%;
   min-width: 620px;
@@ -2007,6 +2184,12 @@ code,
 .board-table td:last-child,
 .board-table th:last-child {
   border-right: 0;
+}
+
+.board-do-readback {
+  display: grid;
+  gap: 2px;
+  white-space: nowrap;
 }
 
 .board-status {

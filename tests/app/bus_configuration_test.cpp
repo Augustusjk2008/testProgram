@@ -7,6 +7,7 @@
 #include <biz/test_config_manager.h>
 
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -40,29 +41,67 @@ TEST(BusConfigurationTest, RegistryContainsLoopAndEchoCommands)
     EXPECT_EQ(echo->responseProfileId, QStringLiteral("bus_echo_test_response"));
 }
 
-TEST(BusConfigurationTest, LoopConfigIsSingleAndContainsNoNetworkOrSpiPath)
+TEST(BusConfigurationTest, UnifiedSerialConfigIsSingleAndExposesBothRoutes)
 {
     hwtest::biz::TestConfigManager manager;
-    const auto loaded = manager.load(QStringLiteral(HWTEST_APP_BUS_LOOP_CONFIG));
+    const auto loaded = manager.load(QStringLiteral(HWTEST_APP_SERIAL_TEST_CONFIG));
     ASSERT_TRUE(loaded.ok()) << loaded.status.error.message.toStdString();
     ASSERT_EQ(loaded.value.steps.size(), 1);
     const hwtest::biz::TestStep& step = loaded.value.steps.first();
-    EXPECT_EQ(step.algorithmId, QStringLiteral("mbddf.bus_loop"));
+    EXPECT_EQ(loaded.value.configId, QStringLiteral("mbddf-serial-test"));
+    EXPECT_EQ(step.algorithmId, QStringLiteral("mbddf.serial_test"));
     EXPECT_EQ(step.timeoutMs, 5000);
     const QVariantMap requestValues = step.parameters
         .value(QStringLiteral("protocol")).toMap()
         .value(QStringLiteral("requestValues")).toMap();
+    EXPECT_EQ(requestValues.value(QStringLiteral("test_mode")).toInt(), 0);
     EXPECT_EQ(requestValues.value(QStringLiteral("link_id")).toInt(), 0);
+    EXPECT_EQ(requestValues.value(QStringLiteral("cycle_count")).toInt(), 1000);
     EXPECT_EQ(requestValues.value(QStringLiteral("total_count")).toInt(), 1000);
 
-    const QVariantMap json = loadJsonMap(QStringLiteral(HWTEST_APP_BUS_LOOP_CONFIG));
+    const QVariantMap json = loadJsonMap(QStringLiteral(HWTEST_APP_SERIAL_TEST_CONFIG));
     const QStringList modes = json.value(QStringLiteral("reportFields")).toMap()
                                   .value(QStringLiteral("supportedRunModes")).toStringList();
     EXPECT_EQ(modes, QStringList{QStringLiteral("single")});
-    const QByteArray serialized = QJsonDocument::fromVariant(json).toJson(
-        QJsonDocument::Compact).toLower();
-    EXPECT_FALSE(serialized.contains("network"));
-    EXPECT_FALSE(serialized.contains("spi"));
+    EXPECT_EQ(json.value(QStringLiteral("productName")).toString(),
+              QStringLiteral("串口测试"));
+    EXPECT_EQ(json.value(QStringLiteral("reportFields")).toMap()
+                  .value(QStringLiteral("title")).toString(),
+              QStringLiteral("串口测试"));
+    const QVariantMap serialTest = loaded.value.executionConfig
+        .value(QStringLiteral("serialTest")).toMap();
+    EXPECT_EQ(serialTest.value(QStringLiteral("loopback")).toMap()
+                  .value(QStringLiteral("requestProfileId")).toString(),
+              QStringLiteral("bus_loop_test_request"));
+    EXPECT_EQ(serialTest.value(QStringLiteral("echo")).toMap()
+                  .value(QStringLiteral("requestProfileId")).toString(),
+              QStringLiteral("bus_echo_test_request"));
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_SERIAL_TEST_CONFIG),
+        QStringLiteral(HWTEST_APP_HAL_CONFIG)).ok);
+    const TestDescriptor& descriptor = controller.snapshot().descriptor;
+    EXPECT_EQ(descriptor.supportedRunModes,
+              QVector<QString>{QStringLiteral("single")});
+    ASSERT_EQ(descriptor.runParameters.size(), 3);
+    EXPECT_EQ(descriptor.runParameters.at(0).id, QStringLiteral("test_mode"));
+    EXPECT_EQ(descriptor.runParameters.at(1).id, QStringLiteral("link_id"));
+    EXPECT_EQ(descriptor.runParameters.at(2).id, QStringLiteral("cycle_count"));
+}
+
+TEST(BusConfigurationTest, LegacyLoopConfigRemainsDirectlyLoadableButIsNotScannable)
+{
+    EXPECT_TRUE(QStringLiteral(HWTEST_APP_BUS_LOOP_CONFIG)
+                    .endsWith(QStringLiteral(".legacy.json")));
+    EXPECT_TRUE(QFileInfo::exists(QStringLiteral(HWTEST_APP_BUS_LOOP_CONFIG)));
+
+    hwtest::biz::TestConfigManager manager;
+    const auto loaded = manager.load(QStringLiteral(HWTEST_APP_BUS_LOOP_CONFIG));
+    ASSERT_TRUE(loaded.ok()) << loaded.status.error.message.toStdString();
+    ASSERT_EQ(loaded.value.steps.size(), 1);
+    EXPECT_EQ(loaded.value.steps.first().algorithmId,
+              QStringLiteral("mbddf.bus_loop"));
 }
 
 TEST(BusConfigurationTest, EchoConfigIsPcPeriodicWithFixedCompactPayload)
@@ -144,7 +183,7 @@ TEST(BusConfigurationTest, AuxiliaryEchoPortsAreConfiguredButNotSelectableContro
 
     TestApplicationController controller;
     const ActionResult loaded = controller.loadConfigurations(
-        QStringLiteral(HWTEST_APP_BUS_LOOP_CONFIG),
+        QStringLiteral(HWTEST_APP_SERIAL_TEST_CONFIG),
         QStringLiteral(HWTEST_APP_HAL_CONFIG));
     ASSERT_TRUE(loaded.ok) << loaded.message.toStdString();
     const QVector<ControlResource> controls = controller.availableControls();

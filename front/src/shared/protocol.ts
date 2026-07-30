@@ -257,6 +257,7 @@ export type ActionName =
   | 'ports'
   | 'selectControl'
   | 'selectSerialPort'
+  | 'selectAuxiliarySerialPort'
   | 'prepare'
   | 'start'
   | 'pause'
@@ -275,6 +276,7 @@ export interface ApplicationSnapshot {
   controlResourceId: string
   providerId: string
   serialPortName: string
+  auxiliarySerialPortName: string
   taskId: string
   stepId: string
   testItemId: string
@@ -442,6 +444,7 @@ export const EMPTY_SNAPSHOT: ApplicationSnapshot = {
   controlResourceId: '',
   providerId: '',
   serialPortName: '',
+  auxiliarySerialPortName: '',
   taskId: '',
   stepId: '',
   testItemId: '',

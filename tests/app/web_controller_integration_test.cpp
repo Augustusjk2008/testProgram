@@ -69,6 +69,14 @@ QJsonObject sendAndWait(test::WebSocketTestClient* client,
     return reply;
 }
 
+QVector<SerialPortInfo> testSerialPorts()
+{
+    return {
+        SerialPortInfo{QStringLiteral("COM41"), QStringLiteral("primary"), {}, {}, {}},
+        SerialPortInfo{QStringLiteral("COM42"), QStringLiteral("auxiliary"), {}, {}, {}},
+    };
+}
+
 TEST(WebSocketControllerIntegrationTest, QueuesLoadAndReturnsCachedSnapshot)
 {
     TestApplicationController controller;
@@ -148,6 +156,304 @@ TEST(WebSocketControllerIntegrationTest, MapsControlsPortsAndSelections)
     EXPECT_FALSE(missing.value(QStringLiteral("ok")).toBool());
     EXPECT_EQ(missing.value(QStringLiteral("code")).toString(),
               QStringLiteral("missing_field"));
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     RejectsAuxiliarySerialPortThatWasNotEnumerated)
+{
+    const QString serialTestConfig =
+        QStringLiteral(HWTEST_PROJECT_SOURCE_DIR) +
+        QStringLiteral("/configs/mbddf_serial_test.testcfg.json");
+    ASSERT_TRUE(QFileInfo::exists(serialTestConfig));
+
+    TestApplicationController controller(nullptr, &testSerialPorts);
+    WebSocketServerOptions options;
+    options.port = 0;
+    FrontendLaunchOptions serialOptions = launchOptions();
+    serialOptions.testConfigPath = serialTestConfig;
+    WebSocketFrontendServer server(&controller, serialOptions, options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+
+    const QJsonObject beforeLoad = sendAndWait(
+        &client,
+        QStringLiteral("aux-before-load"),
+        QStringLiteral("selectAuxiliarySerialPort"),
+        QJsonObject{{QStringLiteral("portName"), QStringLiteral("COM42")}});
+    EXPECT_FALSE(beforeLoad.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(beforeLoad.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_state"));
+
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("load"),
+                            QStringLiteral("load"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+
+    const QJsonObject missing = sendAndWait(
+        &client,
+        QStringLiteral("aux-missing"),
+        QStringLiteral("selectAuxiliarySerialPort"));
+    EXPECT_FALSE(missing.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(missing.value(QStringLiteral("code")).toString(),
+              QStringLiteral("missing_field"));
+
+    QString unavailablePort = QStringLiteral("__HWTEST_MISSING_AUX_PORT__");
+    const QVector<SerialPortInfo> ports = controller.availableSerialPorts();
+    const auto isAvailable = [&](const QString& candidate) {
+        return std::any_of(ports.cbegin(), ports.cend(), [&](const SerialPortInfo& port) {
+            return port.portName.compare(candidate, Qt::CaseInsensitive) == 0;
+        });
+    };
+    while (isAvailable(unavailablePort)) unavailablePort.append(QLatin1Char('_'));
+
+    const QJsonObject rejected = sendAndWait(
+        &client,
+        QStringLiteral("aux-reject-unavailable"),
+        QStringLiteral("selectAuxiliarySerialPort"),
+        QJsonObject{{QStringLiteral("portName"), unavailablePort}});
+    EXPECT_FALSE(rejected.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(rejected.value(QStringLiteral("code")).toString(),
+              QStringLiteral("auxiliary_serial_port_not_found"));
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     SelectsAnEnumeratedAuxiliarySerialPortForTheUnifiedSerialTest)
+{
+    const QString serialTestConfig =
+        QStringLiteral(HWTEST_PROJECT_SOURCE_DIR) +
+        QStringLiteral("/configs/mbddf_serial_test.testcfg.json");
+    ASSERT_TRUE(QFileInfo::exists(serialTestConfig));
+
+    TestApplicationController controller(nullptr, &testSerialPorts);
+    const QVector<SerialPortInfo> ports = controller.availableSerialPorts();
+    WebSocketServerOptions options;
+    options.port = 0;
+    FrontendLaunchOptions serialOptions = launchOptions();
+    serialOptions.testConfigPath = serialTestConfig;
+    WebSocketFrontendServer server(&controller, serialOptions, options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("load"),
+                            QStringLiteral("load"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+
+    const QString selectedPort = ports.first().portName;
+    const QJsonObject selected = sendAndWait(
+        &client,
+        QStringLiteral("aux-select"),
+        QStringLiteral("selectAuxiliarySerialPort"),
+        QJsonObject{{QStringLiteral("portName"),
+                     QStringLiteral("  %1  ").arg(selectedPort)}});
+    EXPECT_TRUE(selected.value(QStringLiteral("ok")).toBool())
+        << selected.value(QStringLiteral("message")).toString().toStdString();
+
+    const QJsonObject snapshot = sendAndWait(
+        &client, QStringLiteral("aux-snapshot"), QStringLiteral("snapshot"));
+    ASSERT_TRUE(snapshot.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(snapshot.value(QStringLiteral("data"))
+                  .toObject()
+                  .value(QStringLiteral("snapshot"))
+                  .toObject()
+                  .value(QStringLiteral("auxiliarySerialPortName"))
+                  .toString(),
+              selectedPort);
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     RejectsAuxiliarySerialPortSelectionForNonSerialTestConfiguration)
+{
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    WebSocketFrontendServer server(&controller, launchOptions(), options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("load"),
+                            QStringLiteral("load"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+
+    const QJsonObject rejected = sendAndWait(
+        &client,
+        QStringLiteral("aux-unsupported"),
+        QStringLiteral("selectAuxiliarySerialPort"),
+        QJsonObject{{QStringLiteral("portName"), QStringLiteral("COM42")}});
+
+    EXPECT_FALSE(rejected.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(rejected.value(QStringLiteral("code")).toString(),
+              QStringLiteral("auxiliary_serial_unavailable"));
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     RejectsAuxiliarySerialPortSelectionAfterTheUnifiedSerialTestIsPrepared)
+{
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+    const QString serialTestConfig =
+        QStringLiteral(HWTEST_PROJECT_SOURCE_DIR) +
+        QStringLiteral("/configs/mbddf_serial_test.testcfg.json");
+    ASSERT_TRUE(QFileInfo::exists(serialTestConfig));
+
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    FrontendLaunchOptions serialOptions = launchOptions();
+    serialOptions.testConfigPath = serialTestConfig;
+    WebSocketFrontendServer server(&controller, serialOptions, options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("load"),
+                            QStringLiteral("load"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("prepare"),
+                            QStringLiteral("prepare"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+
+    const QJsonObject rejected = sendAndWait(
+        &client,
+        QStringLiteral("aux-after-prepare"),
+        QStringLiteral("selectAuxiliarySerialPort"),
+        QJsonObject{{QStringLiteral("portName"), QStringLiteral("COM42")}});
+
+    EXPECT_FALSE(rejected.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(rejected.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_state"));
+    EXPECT_TRUE(sendAndWait(&client,
+                            QStringLiteral("disconnect"),
+                            QStringLiteral("disconnect"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     EchoStartRequiresAnAuxiliarySerialPortBeforeOpeningTheControlPort)
+{
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+    const QString serialTestConfig =
+        QStringLiteral(HWTEST_PROJECT_SOURCE_DIR) +
+        QStringLiteral("/configs/mbddf_serial_test.testcfg.json");
+    ASSERT_TRUE(QFileInfo::exists(serialTestConfig));
+
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    FrontendLaunchOptions serialOptions = launchOptions();
+    serialOptions.testConfigPath = serialTestConfig;
+    WebSocketFrontendServer server(&controller, serialOptions, options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("load"),
+                            QStringLiteral("load"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("prepare"),
+                            QStringLiteral("prepare"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+
+    const QJsonObject started = sendAndWait(
+        &client,
+        QStringLiteral("echo-without-aux"),
+        QStringLiteral("start"),
+        QJsonObject{
+            {QStringLiteral("mode"), QStringLiteral("single")},
+            {QStringLiteral("algorithmParameters"),
+             QJsonObject{{QStringLiteral("test_mode"), 1},
+                         {QStringLiteral("link_id"), 0},
+                         {QStringLiteral("cycle_count"), 1}}},
+        });
+
+    EXPECT_FALSE(started.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(started.value(QStringLiteral("code")).toString(),
+              QStringLiteral("auxiliary_serial_port_required"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
+    EXPECT_TRUE(sendAndWait(&client,
+                            QStringLiteral("disconnect"),
+                            QStringLiteral("disconnect"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     EchoStartRejectsAnAuxiliaryPortThatMatchesThePrimaryControlPort)
+{
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+    const QString serialTestConfig =
+        QStringLiteral(HWTEST_PROJECT_SOURCE_DIR) +
+        QStringLiteral("/configs/mbddf_serial_test.testcfg.json");
+    ASSERT_TRUE(QFileInfo::exists(serialTestConfig));
+
+    TestApplicationController controller(nullptr, &testSerialPorts);
+    const QVector<SerialPortInfo> ports = controller.availableSerialPorts();
+    const QString selectedPort = ports.first().portName;
+    WebSocketServerOptions options;
+    options.port = 0;
+    FrontendLaunchOptions serialOptions = launchOptions();
+    serialOptions.testConfigPath = serialTestConfig;
+    WebSocketFrontendServer server(&controller, serialOptions, options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("load"),
+                            QStringLiteral("load"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    ASSERT_TRUE(sendAndWait(
+                    &client,
+                    QStringLiteral("select-primary"),
+                    QStringLiteral("selectSerialPort"),
+                    QJsonObject{{QStringLiteral("portName"), selectedPort}})
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    ASSERT_TRUE(sendAndWait(
+                    &client,
+                    QStringLiteral("select-aux"),
+                    QStringLiteral("selectAuxiliarySerialPort"),
+                    QJsonObject{{QStringLiteral("portName"), selectedPort}})
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("prepare"),
+                            QStringLiteral("prepare"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+
+    const QJsonObject started = sendAndWait(
+        &client,
+        QStringLiteral("echo-with-primary-port"),
+        QStringLiteral("start"),
+        QJsonObject{
+            {QStringLiteral("mode"), QStringLiteral("single")},
+            {QStringLiteral("algorithmParameters"),
+             QJsonObject{{QStringLiteral("test_mode"), 1},
+                         {QStringLiteral("link_id"), 0},
+                         {QStringLiteral("cycle_count"), 1}}},
+        });
+
+    EXPECT_FALSE(started.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(started.value(QStringLiteral("code")).toString(),
+              QStringLiteral("auxiliary_serial_conflict"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
+    EXPECT_TRUE(sendAndWait(&client,
+                            QStringLiteral("disconnect"),
+                            QStringLiteral("disconnect"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
 }
 
 TEST(WebSocketControllerIntegrationTest, ReturnsControllerErrorsAndRemainsUsable)

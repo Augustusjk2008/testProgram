@@ -8,6 +8,7 @@
 #include <algorithm/helm_stream_executor.h>
 #include <algorithm/mbddf_exchange_executor.h>
 #include <algorithm/mbddf_transport.h>
+#include <algorithm/serial_test_executor.h>
 #include <algorithm/system_status_executor.h>
 
 #include <biz/i_algorithm_executor.h>
@@ -25,6 +26,10 @@ const QVector<MbdDfAlgorithmRegistration>& mbddfAlgorithmRegistry()
          QStringLiteral("elec_health_status_request"),
          QStringLiteral("elec_health_status_response"),
          QStringLiteral("ELEC_HEALTH_STATUS")},
+        {QStringLiteral("mbddf.serial_test"),
+         QStringLiteral("bus_loop_test_request"),
+         QStringLiteral("bus_loop_test_response"),
+         QStringLiteral("SERIAL_TEST")},
         {QStringLiteral("mbddf.bus_loop"),
          QStringLiteral("bus_loop_test_request"),
          QStringLiteral("bus_loop_test_response"),
@@ -125,6 +130,10 @@ std::unique_ptr<hwtest::biz::IAlgorithmExecutor> createMbdDfExecutor(
     if (algorithmId == QStringLiteral("mbddf.helm_board_test")) {
         return std::make_unique<HelmBoardTestAlgorithmExecutor>(
             std::move(transport), boardTestFixture);
+    }
+    if (algorithmId == QStringLiteral("mbddf.serial_test")) {
+        return std::make_unique<SerialTestAlgorithmExecutor>(
+            std::move(transport), auxiliaryControlChannel, controlResourceId);
     }
     if (algorithmId == QStringLiteral("mbddf.bus_echo")) {
         transport = std::make_unique<BusEchoTransport>(

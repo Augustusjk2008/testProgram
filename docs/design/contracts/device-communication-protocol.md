@@ -26,7 +26,7 @@ BIZ -> IAlgorithmExecutor -> hwtest_algorithm_mbddf -> IByteTransport
                                                    -> HalSerialTransport -> hwtest_hal
 ```
 
-统一协议生产路径如下；当前十四个 MB_DDF 配置均经该边界进入控制通道：
+统一协议生产路径如下；当前十三个 MB_DDF 配置均经该边界进入控制通道：
 
 ```text
 BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据）
@@ -60,11 +60,11 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 | `SystemStatusAlgorithmExecutor` | 执行 `mbddf.system_status`，并提供固定命令执行的共享生命周期 |
 | `ElecHealthStatusAlgorithmExecutor` | 执行 `mbddf.elec_health_status` 单步算法 |
 | `MbdDfExchangeAlgorithmExecutor` | 按配置执行 `MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG` 等单步请求/响应；可按配置追加一个清理请求（当前用于 `TIMER_JITTER_STOP`） |
-| `BusEchoTransport` | 在一个 5 秒事务预算内协调产品控制资源和 link 0/1/3 对应的辅助控制资源：先下发 `03/02`，再短读累积并原样回写 114 字节，最后读取产品控制响应 |
+| 串口复合执行器 / `BusEchoTransport` | 在同一个 BIZ `single` 中按模式执行一次 `03/01` 内部回环或多轮 `03/02` 外部回显；每轮回显由 `BusEchoTransport` 在 5 秒事务预算内协调产品控制资源和用户选择的辅助串口，短读累积并原样回写 114 字节后读取控制响应 |
 | `DhIgniteStreamAlgorithmExecutor` | 执行一次 `06/02` 请求和有限多帧回告；投影 `delay_frames` 基线/点火后分界、U16 回绕序号和理想相对时间轴，受理后不发送 STOP/ABORT |
 | `ImuStreamAlgorithmExecutor` / `HelmStreamAlgorithmExecutor` | 分别执行惯测与舵机 `device_stream` 的一次 START、持续主动反馈和一次 STOP |
 | `RunParameterSchema` | 由算法 ID 声明运行期可编辑字段、默认值、显示条件和语义边界；合并配置值与本次覆盖，拒绝未知、非有限或越界值 |
-| `DoWriteAlgorithmExecutor` / `HelmBoardTestAlgorithmExecutor` | 执行 DO_WRITE 的固定闭环，及 HELM_BOARD_TEST 的 manual/automatic 板级流程；夹具资源由应用层按模式绑定，物理端点由 HAL 配置解析 |
+| `DoWriteAlgorithmExecutor` / `HelmBoardTestAlgorithmExecutor` | 执行用户配置的一次 DO_WRITE 与两路 PXI-6259 物理验证，以及 HELM_BOARD_TEST 的 manual/automatic 板级流程；夹具资源由应用层按模式绑定，物理端点由 HAL 配置解析 |
 | `DiStimulusController` | 解析 `executionConfig.digitalStimulus`，按配置白名单和 revision 构造完整 DI 输出批次；不调用厂家 SDK |
 | `SystemStatusSimulator` | 协议级成功、超时、坏 CRC 和无效响应模拟 |
 | `HalControlTransport` | 经 `IControlChannel` 发送原始字节，并累积短读、搜索同步字、按长度分帧及保留剩余帧 |
@@ -189,7 +189,7 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 ## 7. MB_DDF 单步配置与执行
 
-当前应用控制器通过统一注册表接受十四个算法：九项既有固定请求/响应算法（其中 BUS ECHO 额外协调一个辅助 COM 资源）、两个板级单次算法 `mbddf.do_write`/`mbddf.helm_board_test`，以及专用的 `mbddf.dh_ignite_stream`、`mbddf.imu_stream`、`mbddf.helm_stream` 设备流执行器。每份配置只能启用其中一个步骤。`TIMER_JITTER` 的 STOP 仍只是单轮跟随清理；BUS ECHO 的多轮由 BIZ `pc_periodic` 重复完整单轮事务；三种设备流都在一次 `executeStep()` 中产生多帧回告，其中只有 IMU/HELM 使用 STOP 收尾，DH 点火按配置帧数自然完成。
+当前应用控制器的十三份配置分别使用十三个算法 ID；注册表另保留 `mbddf.bus_loop`、`mbddf.bus_echo` 两个旧 ID，使受控旧配置仍可加载。每份配置只能启用一个步骤。`TIMER_JITTER` 的 STOP 仍只是单轮跟随清理；统一串口算法在一个 BIZ `single` 中把 `test_mode=0` 路由为一次携带全部次数的 `03/01`，或把 `test_mode=1` 路由为指定轮数的完整 `03/02` 事务；三种设备流都在一次 `executeStep()` 中产生多帧回告，其中只有 IMU/HELM 使用 STOP 收尾，DH 点火按配置帧数自然完成。
 
 `SYSTEM_STATUS` 的 `executionConfig` 形状为：
 
@@ -226,15 +226,14 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 | 配置 | algorithmId | 请求/响应 | 当前参数和收尾语义 |
 | --- | --- | --- | --- |
-| `configs/mbddf_bus_loop.testcfg.json` | `mbddf.bus_loop` | `bus_loop_test_request/response`（`03/01`） | 只允许 link 0/1/3（COM1/COM2/COM4）和 `total_count=1..100000`；DUT 以 `loopback=true` 内部回环，响应链路、实际次数必须等于本次请求且错误数必须为 0；只支持单次 |
-| `configs/mbddf_bus_echo.testcfg.json` | `mbddf.bus_echo` | `bus_echo_test_request/response`（`03/02`） | 只允许 link 0/1/3；固定 114 字节以 `4D 42 31` 开头，其余为 0；每个 `pc_periodic` 周期由 DUT 在所选 COM 发送，PC 辅助串口短读累积后原样回写，再读取控制响应并对两个方向逐字节校验；整轮 deadline 为 5 秒 |
+| `configs/mbddf_serial_test.testcfg.json` | `mbddf.serial_test` | `03/01` 回环与 `03/02` 回显请求/响应 | 只允许 link 0/1/3（COM1/COM2/COM4），`test_mode` 为 0/1，统一 `cycle_count=1..100000`、默认 1000且只支持 `single`。回环一次请求把次数映射为 `total_count`，DUT 使用 `loopback=true`，完成/失败数取 DUT 回告；回显逐轮发送固定 114 字节，PC 从系统枚举中选择独立本地串口短读累积并原样回写，每轮再校验控制响应与双向字节，deadline 为 5 秒，轮间检查停止。应用层拒绝未枚举的辅助串口和主辅同口；最终结果保留完整聚合计数，但逐轮诊断最多保存前 15 轮和最后一轮 |
 | `configs/mbddf_memperf.testcfg.json` | `mbddf.memperf` | `memperf_test_request/response` | `memperf_type`、`length`、`seed` 由 `step.parameters.protocol.requestValues` 提供；响应 `error_count` 默认要求为 0 |
 | `configs/mbddf_spi_flash.testcfg.json` | `mbddf.spi_flash` | `spi_flash_test_request/response` | 空请求；DUT 擦写固定隔离 4 KiB 测试区，不备份、不恢复，配置仅支持单次 |
 | `configs/mbddf_dh_pulse_config.testcfg.json` | `mbddf.dh_pulse_config` | `dh_pulse_config_request/response` | `config_enable` 与 23 路 `pulse_width[]` 写入后逐项回读并判定 |
 | `configs/mbddf_dh_ignite_stream.testcfg.json` | `mbddf.dh_ignite_stream` | `dh_control_request/response`（`06/02`） | 只支持有限 `device_stream`；PC 发送一次可配 count/interval/delay/使能/通道请求，DUT 先采 `delay_frames` 帧基线、点火一次并回告到 `report_count`；`stoppable=false`，无 STOP/ABORT/自动复位 |
-| `configs/mbddf_timer_jitter.testcfg.json` | `mbddf.timer_jitter` | `timer_jitter_start_request/response`，随后 `timer_jitter_stop_request/response` | START 的 `mode` 当前默认为 0；`executionConfig.lifecycle` 声明 STOP Profile 和 deadline，STOP ACK 失败会使本轮失败 |
+| `configs/mbddf_timer_jitter.testcfg.json` | `mbddf.timer_jitter` | `timer_jitter_start_request/response`，随后 `timer_jitter_stop_request/response` | START 的 `mode` 当前默认为 0；八桶依次表示 `[0,2)`、`[2,4)`、`[4,8)`、`[8,16)`、`[16,32)`、`[32,64)`、`[64,100)`、`[100,+∞)` µs；`executionConfig.lifecycle` 声明 STOP Profile 和 deadline，STOP ACK 失败会使本轮失败 |
 | `configs/mbddf_di.testcfg.json` | `mbddf.di_read` | `di_read_request/response`（`DI_READ`） | 读取 `di_state[0]`、`di_state[1]`；当前配置支持 `single` 和 `pc_periodic`，判定只检查 `status == 0` 与 `err_code == 0` |
-| `configs/mbddf_do_write.testcfg.json` | `mbddf.do_write` | `do_write_request/response`（`DO_WRITE 04/02`） | 只支持 `single`；固定五步闭环及 PXI-6259 读回见 7.4 |
+| `configs/mbddf_do_write.testcfg.json` | `mbddf.do_write` | `do_write_request/response`（`DO_WRITE 04/02`） | 只支持 `single`；用户配置一次 16 位输出，完整校验 DUT `applied_state`，并由 PXI-6259 对 bit2/bit1 做外部物理验证，见 7.4 |
 | `configs/mbddf_helm_board_test.testcfg.json` | `mbddf.helm_board_test` | `helm_board_test_request/response`（`HELM_BOARD_TEST 07/02`） | 只支持 `single`；`test_mode` 的 `automatic`/`manual` 是算法参数，流程与夹具边界见 7.4 |
 | `configs/mbddf_imu_stream.testcfg.json` | `mbddf.imu_stream` | `09/10` START、`09/01` 主动反馈、`09/11` STOP | 只支持 `device_stream`；PC 各发送一次 START/STOP，中间只读主动反馈；至少一帧有效反馈才通过；`executionConfig.stream.hostTimestampIntervalUs` 只用于宿主合成样本时间轴，不进入产品帧 |
 | `configs/mbddf_helm_stream.testcfg.json` | `mbddf.helm_stream` | `07/10` START、`07/01` 主动反馈、`07/11` STOP | 只支持 `device_stream`；DUT 以 1 ms 周期生成四路舵角指令并经 DDS 交互，最多 5 个完整反馈样本组成一帧；测试程序不管理独立舵控程序的启停 |
@@ -277,7 +276,7 @@ DDS 时间来自设备单调时钟而非 UTC。宿主保留每条原始值为 `d
 
 `DO_WRITE` 与 `HELM_BOARD_TEST` 都只声明 BIZ `single`；后者的 `automatic`/`manual` 是 `mbddf.helm_board_test` 的运行参数，不是额外的 BIZ run mode。
 
-- `mbddf.do_write` 每轮严格发送 `DO_WRITE 04/02` 的五个固定掩码：`0x0018 → 0x001C → 0x0018 → 0x001A → 0x0018`。每次成功的 DUT 请求/响应后固定稳定等待 `100 ms`，再读取 PXI-6259 的逻辑资源 `DUT_TX_ENABLE_SENSE` 与 `DUT_ATTENUATOR_SENSE`（物理 P0.3/P0.4）。每一步同时依据 DUT 的 `applied_state[0/1]` 和两路夹具读回形成闭环结果；协议、DUT 或夹具 I/O 错误为 `Error`，判据不一致为 `Fail`，但仍完成五步以保留完整矩阵。
+- `mbddf.do_write` 的运行参数投影 16 个原始输出位。DO5/DO6 必须为 0；低有效电源控制 DO3/DO4 默认原始位为 1，其余默认 0。每轮只发送一次用户掩码，要求 DUT `applied_state[0]` 完整等于指令且 `applied_state[1]==0`；成功应答后固定等待 `100 ms`，再读取 PXI-6259 的 `DUT_TX_ENABLE_SENSE` 与 `DUT_ATTENUATOR_SENSE`（物理 P0.3/P0.4），分别验证 bit2 与 bit1。其他位只有 DUT 回读证据，不得描述为外部物理闭环。协议、DUT 或夹具 I/O 错误为 `Error`，任一受检回读不一致为 `Fail`。该流程在运行完成、停止、断开或退出时均不发送额外 DUT DO 复位，产品保持最后一次已应用状态。
 - `mbddf.helm_board_test` 的 `manual` 只编码四路 PWM/方向参数并交换一次 `HELM_BOARD_TEST 07/02`。它不打开、读取或写入 PXI-6259/PXI-6733，不采样、不写 AO；结果只有这次协议响应及单点完成状态。
 - `automatic` 必须绑定两张夹具卡，按互相独立的方向掩码 `0`、`1`、`2`、`4`、`8` 执行 5 点方向检查；随后对四个 PWM 通道各执行 `1`、`5`、`10`、`25`、`50`、`75`、`90`、`95`、`99 %` 九点检查，共 36 点。PWM 由 PXI-6259 以 `1.25 MS/s`、每通道 `7500` 样本采集，指令/实测占空比误差容差为 `±1 pp`。
 - 自动反馈检查由 PXI-6733 的 AO0..AO3 逐通道驱动 `0.0..5.0 V`、`0.5 V` 步进，共 4 × 11 = 44 点；每个点记录指令、DUT 读回、误差和 `±0.05 V` 容差。自动模式的总点数为 `5 + 36 + 44 = 85`。
@@ -293,9 +292,9 @@ DDS 时间来自设备单调时钟而非 UTC。宿主保留每条原始值为 `d
 
 `executionConfig.lifecycle` 只允许在需要清理 ACK 的单步中使用：请求/响应 Profile 必须成对提供，执行器先完成主请求/响应，再以递增序号发送 follow-up 请求并校验响应命令、序号、`status` 和 `err_code`。这不是设备持续回告能力；当前定时器 START 在 DUT 端同步完成 250 us x 250 周期统计，STOP 只负责幂等清理确认。
 
-十四个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes`、`measurements` 和可选 `stoppable`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；设备流保存固定使用完整 descriptor 列，曲线选择不改变保存格式。`stoppable` 缺失时兼容回退为 true；显式 false 只允许恰好声明 `device_stream`，当前仅 DH 点火有限流使用。BUS ECHO 的 114 个协议数据字段只在算法内部逐字节判定，公开样本和测量只包含状态、链路、字节数和不一致摘要，完整请求/响应仍以帧十六进制及数据 SHA-256 保留在结果诊断中。可编辑运行参数不在 `reportFields` 定义，而由算法 ID 对应的 Schema 唯一声明；应用层只把 Schema 字段作为本次覆盖，固定协议字段仍留在配置请求中，再将规范化结果透传 BIZ。Schema 可为 descriptor 的每个 `runParameters[]` 项声明 `persistValues`；其浏览器兼容与 localStorage 语义只以 [WebSocket 前端协议](websocket-frontend-protocol.md) 为准。
+十三个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes`、`measurements` 和可选 `stoppable`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；设备流保存固定使用完整 descriptor 列，曲线选择不改变保存格式。`stoppable` 缺失时兼容回退为 true；显式 false 只允许恰好声明 `device_stream`，当前仅 DH 点火有限流使用。串口回显的 114 个协议数据字段只在算法内部逐字节判定，公开样本和测量只包含状态、链路、轮次、字节数和不一致摘要，完整请求/响应仍以帧十六进制及数据 SHA-256 保留在结果诊断中。可编辑运行参数不在 `reportFields` 定义，而由算法 ID 对应的 Schema 唯一声明；应用层只把 Schema 字段作为本次覆盖，固定协议字段仍留在配置请求中，再将规范化结果透传 BIZ。Schema 可为 descriptor 的每个 `runParameters[]` 项声明 `persistValues`；其浏览器兼容与 localStorage 语义只以 [WebSocket 前端协议](websocket-frontend-protocol.md) 为准。
 
-算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。BUS ECHO 只额外消费 `executionConfig.transport.busEcho.resourceByLink` 中的逻辑 ResourceId 映射；样例的 `BUS_ECHO_COM1/2/4` 均为 `role=auxiliary-link` 的 `qt.serial` 资源，端口名由部署配置填写，不出现在应用的主控制口选择列表。主控制资源与所选辅助资源由同一 `HalDevice` 独立打开，不能映射到同一物理串口。
+算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。串口回显额外消费一个 `role=auxiliary-link` 的 `qt.serial` 资源；Web 只允许从系统 `ports` 枚举中选择其本次 `portName`，不允许客户端提供路径或任意 HAL 配置。主控制资源与辅助资源由同一 `HalDevice` 独立打开，不能映射到同一物理串口。
 
 当前 `ProtocolProfile` 列表由 BIZ 保存和透传，但 MB_DDF 执行器仍没有把它与 `executionConfig.protocol.*ProfileId`、CSV 命令键或 HAL 资源做完整交叉校验。该绑定仍是未实现项，不能仅凭同名 Profile 宣称映射已建立。
 

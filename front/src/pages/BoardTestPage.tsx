@@ -270,10 +270,13 @@ function SummaryFacts({ result, pwm, feedback, verdict }: {
   const worst = resultSummaryValue(result.summary, ['worstPoint', 'worst_point', 'worst']) ?? worstPoint(allPoints)
   const failures = resultSummaryValue(result.summary, ['failedPoints', 'failedPointCount', 'failCount', 'failures'])
   const automaticHelm = result.kind === 'helm_board_test' && result.mode === 'automatic'
+  const modeLabel = result.kind === 'do_write'
+    ? '用户配置'
+    : result.mode === 'automatic' ? '自动' : '手动'
   return (
     <section className="board-summary panel">
       <div>
-        <span className="board-summary__eyebrow">{result.kind === 'do_write' ? 'DO 写入闭环' : '舵机板级测试'} · {result.mode === 'automatic' ? '自动' : '手动'}</span>
+        <span className="board-summary__eyebrow">{result.kind === 'do_write' ? '数字量输出' : '舵机板级测试'} · {modeLabel}</span>
         <h2>{result.completedPoints} / {result.totalPoints || '—'} 点已完成</h2>
         <p>{verdictLabel(verdict)}</p>
       </div>
@@ -288,21 +291,51 @@ function SummaryFacts({ result, pwm, feedback, verdict }: {
   )
 }
 
-function DoStepsMatrix({ steps }: { steps: readonly BoardTestPoint[] }) {
+function DoReadbackCell({
+  point,
+  expectedFields,
+  measuredFields,
+}: {
+  point: BoardTestPoint
+  expectedFields: readonly string[]
+  measuredFields: readonly string[]
+}) {
+  return (
+    <div className="board-do-readback">
+      <span>指令 {displayValue(ownValue(point, expectedFields))}</span>
+      <span>实测 {displayValue(ownValue(point, measuredFields))}</span>
+    </div>
+  )
+}
+
+function DoStepsMatrix({ steps, doWrite }: { steps: readonly BoardTestPoint[]; doWrite: boolean }) {
   if (steps.length === 0) return null
   return (
     <section className="panel board-table-panel">
       <header className="panel__header"><h3>DO 步骤矩阵</h3><span className="mono-count">{steps.length} 步</span></header>
+      {doWrite && <p className="board-do-note">PXI-6259 仅自动验证 DO2 / DO1；其余通道仅显示 DUT 完整应用状态，未配置外部回读。</p>}
       <div className="board-table-wrap">
         <table className="board-table">
-          <thead><tr><th>步骤</th><th>请求掩码</th><th>应答状态</th><th>DO1（衰减器）</th><th>DO2（发送使能）</th><th>结果</th></tr></thead>
+          <thead><tr><th>步骤</th><th>{doWrite ? '完整 16 位指令掩码' : '请求掩码'}</th><th>{doWrite ? 'DUT 完整应用状态' : '应答状态'}</th><th>{doWrite ? 'DO1（衰减器 / PXI-6259）' : 'DO1（衰减器）'}</th><th>{doWrite ? 'DO2（发送使能 / PXI-6259）' : 'DO2（发送使能）'}</th><th>结果</th></tr></thead>
           <tbody>{steps.map((step, index) => (
             <tr key={`${index}:${displayValue(ownValue(step, ['step', 'index', 'sequence']))}`}>
               <td>{displayValue(ownValue(step, ['step', 'index', 'sequence', 'name']) ?? index + 1)}</td>
-              <td>{displayMask(ownValue(step, ['requestedMask', 'requestedState', 'commandedMask', 'commandMask', 'mask', 'expectedMask']))}</td>
-              <td>{displayMask(ownValue(step, ['appliedState', 'appliedMask', 'reportedState', 'responseState']))}</td>
-              <td>{displayValue(ownValue(step, ['do1', 'readDo1', 'do1Readback', 'observedDo1', 'measuredAttenuator', 'expectedDo1']))}</td>
-              <td>{displayValue(ownValue(step, ['do2', 'readDo2', 'do2Readback', 'observedDo2', 'measuredTxEnable', 'expectedDo2']))}</td>
+              <td>{displayMask(ownValue(step, ['requestedMask', 'requested_mask', 'requestedState', 'requested_state', 'commandedMask', 'commanded_mask', 'commandMask', 'command_mask', 'mask', 'expectedMask', 'expected_mask']))}</td>
+              <td>{displayMask(ownValue(step, ['appliedState', 'applied_state', 'appliedMask', 'applied_mask', 'reportedState', 'reported_state', 'responseState', 'response_state']))}</td>
+              <td>{doWrite ? (
+                <DoReadbackCell
+                  expectedFields={['expectedAttenuator', 'expected_attenuator', 'expectedDo1']}
+                  measuredFields={['measuredAttenuator', 'measured_attenuator', 'do1', 'readDo1', 'do1Readback', 'observedDo1']}
+                  point={step}
+                />
+              ) : displayValue(ownValue(step, ['do1', 'readDo1', 'do1Readback', 'observedDo1', 'measuredAttenuator', 'measured_attenuator', 'expectedAttenuator', 'expected_attenuator', 'expectedDo1']))}</td>
+              <td>{doWrite ? (
+                <DoReadbackCell
+                  expectedFields={['expectedTxEnable', 'expected_tx_enable', 'expectedDo2']}
+                  measuredFields={['measuredTxEnable', 'measured_tx_enable', 'do2', 'readDo2', 'do2Readback', 'observedDo2']}
+                  point={step}
+                />
+              ) : displayValue(ownValue(step, ['do2', 'readDo2', 'do2Readback', 'observedDo2', 'measuredTxEnable', 'measured_tx_enable', 'expectedTxEnable', 'expected_tx_enable', 'expectedDo2']))}</td>
               <td><StatusBadge status={pointStatus(step)} /></td>
             </tr>
           ))}</tbody>
@@ -413,12 +446,16 @@ export function BoardTestPage() {
     <div className="page-stack board-test-page">
       <SummaryFacts feedback={feedback} pwm={pwm} result={result} verdict={snapshot.verdict} />
       <KeyValueGrid entries={Object.entries(result.summary)} title="结果摘要" />
-      {result.mode === 'manual' ? <ManualResponse response={result.manualResponse} /> : <>
-        <DoStepsMatrix steps={result.doSteps} />
-        <DirectionMatrix points={result.directionPoints} />
-        <PointPlot points={pwm} title="PWM 指令、实测、误差与容差" unit="%" />
-        <PointPlot points={feedback} title="反馈电压指令、读回、误差与容差" unit="V" />
-      </>}
+      {result.kind === 'do_write' ? (
+        <DoStepsMatrix doWrite steps={result.doSteps} />
+      ) : result.mode === 'manual' ? (
+        <ManualResponse response={result.manualResponse} />
+      ) : <>
+          <DoStepsMatrix doWrite={false} steps={result.doSteps} />
+          <DirectionMatrix points={result.directionPoints} />
+          <PointPlot points={pwm} title="PWM 指令、实测、误差与容差" unit="%" />
+          <PointPlot points={feedback} title="反馈电压指令、读回、误差与容差" unit="V" />
+        </>}
     </div>
   )
 }

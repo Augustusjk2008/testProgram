@@ -110,4 +110,57 @@ describe('algorithm-owned run parameters', () => {
       test_mode: 'manual',
     })).toEqual({ waveform: 4, ampl: 1.8, max_freq: 80 })
   })
+
+  it('keeps the disabled DO5 and DO6 channels false when restoring or persisting output parameters', () => {
+    const channels = Array.from({ length: 16 }, (_, index) => ({
+      id: `channel_enabled[${index}]`, label: `DO${index}`, description: '', kind: 'boolean' as const,
+      unit: '', required: true, minimumExclusive: false, maximumExclusive: false, choices: [],
+    }))
+    const doDescriptor: TestDescriptor = {
+      ...descriptor,
+      configId: 'mbddf-do-write',
+      algorithmId: 'mbddf.do_write',
+      runParameters: channels,
+      runParameterDefaults: Object.fromEntries(channels.map((channel) => [channel.id, false])),
+    }
+    const unsafe = Object.fromEntries(channels.map((channel) => [channel.id, true]))
+
+    expect(loadRunParameterValues(doDescriptor, JSON.stringify(unsafe))).toMatchObject({
+      'channel_enabled[4]': true,
+      'channel_enabled[5]': false,
+      'channel_enabled[6]': false,
+    })
+    expect(persistableRunParameterValues(doDescriptor, unsafe)).toMatchObject({
+      'channel_enabled[5]': false,
+      'channel_enabled[6]': false,
+    })
+  })
+
+  it('canonicalizes restored DH checkbox values to protocol 0 or 1', () => {
+    const dhDescriptor: TestDescriptor = {
+      ...descriptor,
+      configId: 'mbddf-dh-ignite-stream',
+      algorithmId: 'mbddf.dh_ignite_stream',
+      runParameters: [
+        {
+          id: 'power_enable', label: '点火电源使能', description: '', kind: 'integer', unit: '',
+          required: true, minimumExclusive: false, maximumExclusive: false, choices: [],
+        },
+        {
+          id: 'return_enable', label: '点火回线使能', description: '', kind: 'integer', unit: '',
+          required: true, minimumExclusive: false, maximumExclusive: false, choices: [],
+        },
+      ],
+      runParameterDefaults: { power_enable: 0, return_enable: 0 },
+    }
+
+    expect(loadRunParameterValues(dhDescriptor, JSON.stringify({
+      power_enable: 255,
+      return_enable: true,
+    }))).toEqual({ power_enable: 0, return_enable: 1 })
+    expect(persistableRunParameterValues(dhDescriptor, {
+      power_enable: 255,
+      return_enable: 1,
+    })).toEqual({ power_enable: 0, return_enable: 1 })
+  })
 })

@@ -485,6 +485,7 @@ describe('HwtestClient protocol boundary', () => {
       expect(snapshot.snapshot.descriptor.runParameterDefaults.max_freq).toBe(80)
       expect(snapshot.snapshot.descriptor.runParameters[0].persistValues).toBe(false)
       expect(snapshot.snapshot.effectiveRunParameters.ampl).toBe(250)
+      expect(snapshot.snapshot.auxiliarySerialPortName).toBe('')
       expect(snapshot.snapshot.digitalStimulus).toEqual({
         available: false,
         configured: false,

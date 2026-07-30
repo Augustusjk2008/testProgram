@@ -104,7 +104,7 @@ const RunParameterSchema& busLoopSchema()
         result.version = QStringLiteral("1");
         result.parameters.push_back(busLinkParameter());
         RunParameterDescriptor count = integerParameter(
-            QStringLiteral("total_count"), QStringLiteral("内部回环次数"),
+            QStringLiteral("total_count"), QStringLiteral("循环次数"),
             QStringLiteral("次"), 1000, 1, 100000);
         count.description = QStringLiteral("DUT 将所选串口配置为内部 loopback=true");
         result.parameters.push_back(count);
@@ -119,6 +119,60 @@ const RunParameterSchema& busEchoSchema()
         RunParameterSchema result;
         result.version = QStringLiteral("1");
         result.parameters.push_back(busLinkParameter());
+        return result;
+    }();
+    return schema;
+}
+
+const RunParameterSchema& doWriteSchema()
+{
+    static const RunParameterSchema schema = [] {
+        RunParameterSchema result;
+        result.version = QStringLiteral("1");
+        for (int channel = 0; channel < 16; ++channel) {
+            RunParameterDescriptor enabled = booleanParameter(
+                QStringLiteral("channel_enabled[%1]").arg(channel),
+                QStringLiteral("DO%1").arg(channel),
+                channel == 3 || channel == 4);
+            if (channel == 3 || channel == 4) {
+                enabled.description = QStringLiteral(
+                    "低有效电源使能；原始位 1 表示关闭");
+            } else if (channel == 5 || channel == 6) {
+                enabled.description = QStringLiteral(
+                    "保留输出，必须保持为 0");
+            }
+            result.parameters.push_back(enabled);
+        }
+        return result;
+    }();
+    return schema;
+}
+
+const RunParameterSchema& serialTestSchema()
+{
+    static const RunParameterSchema schema = [] {
+        RunParameterSchema result;
+        result.version = QStringLiteral("1");
+
+        RunParameterDescriptor mode;
+        mode.id = QStringLiteral("test_mode");
+        mode.label = QStringLiteral("测试方式");
+        mode.description = QStringLiteral("回环由 DUT 内部完成；回显经独立 PC 本地串口逐字节返回");
+        mode.kind = RunParameterKind::Choice;
+        mode.defaultValue = 0;
+        mode.choices = {
+            {0, QStringLiteral("内部回环")},
+            {1, QStringLiteral("PC-DUT 回显")},
+        };
+        result.parameters.push_back(mode);
+
+        result.parameters.push_back(busLinkParameter());
+
+        RunParameterDescriptor cycleCount = integerParameter(
+            QStringLiteral("cycle_count"), QStringLiteral("循环次数"),
+            QStringLiteral("次"), 1000, 1, 100000);
+        cycleCount.description = QStringLiteral("回环一次下发全部次数；回显逐轮执行");
+        result.parameters.push_back(cycleCount);
         return result;
     }();
     return schema;
@@ -297,7 +351,7 @@ const RunParameterSchema& dhIgniteSchema()
         result.parameters.push_back(interval);
 
         RunParameterDescriptor delay = integerParameter(
-            QStringLiteral("delay_frames"), QStringLiteral("点火前基线帧数"),
+            QStringLiteral("delay_frames"), QStringLiteral("等待帧数"),
             QStringLiteral("帧"), 5, 0, 65535);
         delay.description = QStringLiteral("DUT 在基线帧完成后、下一帧采样前点火");
         result.parameters.push_back(delay);
@@ -401,11 +455,17 @@ const RunParameterSchema* findRunParameterSchema(const QString& algorithmId)
     if (algorithmId == QStringLiteral("mbddf.dh_ignite_stream")) {
         return &dhIgniteSchema();
     }
+    if (algorithmId == QStringLiteral("mbddf.do_write")) {
+        return &doWriteSchema();
+    }
     if (algorithmId == QStringLiteral("mbddf.bus_loop")) {
         return &busLoopSchema();
     }
     if (algorithmId == QStringLiteral("mbddf.bus_echo")) {
         return &busEchoSchema();
+    }
+    if (algorithmId == QStringLiteral("mbddf.serial_test")) {
+        return &serialTestSchema();
     }
     return nullptr;
 }
@@ -456,6 +516,16 @@ hwtest::biz::Result<QVariantMap> normalizeRunParameters(
         const Result<QVariantMap> validated = validateValue(
             descriptor, values.value(descriptor.id), values);
         if (!validated.ok()) return validated;
+    }
+    if (algorithmId == QStringLiteral("mbddf.do_write")) {
+        for (const int channel : {5, 6}) {
+            const QString id = QStringLiteral("channel_enabled[%1]").arg(channel);
+            if (values.value(id).toBool()) {
+                return failure(ErrorCode::ParameterRangeError,
+                               QStringLiteral("Run parameter '%1' must remain false")
+                                   .arg(id));
+            }
+        }
     }
     if (algorithmId == QStringLiteral("mbddf.helm_stream")) {
         for (const RunParameterDescriptor& descriptor : schema->parameters) {

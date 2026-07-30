@@ -2,13 +2,13 @@
   "schemaVersion": "1.0",
   "configId": "mbddf-do-write",
   "productModel": "MB_DDF_v2",
-  "productName": "MB_DDF digital output closed loop",
+  "productName": "数字量输出",
   "configVersion": "1.0.0",
   "steps": [
     {
       "stepId": "DO_WRITE",
       "testItemId": "do_write",
-      "name": "数字量输出闭环",
+      "name": "数字量输出",
       "type": "EXCHANGE",
       "algorithmId": "mbddf.do_write",
       "parameters": {"protocol": {"requestValues": {}}},
@@ -48,8 +48,8 @@
   "safetyPolicy": {"enterSafeStateOnStop": true, "enterSafeStateOnError": true},
   "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 2000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
   "reportFields": {
-    "title": "数字量输出闭环",
-    "description": "固定五步写入并通过 PXI-6259 P0.3/P0.4 回采。",
+    "title": "数字量输出",
+    "description": "一次下发用户配置的 16 路 DO 掩码；DUT 回读全部状态，PXI-6259 仅验证 bit1/bit2。",
     "supportedRunModes": ["single"],
     "measurements": []
   }

@@ -234,7 +234,7 @@ public:
             m_fixture->doMask = mask;
             responseName = QStringLiteral("do_write_response");
             responseValues.insert(QStringLiteral("applied_state[0]"), mask);
-            responseValues.insert(QStringLiteral("applied_state[1]"), 0u);
+            responseValues.insert(QStringLiteral("applied_state[1]"), doAppliedStateWord1);
         } else {
             responseName = QStringLiteral("helm_board_test_response");
             for (int channel = 0; channel < 4; ++channel) {
@@ -296,6 +296,7 @@ public:
     QVector<QVariantMap> requests;
     int transactions = 0;
     int failTransaction = -1;
+    quint32 doAppliedStateWord1 = 0;
     bool openState = false;
 };
 
@@ -394,7 +395,7 @@ TEST(PwmMeasurementTest, PreservesOneAndNinetyNinePercentPlateaus)
     }
 }
 
-TEST(DoWriteExecutorTest, ExecutesFixedFiveStepClosedLoopWithoutRetry)
+TEST(DoWriteExecutorTest, SendsOneUserSelectedMaskAndReturnsCompleteReadback)
 {
     ProtocolCatalog catalog;
     QString error;
@@ -405,7 +406,15 @@ TEST(DoWriteExecutorTest, ExecutesFixedFiveStepClosedLoopWithoutRetry)
     BoardTransport* rawTransport = transport.get();
     DoWriteAlgorithmExecutor executor(std::move(transport), &fixture);
     const auto testPlan = plan(QStringLiteral("mbddf.do_write"));
-    ASSERT_TRUE(executor.prepare(testPlan, context(), commonExecutionConfig()).ok());
+    const QVariantMap parameters{
+        {QStringLiteral("channel_enabled[1]"), true},
+        {QStringLiteral("channel_enabled[2]"), true},
+        {QStringLiteral("channel_enabled[3]"), false},
+        {QStringLiteral("channel_enabled[4]"), true},
+        {QStringLiteral("channel_enabled[7]"), true},
+    };
+    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
+                                 commonExecutionConfig()).ok());
     RunControl control;
     Observer observer;
 
@@ -413,18 +422,41 @@ TEST(DoWriteExecutorTest, ExecutesFixedFiveStepClosedLoopWithoutRetry)
 
     ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
     EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Pass);
-    EXPECT_EQ(rawTransport->transactions, 5);
-    EXPECT_EQ(fixture.digitalReadCount, 5);
+    EXPECT_EQ(rawTransport->transactions, 1);
+    EXPECT_EQ(fixture.digitalReadCount, 1);
     const QVariantMap board = outcome.value.rawData
                                   .value(QStringLiteral("boardTest")).toMap();
     EXPECT_EQ(board.value(QStringLiteral("kind")).toString(),
               QStringLiteral("do_write"));
-    EXPECT_EQ(board.value(QStringLiteral("doSteps")).toList().size(), 5);
+    ASSERT_EQ(board.value(QStringLiteral("doSteps")).toList().size(), 1);
+    EXPECT_EQ(board.value(QStringLiteral("totalPoints")).toInt(), 1);
+    const QVariantMap point = board.value(QStringLiteral("doSteps")).toList()
+                                  .front().toMap();
+    EXPECT_EQ(point.value(QStringLiteral("commandMask")).toUInt(), 0x0096u);
+    EXPECT_EQ(point.value(QStringLiteral("appliedMask")).toUInt(), 0x0096u);
+    EXPECT_EQ(point.value(QStringLiteral("commandState")).toUInt(), 0x0096u);
+    EXPECT_EQ(point.value(QStringLiteral("appliedState")).toUInt(), 0x0096u);
+    const QVariantList commandState = point
+                                          .value(QStringLiteral("commandStateWords"))
+                                          .toList();
+    const QVariantList appliedState = point
+                                          .value(QStringLiteral("appliedStateWords"))
+                                          .toList();
+    ASSERT_EQ(commandState.size(), 2);
+    ASSERT_EQ(appliedState.size(), 2);
+    EXPECT_EQ(commandState.at(0).toUInt(), 0x0096u);
+    EXPECT_EQ(commandState.at(1).toUInt(), 0u);
+    EXPECT_EQ(appliedState.at(0).toUInt(), 0x0096u);
+    EXPECT_EQ(appliedState.at(1).toUInt(), 0u);
     EXPECT_EQ(rawTransport->requests.back()
-                  .value(QStringLiteral("channel[0]")).toUInt(), 0x0018u);
+                  .value(QStringLiteral("channel[0]")).toUInt(), 0x0096u);
+    EXPECT_EQ(rawTransport->requests.back()
+                  .value(QStringLiteral("channel[1]")).toUInt(), 0u);
+    ASSERT_EQ(fixture.settleCalls.size(), 1);
+    EXPECT_EQ(fixture.settleCalls.front(), 100);
 }
 
-TEST(DoWriteExecutorTest, CountsEveryMismatchAndRejectsMalformedDigitalData)
+TEST(DoWriteExecutorTest, ClassifiesExternalMismatchAndMalformedDigitalData)
 {
     ProtocolCatalog catalog;
     QString error;
@@ -435,7 +467,9 @@ TEST(DoWriteExecutorTest, CountsEveryMismatchAndRejectsMalformedDigitalData)
     BoardTransport* rawTransport = transport.get();
     DoWriteAlgorithmExecutor executor(std::move(transport), &fixture);
     const auto testPlan = plan(QStringLiteral("mbddf.do_write"));
-    ASSERT_TRUE(executor.prepare(testPlan, context(), commonExecutionConfig()).ok());
+    const QVariantMap parameters{{QStringLiteral("channel_enabled[0]"), true}};
+    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
+                                 commonExecutionConfig()).ok());
     RunControl control;
     Observer observer;
 
@@ -443,27 +477,99 @@ TEST(DoWriteExecutorTest, CountsEveryMismatchAndRejectsMalformedDigitalData)
 
     ASSERT_TRUE(mismatch.ok());
     EXPECT_EQ(mismatch.value.verdict, hwtest::biz::TestVerdict::Fail);
-    EXPECT_EQ(rawTransport->transactions, 5);
+    EXPECT_EQ(rawTransport->transactions, 1);
     const QVariantMap mismatchBoard = mismatch.value.rawData
                                          .value(QStringLiteral("boardTest")).toMap();
     EXPECT_EQ(mismatchBoard.value(QStringLiteral("summary")).toMap()
-                  .value(QStringLiteral("failedPoints")).toInt(), 5);
-    const std::array<quint32, 5> expected{{0x0018u, 0x001Cu, 0x0018u,
-                                           0x001Au, 0x0018u}};
-    ASSERT_EQ(rawTransport->requests.size(), static_cast<int>(expected.size()));
-    for (int index = 0; index < rawTransport->requests.size(); ++index) {
-        EXPECT_EQ(rawTransport->requests.at(index)
-                      .value(QStringLiteral("channel[0]")).toUInt(),
-                  expected.at(static_cast<size_t>(index)));
-    }
+                  .value(QStringLiteral("failedPoints")).toInt(), 1);
+    ASSERT_EQ(rawTransport->requests.size(), 1);
+    EXPECT_EQ(rawTransport->requests.front()
+                  .value(QStringLiteral("channel[0]")).toUInt(), 0x0019u);
 
     ASSERT_TRUE(executor.finishRun().ok());
     fixture.invertDigitalReadback = false;
     fixture.malformedDigitalReadback = true;
-    ASSERT_TRUE(executor.prepare(testPlan, context(), commonExecutionConfig()).ok());
+    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
+                                 commonExecutionConfig()).ok());
     const auto malformed = executor.executeStep(testPlan.steps.front(), control, observer);
     ASSERT_TRUE(malformed.ok());
     EXPECT_EQ(malformed.value.verdict, hwtest::biz::TestVerdict::Error);
+}
+
+TEST(DoWriteExecutorTest, RejectsSecondAppliedStateWordMismatchWithoutLegacyReset)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
+    FakeBoardFixture fixture;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    BoardTransport* rawTransport = transport.get();
+    rawTransport->doAppliedStateWord1 = 1u;
+    DoWriteAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.do_write"));
+    const QVariantMap parameters{{QStringLiteral("channel_enabled[0]"), true}};
+    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
+                                 commonExecutionConfig()).ok());
+    RunControl control;
+    Observer observer;
+
+    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
+
+    ASSERT_TRUE(outcome.ok());
+    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Fail);
+    EXPECT_EQ(fixture.digitalReadCount, 1);
+    ASSERT_EQ(rawTransport->requests.size(), 1);
+    EXPECT_EQ(rawTransport->transactions, 1);
+    EXPECT_EQ(rawTransport->requests.front()
+                  .value(QStringLiteral("channel[0]")).toUInt(), 0x0019u);
+    EXPECT_EQ(rawTransport->requests.front()
+                  .value(QStringLiteral("channel[1]")).toUInt(), 0u);
+    for (const QVariantMap& request : rawTransport->requests) {
+        EXPECT_NE(request.value(QStringLiteral("channel[0]")).toUInt(), 0x0018u);
+    }
+    const QVariantMap point = outcome.value.rawData
+                                  .value(QStringLiteral("boardTest")).toMap()
+                                  .value(QStringLiteral("doSteps")).toList()
+                                  .front().toMap();
+    EXPECT_FALSE(point.value(QStringLiteral("appliedStateMatched")).toBool());
+    const QVariantList appliedWords = point
+                                          .value(QStringLiteral("appliedStateWords"))
+                                          .toList();
+    ASSERT_EQ(appliedWords.size(), 2);
+    EXPECT_EQ(appliedWords.at(0).toUInt(), 0x0019u);
+    EXPECT_EQ(appliedWords.at(1).toUInt(), 1u);
+    EXPECT_TRUE(executor.finishRun().ok());
+    EXPECT_TRUE(executor.shutdown(1000).ok());
+    EXPECT_EQ(rawTransport->transactions, 1);
+}
+
+TEST(DoWriteExecutorTest, StopAndLifecycleNeverIssueLegacyResetMask)
+{
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
+    FakeBoardFixture fixture;
+    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
+    BoardTransport* rawTransport = transport.get();
+    DoWriteAlgorithmExecutor executor(std::move(transport), &fixture);
+    const auto testPlan = plan(QStringLiteral("mbddf.do_write"));
+    const QVariantMap parameters{{QStringLiteral("channel_enabled[0]"), true}};
+    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
+                                 commonExecutionConfig()).ok());
+    RunControl control;
+    Observer observer;
+
+    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
+
+    ASSERT_TRUE(outcome.ok());
+    ASSERT_EQ(rawTransport->requests.size(), 1);
+    EXPECT_EQ(rawTransport->requests.front()
+                  .value(QStringLiteral("channel[0]")).toUInt(), 0x0019u);
+    EXPECT_TRUE(executor.requestStop(1000).ok());
+    EXPECT_TRUE(executor.finishRun().ok());
+    EXPECT_TRUE(executor.shutdown(1000).ok());
+    EXPECT_EQ(rawTransport->transactions, 1);
+    EXPECT_EQ(rawTransport->requests.size(), 1);
 }
 
 TEST(BoardTestExecutorTest, RejectsMutableFixedAcquisitionContract)

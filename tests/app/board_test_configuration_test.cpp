@@ -73,6 +73,32 @@ TEST(BoardTestConfigurationTest, DoWriteIsSingleShotWithoutRetryAndUses6259Sense
     EXPECT_EQ(fixture.value(QStringLiteral("settlingMs")).toInt(), 100);
 }
 
+TEST(BoardTestConfigurationTest, TimerJitterUsesExactEightBucketLabels)
+{
+    const QVariantList measurements = loadBoardJson(
+        QStringLiteral(HWTEST_APP_TIMER_JITTER_CONFIG))
+        .value(QStringLiteral("reportFields")).toMap()
+        .value(QStringLiteral("measurements")).toList();
+    ASSERT_EQ(measurements.size(), 12);
+
+    const QStringList expectedLabels{
+        QStringLiteral("抖动桶 [0, 2) µs"),
+        QStringLiteral("抖动桶 [2, 4) µs"),
+        QStringLiteral("抖动桶 [4, 8) µs"),
+        QStringLiteral("抖动桶 [8, 16) µs"),
+        QStringLiteral("抖动桶 [16, 32) µs"),
+        QStringLiteral("抖动桶 [32, 64) µs"),
+        QStringLiteral("抖动桶 [64, 100) µs"),
+        QStringLiteral("抖动桶 [100, +∞) µs")};
+    for (int index = 0; index < expectedLabels.size(); ++index) {
+        const QVariantMap bucket = measurements.at(index + 4).toMap();
+        EXPECT_EQ(bucket.value(QStringLiteral("id")).toString(),
+                  QStringLiteral("buckets[%1]").arg(index));
+        EXPECT_EQ(bucket.value(QStringLiteral("label")).toString(),
+                  expectedLabels.at(index));
+    }
+}
+
 TEST(BoardTestConfigurationTest, HelmManualAndAutomaticShareSingleConfig)
 {
     hwtest::biz::TestConfigManager manager;

@@ -18,6 +18,7 @@ import {
 import { normalizeRunOptionsForStart, validatePcPeriodicOptions } from './run-options'
 import {
   loadRunParameterValues,
+  normalizeGuardedRunParameterValues,
   persistableRunParameterValues,
   runParameterStorageKey,
   validateRunParameterValues,
@@ -64,24 +65,6 @@ function isSweepWaveform(value: unknown): boolean {
   return value === 4 || (typeof value === 'string' && value.toLowerCase().includes('sweep'))
 }
 
-function TelemetryStatus() {
-  const { telemetryStats } = useTelemetry()
-  return (
-    <div className="run-console__telemetry-stats" aria-label="浏览器遥测统计">
-      <span>本次已接收 {telemetryStats.receivedCount.toLocaleString('zh-CN')}</span>
-      <span>当前缓存 {telemetryStats.retainedCount.toLocaleString('zh-CN')}</span>
-      <span>已淘汰 {telemetryStats.evictedCount.toLocaleString('zh-CN')}</span>
-      <span>
-        序号状态：{telemetryStats.sequenceStatus === 'continuous'
-          ? '连续'
-          : telemetryStats.sequenceStatus === 'reconnect_incomplete'
-            ? '重连后不完整'
-            : '存在缺口'}
-      </span>
-    </div>
-  )
-}
-
 function AnalysisRunHint({ activeRunParameters }: { activeRunParameters: Record<string, unknown> }) {
   const { latestSample } = useTelemetry()
   const sweepDurationS = finiteNumber(activeRunParameters.sweep_duration_s)
@@ -118,6 +101,7 @@ export function RunControlBar() {
     connect,
     invoke,
     snapshot,
+    serialPorts = [],
     selectedConfigId,
     start,
     testConfigs,
@@ -146,7 +130,7 @@ export function RunControlBar() {
     [options.algorithmParameters, snapshot.descriptor],
   )
   const unsupported = hasRunModeCapabilities && !supportedModes.includes(options.mode)
-  const controlError = periodicError || parameterError || (unsupported ? `${testTitle}不支持当前运行模式` : '') || snapshot.dataSaveError || actionError
+  const baseControlError = periodicError || parameterError || (unsupported ? `${testTitle}不支持当前运行模式` : '') || snapshot.dataSaveError || actionError
   const activeRunParameters = Object.keys(snapshot.effectiveRunParameters).length > 0
     ? snapshot.effectiveRunParameters
     : options.algorithmParameters
@@ -154,6 +138,27 @@ export function RunControlBar() {
     (snapshot.algorithmId || snapshot.descriptor.algorithmId) === 'mbddf.helm_board_test' &&
     Number(options.algorithmParameters.test_mode ??
       snapshot.descriptor.runParameterDefaults.test_mode ?? 0) === 0
+  const serialTest = (snapshot.algorithmId || snapshot.descriptor.algorithmId) === 'mbddf.serial_test'
+  const serialTestMode = Number(
+    options.algorithmParameters.test_mode ??
+    snapshot.descriptor.runParameterDefaults.test_mode ?? 0,
+  )
+  const serialEcho = serialTest && serialTestMode === 1
+  const auxiliarySerialPortName = snapshot.auxiliarySerialPortName?.trim() ?? ''
+  const primarySerialPortName = snapshot.serialPortName.trim()
+  const availableAuxiliaryPorts = serialPorts.filter(({ portName }) => (
+    portName.trim().localeCompare(primarySerialPortName, undefined, { sensitivity: 'accent' }) !== 0
+  ))
+  const serialTopologyLocked = serialTest && snapshot.phase !== 'configured'
+  const serialPortError = serialEcho
+    ? !auxiliarySerialPortName
+      ? '请选择本地（PC）串口'
+      : primarySerialPortName &&
+          auxiliarySerialPortName.localeCompare(primarySerialPortName, undefined, { sensitivity: 'accent' }) === 0
+        ? '本地（PC）串口不能与主控制串口相同'
+        : ''
+    : ''
+  const controlError = serialPortError || baseControlError
 
   useEffect(() => {
     const descriptor = snapshot.descriptor
@@ -196,11 +201,12 @@ export function RunControlBar() {
   }
 
   function saveRunParameters(values: RunParameterValues) {
-    setOptions((current) => ({ ...current, algorithmParameters: values }))
     const descriptor = snapshot.descriptor
+    const guardedValues = normalizeGuardedRunParameterValues(descriptor, values)
+    setOptions((current) => ({ ...current, algorithmParameters: guardedValues }))
     if (descriptor.configId && descriptor.runParameterSchemaVersion) {
       const storageKey = runParameterStorageKey(descriptor)
-      const persisted = persistableRunParameterValues(descriptor, values)
+      const persisted = persistableRunParameterValues(descriptor, guardedValues)
       if (Object.keys(persisted).length === 0) {
         removeLocalStorageValue(storageKey)
       } else {
@@ -214,8 +220,15 @@ export function RunControlBar() {
   }
 
   function beginRun() {
-    if (periodicError || parameterError || unsupported) return
-    void start(normalizeRunOptionsForStart(options)).catch(() => undefined)
+    if (periodicError || parameterError || serialPortError || unsupported) return
+    const guardedOptions = {
+      ...options,
+      algorithmParameters: normalizeGuardedRunParameterValues(
+        snapshot.descriptor,
+        options.algorithmParameters,
+      ),
+    }
+    void start(normalizeRunOptionsForStart(guardedOptions)).catch(() => undefined)
   }
 
   return (
@@ -245,7 +258,6 @@ export function RunControlBar() {
           <span>轮 {snapshot.cycleIndex || 0}</span>
           <span>样本 {snapshot.sampleCount || 0}</span>
         </div>
-        <TelemetryStatus />
       </div>
 
       <div className="run-mode" role="group" aria-label="运行模式">
@@ -266,7 +278,7 @@ export function RunControlBar() {
         {options.mode === 'pc_periodic' ? (
           <>
             <label>
-              <span>间隔（0 表示上一轮完成后立即开始下一轮）</span>
+              <span>间隔</span>
               <span className="number-input">
                 <input
                   aria-label="PC 周期轮间隔毫秒"
@@ -309,6 +321,28 @@ export function RunControlBar() {
             <span>保存全部测量列</span>
           </label>
         ) : null}
+        {serialEcho && (
+          <label className="serial-auxiliary-port">
+            <span>本地（PC）串口</span>
+            <select
+              aria-label="本地（PC）串口"
+              disabled={serialTopologyLocked || busyAction !== null || analysisBlockingWrites}
+              onChange={(event) => {
+                if (event.target.value) {
+                  execute('selectAuxiliarySerialPort', { portName: event.target.value })
+                }
+              }}
+              value={auxiliarySerialPortName}
+            >
+              <option value="">请选择本地串口</option>
+              {availableAuxiliaryPorts.map((port) => (
+                <option key={port.portName} value={port.portName}>
+                  {port.portName}{port.description ? ` · ${port.description}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       <div className="run-actions">
@@ -332,7 +366,7 @@ export function RunControlBar() {
         ) : !active ? (
           <button
             className="button button--primary"
-            disabled={!canStart || Boolean(periodicError) || Boolean(parameterError) || unsupported || busyAction !== null}
+            disabled={!canStart || Boolean(periodicError) || Boolean(parameterError) || Boolean(serialPortError) || unsupported || busyAction !== null}
             onClick={beginRun}
             type="button"
           >

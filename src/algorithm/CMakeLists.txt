@@ -11,6 +11,7 @@ set(ALGORITHM_PUBLIC_HEADERS
     include/algorithm/mbddf_transport.h
     include/algorithm/post_run_analysis.h
     include/algorithm/run_parameter_schema.h
+    include/algorithm/serial_test_executor.h
     include/algorithm/system_status_executor.h
 )
 
@@ -31,6 +32,7 @@ set(ALGORITHM_SOURCES
     src/helm_sweep_estimator.cpp
     src/analysis_result_json.cpp
     src/run_parameter_schema.cpp
+    src/serial_test_executor.cpp
     src/system_status_executor.cpp
 )
 

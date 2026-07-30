@@ -14,6 +14,7 @@ inline void expectSemanticallyEquivalentSnapshots(const ApplicationSnapshot& lef
     EXPECT_EQ(left.controlResourceId, right.controlResourceId);
     EXPECT_EQ(left.providerId, right.providerId);
     EXPECT_EQ(left.serialPortName, right.serialPortName);
+    EXPECT_EQ(left.auxiliarySerialPortName, right.auxiliarySerialPortName);
     EXPECT_EQ(left.taskId.isEmpty(), right.taskId.isEmpty());
     EXPECT_EQ(left.stepId, right.stepId);
     EXPECT_EQ(left.testItemId, right.testItemId);

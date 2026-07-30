@@ -6,7 +6,7 @@
 
 `[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；前端既可使用开发服务器，也可使用构建后的单文件 HTML，二者都与 `hwtest_web` 分开运行，浏览器仍只连接回环 WebSocket。
 
-`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider、`DigitalStimulusPanel` 和通用运行参数编辑器接入总览页。参数编辑器只消费后端 descriptor 中由算法层提供的 Schema，按 `configId + runParameterSchemaVersion` 在浏览器保存编辑值，并把覆盖值放入本次 `start.algorithmParameters`；它不写回测试配置。某个 `runParameters[]` 项显式 `persistValues=false` 时，浏览器既不从 localStorage 恢复也不向其中写入该项，缺失时仍兼容为 true；这不改变该项随本次 `start.algorithmParameters` 发送的行为。数字刺激面板在快照声明可用、配置 1..16 路且 `switchId`/`dutBit` 唯一、位号全部为 0..15 时显示，标题按实际通道数展示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。descriptor 的 `stoppable=false` 时，浏览器在运行/暂停态隐藏 pause/resume/stop，配置选择保持禁用，终态后恢复；不能从 algorithmId 推断该能力。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。浏览器还只为 `mbddf.do_write` 与 `mbddf.helm_board_test` 显示板级测试导航，消费 `rawData.boardTest` 的当前快照结果。浏览器也已接入性能导航、`snapshot.analysis`、四通道身份缓存和 uPlot 伯德图输入；性能页只消费后端 `analysisResult`，不从实时 `SampleBuffer` 重算。此浏览器控制面实现不等价于 PXI-6259、PXI-6733、DH 点火或舵机真机已连接或已验收。
+`[当前实现]` 浏览器源码已将串口辅助端口选择、数字刺激协议类型、WebSocket transport、SessionProvider、`DigitalStimulusPanel` 和通用运行参数编辑器接入总览页。参数编辑器只消费后端 descriptor 中由算法层提供的 Schema，按 `configId + runParameterSchemaVersion` 在浏览器保存编辑值，并把覆盖值放入本次 `start.algorithmParameters`；它不写回测试配置。某个 `runParameters[]` 项显式 `persistValues=false` 时，浏览器既不从 localStorage 恢复也不向其中写入该项，缺失时仍兼容为 true；这不改变该项随本次 `start.algorithmParameters` 发送的行为。串口回显模式从 `ports` 枚举中选择独立 PC 本地串口，并用 `selectAuxiliarySerialPort` 写入当前应用会话；回环不使用该端口。DH 点火的两个 U8 使能在 Web 中映射为 0/1 复选框，23 路通道支持批量全选/全不选。数字刺激面板在快照声明可用、配置 1..16 路且 `switchId`/`dutBit` 唯一、位号全部为 0..15 时显示，标题按实际通道数展示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。descriptor 的 `stoppable=false` 时，浏览器在运行/暂停态隐藏 pause/resume/stop，配置选择保持禁用，终态后恢复；不能从 algorithmId 推断该能力。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。浏览器只为 `mbddf.do_write` 与 `mbddf.helm_board_test` 显示板级测试导航，消费 `rawData.boardTest` 的当前快照结果；定时器概览按精确半开区间显示八桶分布，并可从终态 `rawData.responseValues` 恢复。浏览器也已接入性能导航、`snapshot.analysis`、四通道身份缓存和 uPlot 伯德图输入；性能页只消费后端 `analysisResult`，不从实时 `SampleBuffer` 重算。此浏览器控制面实现不等价于 PXI-6259、PXI-6733、DH 点火或舵机真机已连接或已验收。
 
 `[当前实现]` 服务器投影后处理 capability/摘要并接受只读 `analysisResult` 请求；应用控制器已接通 STOP 尾样本封存、硬件收尾双栅栏、`queued` 到终态的后台分析、分析期间写门禁及运行中 worker 协作取消。算法层提供五种波形与扫频伯德计算端口。`capturing` 只表示输入正在采集，只有带匹配 `{taskId, analysisGeneration}` 的分析终态才表示该轮结果可查询。
 
@@ -21,6 +21,7 @@
 - 客户端执行 `disconnect` 后，服务器通常完成安全收尾并以 `1000`（Normal Closure）关闭该连接，随后继续监听新客户端。不可停止有限流活动时是显式例外：回复成功后仅关闭并分离该客户端，不停止或 shutdown 当前任务；新客户端可重连观察当前快照和后续样本。
 - 客户端执行 `quit` 后，服务器通常完成同样的安全收尾、回复请求、以 `1000` 关闭连接，然后停止监听并排队退出进程。不可停止有限流活动时 `quit` 返回 `invalid_state`，连接、监听和任务均保持。
 - 浏览器异常掉线时无法发送 reply；服务器通常执行第 7 节的安全收尾，完成后继续监听。不可停止有限流活动时只分离客户端，不调用 stop/shutdown，任务自然完成后仍可接纳重连。
+- “数字量输出”的已批准语义是显式例外：完成、停止、`disconnect`、`quit` 或异常掉线收尾均不发送额外 DUT `DO_WRITE` 复位帧，产品保持最后一次已应用输出；关闭 PXI/HAL 会话不得被描述为已经复位 DUT DO。
 
 连接级错误无法对应某个合法请求时，使用普通 reply 结构，但 `id` 固定为空字符串。
 
@@ -32,7 +33,7 @@
 - 服务器发送紧凑 JSON，不依赖空白或对象成员顺序。
 - 每个有效请求恰好产生一个相同 `id` 的 reply。快照和样本是独立异步事件，可以出现在请求与 reply 之间。
 - 所有对浏览器可见的事件序号必须是 `0..9007199254740991` 内的整数。服务端不得把超出 JavaScript 安全整数范围的 `snapshot.seq`、`sample.seq`、`sampleBatch.firstSeq` 或 `sampleBatch.lastSeq` 转成 JSON number 后发送。
-- `setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`setTelemetryDelivery`、descriptor 中的 `stoppable`/`postRunAnalysis`/`runParameters[].persistValues`、快照 `rawData.boardTest`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。新客户端收到旧服务端缺失的 `stoppable` 时兼容回退为 true；缺失后处理字段时安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。显式 `stoppable` 与 `persistValues` 必须为 boolean，其他类型是协议边界错误。
+- `selectAuxiliarySerialPort`、`snapshot.auxiliarySerialPortName`、`setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`setTelemetryDelivery`、descriptor 中的 `stoppable`/`postRunAnalysis`/`runParameters[].persistValues`、快照 `rawData.boardTest`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。新客户端收到旧服务端缺失的辅助串口字段时回退为空字符串，缺失 `stoppable` 时兼容回退为 true；缺失后处理字段时安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。显式 `stoppable` 与 `persistValues` 必须为 boolean，其他类型是协议边界错误。
 
 ## 4. 消息结构
 
@@ -84,7 +85,7 @@
 
 | JSON 字段 | 类型 |
 | --- | --- |
-| `phase`、`testState`、`controlResourceId`、`providerId`、`serialPortName` | string |
+| `phase`、`testState`、`controlResourceId`、`providerId`、`serialPortName`、`auxiliarySerialPortName` | string；后者是统一串口回显当前选择的独立 PC 本地串口，未选择或旧服务端时为空 |
 | `taskId`、`stepId`、`testItemId`、`algorithmId` | string |
 | `progress` | integer |
 | `progressStep` | string |
@@ -164,8 +165,8 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
   "version": 1,
   "kind": "do_write",
   "mode": "automatic",
-  "completedPoints": 5,
-  "totalPoints": 5,
+  "completedPoints": 1,
+  "totalPoints": 1,
   "summary": {},
   "doSteps": [],
   "pwmPoints": [],
@@ -184,9 +185,11 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `doSteps`、`pwmPoints`、`directionPoints`、`feedbackPoints` | array；元素是后端逐点记录，页面只依赖已知字段，允许其尾部扩展 |
 | `manualResponse` | 可选 object；manual 的一次 `07/02` 响应 |
 
+`do_write` 为保持 v1 DTO 兼容继续使用 `mode="automatic"`，但它不再表示固定自动五步；浏览器必须显示为“用户配置”。`helm_board_test` 的 `automatic`/`manual` 语义保持不变。
+
 总体 `Pass`/`Fail`/`Error` 仍以 `snapshot.verdict`、`errorCode` 和 `message` 为准，不在 `boardTest` 顶层复制。客户端必须防御性解析：未知 schema/version/kind/mode、非对象根、错误类型或缺失列表均不得导致页面异常；应安全降级为不显示板级结果或以空对象、空数组、零计数呈现，并忽略未知字段。逐点结果中不可用的数值以 JSON `null` 表示，服务端不得发送 `NaN`/`Inf` 或伪造为零。
 
-前端只在两个上述 algorithmId 显示“板级测试”导航。DO_WRITE 显示五步命令/读回矩阵；HELM automatic 显示方向 0/1 矩阵、PWM 与反馈的指令/实测/误差/容差图形或等价清晰表格，以及最大误差/最差点摘要；manual 显示一次响应表。浏览器重连会从服务器收到仍在内存中的当前完整 snapshot，因而可恢复当前结果视图；新的任务会清空该 `rawData`，进程重启后也不承诺保留。`single` 不保存连续 TXT，`boardTest` 也不构成独立磁盘结果工件或真机验收记录。
+前端只在两个上述 algorithmId 显示“板级测试”导航。DO_WRITE 显示本次完整 16 位指令与 DUT `applied_state`；只有 bit2/bit1 额外显示 PXI-6259 指令/实测/一致性，其他位必须标为“未配置外部回读”，不能宣称全 16 路物理闭环。HELM automatic 显示方向 0/1 矩阵、PWM 与反馈的指令/实测/误差/容差图形或等价清晰表格，以及最大误差/最差点摘要；manual 显示一次响应表。浏览器重连会从服务器收到仍在内存中的当前完整 snapshot，因而可恢复当前结果视图；新的任务会清空该 `rawData`，进程重启后也不承诺保留。`single` 不保存连续 TXT，`boardTest` 也不构成独立磁盘结果工件或真机验收记录。
 
 ### 4.5 样本事件
 
@@ -253,6 +256,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `ports` | `{}` | 在控制器亲和线程读取；`data.ports` 为完整 `SerialPortInfo` 对象数组 |
 | `selectControl` | `{"resourceId":"CONTROL_SERIAL"}` | 调用 `selectControl`；`resourceId` 必须是非空字符串 |
 | `selectSerialPort` | `{"portName":"COM7"}` | 调用 `selectSerialPort`；`portName` 必须是非空字符串 |
+| `selectAuxiliarySerialPort` | `{"portName":"COM8"}` | 只允许当前 `mbddf.serial_test` 在配置态选择 `ports` 枚举中的非空串口；保存到 `snapshot.auxiliarySerialPortName`。回显启动时必须已选择，且不得与主控制串口相同；回环忽略该端口 |
 | `prepare` | `{}` | 调用 `prepare` |
 | `start` | `{}` 或 `{"mode":"device_stream","saveData":true,"algorithmParameters":{"waveform":4,"ampl":3.5}}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`，且必须由当前 descriptor 声明；`intervalMs` 为 `0..3600000` 的整数，`0` 表示上一轮完整收发结束后不增加额外等待，所有步骤仍严格串行；`maxCycles` 为 `0..1000000000` 的整数且 `0` 表示 PC 周期不限轮数。两者只有 `pc_periodic` 具备调度含义，其他模式由控制器归一为 `1000/1`；`saveData` 只能是 boolean，`pc_periodic` 与 `device_stream` 均可启用保存，`single` 强制不保存；`algorithmParameters` 必须是 object，键和值再由当前算法 Schema 校验 |
 | `pause` | `{}` | 调用 `pause`；活动 descriptor `stoppable=false` 时返回 `CapabilityUnsupported`，不调用控制器动作 |
@@ -263,7 +267,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `disconnect` | `{}` | 通常必要时先异步停止，再调用 `shutdown`；最后回复并关闭当前连接，服务器继续监听。不可停止有限流活动时回复成功后仅分离连接，不停止、不 shutdown，允许重连 |
 | `quit` | `{}` | 通常执行与 `disconnect` 相同的安全收尾，随后关闭服务器并退出进程。不可停止有限流活动时返回 `invalid_state`，不得关闭连接、监听或进程 |
 
-除 `start`、`selectTest`、`selectControl`、`selectSerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`start` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知顶层字段按 `invalid_envelope` 拒绝；`algorithmParameters` 内的未知字段由应用/算法边界以 `ParameterRangeError` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
+除 `start`、`selectTest`、`selectControl`、`selectSerialPort`、`selectAuxiliarySerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`selectSerialPort` 保留既有非空端口名覆盖能力；`selectAuxiliarySerialPort` 则必须命中本次系统枚举，二者都不接受资源 ID、设备 ID、路径或厂家配置。`start` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知顶层字段按 `invalid_envelope` 拒绝；`algorithmParameters` 内的未知字段由应用/算法边界以 `ParameterRangeError` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
 
 ### 6.1 连续模式数据文件
 

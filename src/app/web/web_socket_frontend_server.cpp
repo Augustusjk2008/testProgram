@@ -1075,6 +1075,11 @@ public:
                                           QStringLiteral("portName"),
                                           error);
         }
+        if (request.action == QStringLiteral("selectAuxiliarySerialPort")) {
+            return validateRequiredString(request,
+                                          QStringLiteral("portName"),
+                                          error);
+        }
         if (request.action == QStringLiteral("start")) {
             return parseStartOptions(request, nullptr, error);
         }
@@ -1377,6 +1382,9 @@ public:
                         request.params.value(QStringLiteral("resourceId")).toString());
                 } else if (request.action == QStringLiteral("selectSerialPort")) {
                     result = controllerGuard->selectSerialPort(
+                        request.params.value(QStringLiteral("portName")).toString());
+                } else if (request.action == QStringLiteral("selectAuxiliarySerialPort")) {
+                    result = controllerGuard->selectAuxiliarySerialPort(
                         request.params.value(QStringLiteral("portName")).toString());
                 } else if (request.action == QStringLiteral("prepare")) {
                     result = controllerGuard->prepare();

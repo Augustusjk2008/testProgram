@@ -33,6 +33,7 @@ add_executable(hwtest_algorithm_tests
     helm_performance_analyzer_test.cpp
     mbddf_protocol_test.cpp
     run_parameter_schema_test.cpp
+    serial_test_executor_test.cpp
     system_status_executor_test.cpp
 )
 
@@ -59,6 +60,8 @@ file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_timer_jitter.testcfg.jso
      HWTEST_MBDDF_TIMER_JITTER_CONFIG)
 file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_di.testcfg.json"
      HWTEST_MBDDF_DI_CONFIG)
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_serial_test.testcfg.json"
+     HWTEST_MBDDF_SERIAL_TEST_CONFIG)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/helm_performance"
      HWTEST_HELM_PERFORMANCE_FIXTURE_DIR)
 file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/dut/docs/design/product_protocol_csv"
@@ -72,6 +75,7 @@ target_compile_definitions(hwtest_algorithm_tests
         HWTEST_MBDDF_ELEC_HEALTH_CONFIG="${HWTEST_MBDDF_ELEC_HEALTH_CONFIG}"
         HWTEST_MBDDF_TIMER_JITTER_CONFIG="${HWTEST_MBDDF_TIMER_JITTER_CONFIG}"
         HWTEST_MBDDF_DI_CONFIG="${HWTEST_MBDDF_DI_CONFIG}"
+        HWTEST_MBDDF_SERIAL_TEST_CONFIG="${HWTEST_MBDDF_SERIAL_TEST_CONFIG}"
         HWTEST_HELM_PERFORMANCE_FIXTURE_DIR="${HWTEST_HELM_PERFORMANCE_FIXTURE_DIR}"
         HWTEST_MBDDF_PROTOCOL_CATALOG_DIR="${HWTEST_MBDDF_PROTOCOL_CATALOG_DIR}"
 )

@@ -516,8 +516,15 @@ function parseSnapshot(value: JsonObject): ApplicationSnapshot {
   const analysis = Object.prototype.hasOwnProperty.call(value, 'analysis')
     ? parseAnalysisSnapshot(requiredObject(value, 'analysis'))
     : emptyAnalysis()
+  const auxiliarySerialPortName = Object.prototype.hasOwnProperty.call(
+    value,
+    'auxiliarySerialPortName',
+  )
+    ? requiredString(value, 'auxiliarySerialPortName')
+    : ''
   return {
     ...(value as unknown as ApplicationSnapshot),
+    auxiliarySerialPortName,
     dataSaveEnabled,
     dataFilePath,
     dataSaveError,

@@ -36,6 +36,7 @@ add_executable(hwtest_app_tests
     frontend_launch_options_test.cpp
     hal_board_test_fixture_test.cpp
     post_run_analysis_coordinator_test.cpp
+    prepare_fixture_lifecycle_test.cpp
     test_application_controller_test.cpp
     tui_shell_test.cpp
 )
@@ -56,11 +57,15 @@ file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_helm_board_test.testcfg.
      HWTEST_APP_HELM_BOARD_CONFIG)
 file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_do_write.testcfg.json"
      HWTEST_APP_DO_WRITE_CONFIG)
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_timer_jitter.testcfg.json"
+     HWTEST_APP_TIMER_JITTER_CONFIG)
 file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_dh_ignite_stream.testcfg.json"
      HWTEST_APP_DH_IGNITE_STREAM_CONFIG)
-file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_bus_loop.testcfg.json"
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_serial_test.testcfg.json"
+     HWTEST_APP_SERIAL_TEST_CONFIG)
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_bus_loop.legacy.json"
      HWTEST_APP_BUS_LOOP_CONFIG)
-file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_bus_echo.testcfg.json"
+file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_bus_echo.legacy.json"
      HWTEST_APP_BUS_ECHO_CONFIG)
 
 target_compile_features(hwtest_app_tests PRIVATE cxx_std_17)
@@ -75,7 +80,9 @@ target_compile_definitions(hwtest_app_tests
         HWTEST_APP_HELM_STREAM_CONFIG="${HWTEST_APP_HELM_STREAM_CONFIG}"
         HWTEST_APP_HELM_BOARD_CONFIG="${HWTEST_APP_HELM_BOARD_CONFIG}"
         HWTEST_APP_DO_WRITE_CONFIG="${HWTEST_APP_DO_WRITE_CONFIG}"
+        HWTEST_APP_TIMER_JITTER_CONFIG="${HWTEST_APP_TIMER_JITTER_CONFIG}"
         HWTEST_APP_DH_IGNITE_STREAM_CONFIG="${HWTEST_APP_DH_IGNITE_STREAM_CONFIG}"
+        HWTEST_APP_SERIAL_TEST_CONFIG="${HWTEST_APP_SERIAL_TEST_CONFIG}"
         HWTEST_APP_BUS_LOOP_CONFIG="${HWTEST_APP_BUS_LOOP_CONFIG}"
         HWTEST_APP_BUS_ECHO_CONFIG="${HWTEST_APP_BUS_ECHO_CONFIG}"
         HAL_TEST_DIGITAL_ADAPTER_FIXTURE_PATH="$<TARGET_FILE:hal_adapter_digital_fixture>"

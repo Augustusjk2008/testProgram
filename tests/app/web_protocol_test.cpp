@@ -34,6 +34,7 @@ TEST(WebProtocolTest, AcceptsEveryVersionOneAction)
         QStringLiteral("ports"),
         QStringLiteral("selectControl"),
         QStringLiteral("selectSerialPort"),
+        QStringLiteral("selectAuxiliarySerialPort"),
         QStringLiteral("prepare"),
         QStringLiteral("start"),
         QStringLiteral("pause"),
@@ -166,6 +167,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     snapshot.controlResourceId = QStringLiteral("CONTROL_NETWORK");
     snapshot.providerId = QStringLiteral("qt.udp");
     snapshot.serialPortName = QStringLiteral("COM7");
+    snapshot.auxiliarySerialPortName = QStringLiteral("COM8");
     snapshot.taskId = QStringLiteral("task-1");
     snapshot.stepId = QStringLiteral("step-1");
     snapshot.testItemId = QStringLiteral("item-1");
@@ -248,7 +250,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(envelope.value(QStringLiteral("seq")).toInt(), 12);
 
     const QJsonObject json = envelope.value(QStringLiteral("snapshot")).toObject();
-    EXPECT_EQ(json.size(), 29);
+    EXPECT_EQ(json.size(), 30);
     EXPECT_EQ(json.value(QStringLiteral("phase")).toString(), snapshot.phase);
     EXPECT_EQ(json.value(QStringLiteral("testState")).toString(), snapshot.testState);
     EXPECT_EQ(json.value(QStringLiteral("controlResourceId")).toString(),
@@ -256,6 +258,8 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     EXPECT_EQ(json.value(QStringLiteral("providerId")).toString(), snapshot.providerId);
     EXPECT_EQ(json.value(QStringLiteral("serialPortName")).toString(),
               snapshot.serialPortName);
+    EXPECT_EQ(json.value(QStringLiteral("auxiliarySerialPortName")).toString(),
+              snapshot.auxiliarySerialPortName);
     EXPECT_EQ(json.value(QStringLiteral("taskId")).toString(), snapshot.taskId);
     EXPECT_EQ(json.value(QStringLiteral("stepId")).toString(), snapshot.stepId);
     EXPECT_EQ(json.value(QStringLiteral("testItemId")).toString(), snapshot.testItemId);

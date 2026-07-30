@@ -13,17 +13,24 @@
 namespace hwtest::app {
 namespace {
 
-TEST(MbdDfAlgorithmRegistryTest, RegistersDoWriteAndHelmBoardAsDedicatedAlgorithms)
+TEST(MbdDfAlgorithmRegistryTest, RegistersDedicatedBoardAndUnifiedSerialAlgorithms)
 {
-    EXPECT_EQ(mbddfAlgorithmRegistry().size(), 14);
+    EXPECT_EQ(mbddfAlgorithmRegistry().size(), 15);
     const auto* doWrite = findMbdDfAlgorithm(QStringLiteral("mbddf.do_write"));
     const auto* helmBoard = findMbdDfAlgorithm(
         QStringLiteral("mbddf.helm_board_test"));
+    const auto* serialTest = findMbdDfAlgorithm(
+        QStringLiteral("mbddf.serial_test"));
     ASSERT_NE(doWrite, nullptr);
     ASSERT_NE(helmBoard, nullptr);
+    ASSERT_NE(serialTest, nullptr);
     EXPECT_EQ(doWrite->requestProfileId, QStringLiteral("do_write_request"));
     EXPECT_EQ(helmBoard->responseProfileId,
               QStringLiteral("helm_board_test_response"));
+    EXPECT_EQ(serialTest->requestProfileId,
+              QStringLiteral("bus_loop_test_request"));
+    EXPECT_EQ(serialTest->responseProfileId,
+              QStringLiteral("bus_loop_test_response"));
 }
 
 TEST(BoardFixtureRequirementTest, OpensAuxiliaryBoardsOnlyForPhysicalModes)

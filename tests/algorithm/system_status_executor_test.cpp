@@ -1544,12 +1544,12 @@ TEST(MbdDfExchangeExecutorTest, AllAddedConfigsPrepareAgainstTheCurrentCatalog)
         QString commandName;
     };
     const QVector<Case> cases{
-        {QStringLiteral("mbddf_bus_loop.testcfg.json"),
+        {QStringLiteral("mbddf_bus_loop.legacy.json"),
          QStringLiteral("mbddf.bus_loop"),
          QStringLiteral("bus_loop_test_request"),
          QStringLiteral("bus_loop_test_response"),
          QStringLiteral("BUS_LOOP_TEST")},
-        {QStringLiteral("mbddf_bus_echo.testcfg.json"),
+        {QStringLiteral("mbddf_bus_echo.legacy.json"),
          QStringLiteral("mbddf.bus_echo"),
          QStringLiteral("bus_echo_test_request"),
          QStringLiteral("bus_echo_test_response"),

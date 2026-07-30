@@ -119,3 +119,17 @@ describe('RunControlBar helm board fixture warning', () => {
     expect(renderHelmBoardControlBar(1)).not.toContain('MB_DDF_v2_HelmControl 已停止')
   })
 })
+
+describe('RunControlBar compact periodic presentation', () => {
+  it('keeps only the concise interval label and hides browser telemetry counters', () => {
+    const markup = renderControlBar('ready', true)
+
+    expect(markup).toContain('<span>间隔</span>')
+    expect(markup).toContain('<b>ms</b>')
+    expect(markup).not.toContain('0 表示上一轮完成后立即开始下一轮')
+    expect(markup).not.toContain('本次已接收')
+    expect(markup).not.toContain('当前缓存')
+    expect(markup).not.toContain('已淘汰')
+    expect(markup).not.toContain('序号状态')
+  })
+})

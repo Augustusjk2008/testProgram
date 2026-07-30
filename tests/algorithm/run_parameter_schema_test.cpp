@@ -235,6 +235,7 @@ TEST(RunParameterSchemaTest, DhIgniteSchemaExposesSafeDefaultsAndEncodingBounds)
     ASSERT_NE(count, nullptr);
     ASSERT_NE(interval, nullptr);
     ASSERT_NE(delay, nullptr);
+    EXPECT_EQ(delay->label, QStringLiteral("等待帧数"));
     EXPECT_EQ(count->defaultValue.toInt(), 50);
     EXPECT_EQ(interval->defaultValue.toInt(), 2500);
     EXPECT_EQ(delay->defaultValue.toInt(), 5);
@@ -277,6 +278,46 @@ TEST(RunParameterSchemaTest, DhIgniteLeavesBusinessValidationToDut)
                      .ok());
 }
 
+TEST(RunParameterSchemaTest, DoWriteSchemaExposesSafeSixteenChannelMask)
+{
+    const RunParameterSchema* schema = findRunParameterSchema(
+        QStringLiteral("mbddf.do_write"));
+    ASSERT_NE(schema, nullptr);
+    EXPECT_EQ(schema->version, QStringLiteral("1"));
+    ASSERT_EQ(schema->parameters.size(), 16);
+
+    for (int channel = 0; channel < 16; ++channel) {
+        const RunParameterDescriptor* enabled = parameter(
+            *schema, QStringLiteral("channel_enabled[%1]").arg(channel));
+        ASSERT_NE(enabled, nullptr) << channel;
+        EXPECT_EQ(enabled->kind, RunParameterKind::Boolean);
+        EXPECT_EQ(enabled->defaultValue.toBool(), channel == 3 || channel == 4);
+    }
+
+    const auto defaults = normalizeRunParameters(
+        QStringLiteral("mbddf.do_write"), {}, {});
+    ASSERT_TRUE(defaults.ok()) << defaults.status.error.message.toStdString();
+    for (int channel = 0; channel < 16; ++channel) {
+        EXPECT_EQ(defaults.value
+                      .value(QStringLiteral("channel_enabled[%1]").arg(channel))
+                      .toBool(),
+                  channel == 3 || channel == 4);
+    }
+
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.do_write"), {},
+                     {{QStringLiteral("channel_enabled[5]"), true}})
+                     .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.do_write"), {},
+                     {{QStringLiteral("channel_enabled[6]"), true}})
+                     .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.do_write"), {},
+                     {{QStringLiteral("channel_enabled[0]"), 1}})
+                     .ok());
+}
+
 TEST(RunParameterSchemaTest, BusLoopExposesOnlyTestableComLinksAndBoundedCount)
 {
     const RunParameterSchema* schema = findRunParameterSchema(
@@ -296,6 +337,7 @@ TEST(RunParameterSchemaTest, BusLoopExposesOnlyTestableComLinksAndBoundedCount)
     const RunParameterDescriptor* count = parameter(
         *schema, QStringLiteral("total_count"));
     ASSERT_NE(count, nullptr);
+    EXPECT_EQ(count->label, QStringLiteral("循环次数"));
     EXPECT_EQ(count->kind, RunParameterKind::Integer);
     EXPECT_EQ(count->minimum.toInt(), 1);
     EXPECT_EQ(count->maximum.toInt(), 100000);
@@ -341,6 +383,58 @@ TEST(RunParameterSchemaTest, BusEchoExposesOnlyTheSelectedComLink)
     EXPECT_FALSE(normalizeRunParameters(
                      QStringLiteral("mbddf.bus_echo"), {},
                      {{QStringLiteral("payload_hex"), QStringLiteral("4D4231")}})
+                      .ok());
+}
+
+TEST(RunParameterSchemaTest, SerialTestUnifiesModeLinkAndCycleCount)
+{
+    const RunParameterSchema* schema = findRunParameterSchema(
+        QStringLiteral("mbddf.serial_test"));
+    ASSERT_NE(schema, nullptr);
+    EXPECT_EQ(schema->version, QStringLiteral("1"));
+    ASSERT_EQ(schema->parameters.size(), 3);
+
+    const RunParameterDescriptor* mode = parameter(*schema, QStringLiteral("test_mode"));
+    ASSERT_NE(mode, nullptr);
+    EXPECT_EQ(mode->kind, RunParameterKind::Choice);
+    ASSERT_EQ(mode->choices.size(), 2);
+    EXPECT_EQ(mode->choices.at(0).value.toInt(), 0);
+    EXPECT_EQ(mode->choices.at(1).value.toInt(), 1);
+
+    const RunParameterDescriptor* link = parameter(*schema, QStringLiteral("link_id"));
+    ASSERT_NE(link, nullptr);
+    EXPECT_EQ(link->kind, RunParameterKind::Choice);
+    ASSERT_EQ(link->choices.size(), 3);
+    EXPECT_EQ(link->choices.at(0).value.toInt(), 0);
+    EXPECT_EQ(link->choices.at(1).value.toInt(), 1);
+    EXPECT_EQ(link->choices.at(2).value.toInt(), 3);
+
+    const RunParameterDescriptor* cycleCount = parameter(
+        *schema, QStringLiteral("cycle_count"));
+    ASSERT_NE(cycleCount, nullptr);
+    EXPECT_EQ(cycleCount->label, QStringLiteral("循环次数"));
+    EXPECT_EQ(cycleCount->kind, RunParameterKind::Integer);
+    EXPECT_EQ(cycleCount->defaultValue.toInt(), 1000);
+    EXPECT_EQ(cycleCount->minimum.toInt(), 1);
+    EXPECT_EQ(cycleCount->maximum.toInt(), 100000);
+
+    EXPECT_TRUE(normalizeRunParameters(
+                    QStringLiteral("mbddf.serial_test"), {},
+                    {{QStringLiteral("test_mode"), 1},
+                     {QStringLiteral("link_id"), 3},
+                     {QStringLiteral("cycle_count"), 100000}})
+                    .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.serial_test"), {},
+                     {{QStringLiteral("test_mode"), 2}})
+                     .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.serial_test"), {},
+                     {{QStringLiteral("link_id"), 2}})
+                     .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.serial_test"), {},
+                     {{QStringLiteral("cycle_count"), 100001}})
                      .ok());
 }
 

@@ -148,4 +148,46 @@ describe('BoardTestPage', () => {
     expect(markup).toContain('实测 4.98 V')
     expect(markup).toContain('容差 ±0.05 V')
   })
+
+  it('makes DO command and applied states explicit without claiming sixteen physical readbacks', () => {
+    sessionHooks.useSession.mockReturnValue({
+      snapshot: {
+        ...EMPTY_SNAPSHOT,
+        algorithmId: 'mbddf.do_write',
+        verdict: 'pass',
+        rawData: {
+          boardTest: {
+            schema: 'hwtest.mbddf-board-test-result',
+            version: 1,
+            kind: 'do_write',
+            mode: 'automatic',
+            completedPoints: 1,
+            totalPoints: 1,
+            summary: { failedPoints: 0 },
+            doSteps: [{
+              index: 0,
+              commandMask: 0x0018,
+              appliedMask: 0x0018,
+              expectedTxEnable: false,
+              measuredTxEnable: false,
+              expectedAttenuator: false,
+              measuredAttenuator: false,
+              passed: true,
+            }],
+          },
+        },
+      },
+    })
+
+    const markup = renderToStaticMarkup(<BoardTestPage />)
+
+    expect(markup).toContain('完整 16 位指令掩码')
+    expect(markup).toContain('DUT 完整应用状态')
+    expect(markup).toContain('PXI-6259 仅自动验证 DO2 / DO1')
+    expect(markup).toContain('未配置外部回读')
+    expect(markup).toContain('0x0018')
+    expect(markup).toContain('数字量输出 · 用户配置')
+    expect(markup).toContain('指令 false')
+    expect(markup).toContain('实测 false')
+  })
 })

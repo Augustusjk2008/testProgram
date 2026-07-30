@@ -96,7 +96,7 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
         parser, QStringLiteral(HWTEST_PROJECT_SOURCE_DIR), defaults, &options);
 
     ASSERT_TRUE(result.ok) << result.message.toStdString();
-    ASSERT_EQ(options.testConfigs.size(), 14);
+    ASSERT_EQ(options.testConfigs.size(), 13);
     bool foundSystem = false;
     bool foundElectrical = false;
     bool foundMemory = false;
@@ -107,8 +107,9 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
     bool foundDiRead = false;
     bool foundImuStream = false;
     bool foundHelmStream = false;
-    bool foundBusLoop = false;
-    bool foundBusEcho = false;
+    bool foundSerialTest = false;
+    bool foundLegacyBusLoop = false;
+    bool foundLegacyBusEcho = false;
     bool foundDoWrite = false;
     bool foundHelmBoard = false;
     for (const FrontendTestConfigOption& option : options.testConfigs) {
@@ -125,9 +126,11 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
             option.configId == QStringLiteral("mbddf-imu-stream");
         foundHelmStream = foundHelmStream ||
             option.configId == QStringLiteral("mbddf-helm-stream");
-        foundBusLoop = foundBusLoop ||
+        foundSerialTest = foundSerialTest ||
+            option.configId == QStringLiteral("mbddf-serial-test");
+        foundLegacyBusLoop = foundLegacyBusLoop ||
             option.configId == QStringLiteral("mbddf-bus-loop");
-        foundBusEcho = foundBusEcho ||
+        foundLegacyBusEcho = foundLegacyBusEcho ||
             option.configId == QStringLiteral("mbddf-bus-echo");
         foundDoWrite = foundDoWrite ||
             option.configId == QStringLiteral("mbddf-do-write");
@@ -146,8 +149,9 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
     EXPECT_TRUE(foundDiRead);
     EXPECT_TRUE(foundImuStream);
     EXPECT_TRUE(foundHelmStream);
-    EXPECT_TRUE(foundBusLoop);
-    EXPECT_TRUE(foundBusEcho);
+    EXPECT_TRUE(foundSerialTest);
+    EXPECT_FALSE(foundLegacyBusLoop);
+    EXPECT_FALSE(foundLegacyBusEcho);
     EXPECT_TRUE(foundDoWrite);
     EXPECT_TRUE(foundHelmBoard);
 }

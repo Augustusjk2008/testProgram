@@ -27,6 +27,7 @@ import {
   type ApplicationSnapshot,
   type DigitalStimulusSnapshot,
   type ReplyMessage,
+  type SerialPortInfo,
   type TestConfigOption,
   type TestRunOptions,
 } from '../../shared/protocol'
@@ -66,6 +67,7 @@ interface SessionContextValue {
   snapshot: ApplicationSnapshot
   testConfigs: TestConfigOption[]
   testConfigsReady: boolean
+  serialPorts: SerialPortInfo[]
   selectedConfigId: string
   busyAction: ActionName | null
   actionError: string
@@ -107,6 +109,34 @@ export interface SessionTelemetryValue {
 const SessionContext = createContext<SessionContextValue | null>(null)
 const TelemetryContext = createContext<TelemetryContextValue | null>(null)
 
+function parseSerialPorts(value: unknown): SerialPortInfo[] {
+  if (!Array.isArray(value)) throw new Error('后端 ports 不是数组')
+  const names = new Set<string>()
+  return value.map((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      throw new Error('后端串口条目不是对象')
+    }
+    const record = item as Record<string, unknown>
+    const read = (field: keyof SerialPortInfo) => {
+      const fieldValue = record[field]
+      if (typeof fieldValue !== 'string') throw new Error(`后端串口字段 ${field} 不是字符串`)
+      return fieldValue
+    }
+    const port: SerialPortInfo = {
+      portName: read('portName').trim(),
+      description: read('description'),
+      manufacturer: read('manufacturer'),
+      serialNumber: read('serialNumber'),
+      systemLocation: read('systemLocation'),
+    }
+    if (!port.portName || names.has(port.portName.toLowerCase())) {
+      throw new Error('后端串口名称为空或重复')
+    }
+    names.add(port.portName.toLowerCase())
+    return port
+  })
+}
+
 export function SessionProvider({ children }: PropsWithChildren) {
   const clientRef = useRef<HwtestClient | null>(null)
   const telemetryStoreRef = useRef<TelemetryStore | null>(null)
@@ -125,6 +155,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const [snapshot, setSnapshot] = useState<ApplicationSnapshot>(EMPTY_SNAPSHOT)
   const [testConfigs, setTestConfigs] = useState<TestConfigOption[]>([])
   const [testConfigsReady, setTestConfigsReady] = useState(false)
+  const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>([])
   const [selectedConfigId, setSelectedConfigId] = useState('')
   const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([])
   const [busyAction, setBusyAction] = useState<ActionName | null>(null)
@@ -388,6 +419,14 @@ export function SessionProvider({ children }: PropsWithChildren) {
           `协议 v${message.protocolVersion}`,
           message,
         )
+        void client.request('ports').then((reply) => {
+          if (!reply.ok) throw new Error(reply.message || reply.code || '读取串口失败')
+          setSerialPorts(parseSerialPorts(reply.data.ports))
+        }).catch((error) => {
+          const detail = error instanceof Error ? error.message : String(error)
+          setSerialPorts([])
+          pushDiagnostic('error', '读取本地串口失败', detail)
+        })
         const requestTestConfigs = () => {
           void client.request('testConfigs').then((reply) => {
             setTestConfigsReady(true)
@@ -533,6 +572,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
     snapshot,
     testConfigs,
     testConfigsReady,
+    serialPorts,
     selectedConfigId,
     busyAction,
     actionError,
@@ -560,6 +600,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
     performanceNavigationIdentity,
     resetDigitalStimulus,
     selectedConfigId,
+    serialPorts,
     setDigitalStimulus,
     snapshot,
     start,

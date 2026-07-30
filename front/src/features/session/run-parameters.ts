@@ -5,6 +5,37 @@ import type {
 
 export type RunParameterValues = Record<string, unknown>
 
+const DO_WRITE_ALGORITHM_ID = 'mbddf.do_write'
+const DH_IGNITE_ALGORITHM_ID = 'mbddf.dh_ignite_stream'
+const GUARDED_DO_CHANNELS = new Set([5, 6])
+
+function doChannelIndex(parameterId: string): number | null {
+  const match = /^channel_enabled\[(\d+)\]$/.exec(parameterId)
+  if (!match) return null
+  const index = Number(match[1])
+  return Number.isSafeInteger(index) ? index : null
+}
+
+/** Keeps checkbox-only and display-disabled values canonical after browser restore. */
+export function normalizeGuardedRunParameterValues(
+  descriptor: TestDescriptor,
+  values: RunParameterValues,
+): RunParameterValues {
+  const normalized = { ...values }
+  if (descriptor.algorithmId === DH_IGNITE_ALGORITHM_ID) {
+    for (const id of ['power_enable', 'return_enable']) {
+      normalized[id] = normalized[id] === 1 || normalized[id] === true ? 1 : 0
+    }
+  }
+  if (descriptor.algorithmId !== DO_WRITE_ALGORITHM_ID) return normalized
+  for (const parameter of descriptor.runParameters) {
+    const channel = doChannelIndex(parameter.id)
+    if (channel === null || !GUARDED_DO_CHANNELS.has(channel)) continue
+    normalized[parameter.id] = parameter.kind === 'integer' ? 0 : false
+  }
+  return normalized
+}
+
 function isPersistableValue(value: unknown): value is string | number | boolean {
   return typeof value === 'string' || typeof value === 'boolean' ||
     (typeof value === 'number' && Number.isFinite(value))
@@ -19,20 +50,22 @@ export function loadRunParameterValues(
   storedJson: string | null,
 ): RunParameterValues {
   const values: RunParameterValues = { ...descriptor.runParameterDefaults }
-  if (!storedJson) return values
-  try {
-    const parsed: unknown = JSON.parse(storedJson)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return values
-    const known = new Set(descriptor.runParameters
-      .filter((parameter) => parameter.persistValues !== false)
-      .map((parameter) => parameter.id))
-    for (const [key, value] of Object.entries(parsed)) {
-      if (known.has(key) && isPersistableValue(value)) values[key] = value
+  if (storedJson) {
+    try {
+      const parsed: unknown = JSON.parse(storedJson)
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        const known = new Set(descriptor.runParameters
+          .filter((parameter) => parameter.persistValues !== false)
+          .map((parameter) => parameter.id))
+        for (const [key, value] of Object.entries(parsed)) {
+          if (known.has(key) && isPersistableValue(value)) values[key] = value
+        }
+      }
+    } catch {
+      // Invalid or unavailable browser state falls back to configuration defaults.
     }
-  } catch {
-    // Invalid or unavailable browser state falls back to configuration defaults.
   }
-  return values
+  return normalizeGuardedRunParameterValues(descriptor, values)
 }
 
 /** Returns the browser-persistable subset; absent persistValues remains compatible as true. */
@@ -41,9 +74,10 @@ export function persistableRunParameterValues(
   values: RunParameterValues,
 ): RunParameterValues {
   const persisted: RunParameterValues = {}
+  const normalized = normalizeGuardedRunParameterValues(descriptor, values)
   for (const parameter of descriptor.runParameters) {
     if (parameter.persistValues === false) continue
-    const value = values[parameter.id]
+    const value = normalized[parameter.id]
     if (isPersistableValue(value)) persisted[parameter.id] = value
   }
   return persisted

@@ -114,6 +114,7 @@ bool isKnownAction(const QString& action)
         QStringLiteral("ports"),
         QStringLiteral("selectControl"),
         QStringLiteral("selectSerialPort"),
+        QStringLiteral("selectAuxiliarySerialPort"),
         QStringLiteral("prepare"),
         QStringLiteral("start"),
         QStringLiteral("pause"),
@@ -218,6 +219,8 @@ QJsonObject snapshotObject(const ApplicationSnapshot& snapshot)
     object.insert(QStringLiteral("controlResourceId"), snapshot.controlResourceId);
     object.insert(QStringLiteral("providerId"), snapshot.providerId);
     object.insert(QStringLiteral("serialPortName"), snapshot.serialPortName);
+    object.insert(QStringLiteral("auxiliarySerialPortName"),
+                  snapshot.auxiliarySerialPortName);
     object.insert(QStringLiteral("taskId"), snapshot.taskId);
     object.insert(QStringLiteral("stepId"), snapshot.stepId);
     object.insert(QStringLiteral("testItemId"), snapshot.testItemId);

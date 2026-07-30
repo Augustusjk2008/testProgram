@@ -46,6 +46,101 @@ function MetricCard({
   )
 }
 
+const TIMER_JITTER_ALGORITHM_ID = 'mbddf.timer_jitter'
+const TIMER_BUCKET_KEYS = Array.from({ length: 8 }, (_, index) => `buckets[${index}]`)
+const TIMER_BUCKET_LABELS = [
+  '[0, 2) µs',
+  '[2, 4) µs',
+  '[4, 8) µs',
+  '[8, 16) µs',
+  '[16, 32) µs',
+  '[32, 64) µs',
+  '[64, 100) µs',
+  '≥100 µs',
+]
+
+interface TimerJitterDistribution {
+  counts: Array<number | null>
+  total: number | null
+  warning: string
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function hasTimerBucket(values: Record<string, unknown>): boolean {
+  return TIMER_BUCKET_KEYS.some((key) => Object.prototype.hasOwnProperty.call(values, key))
+}
+
+function hasTimerResponse(values: Record<string, unknown>): boolean {
+  return hasTimerBucket(values) ||
+    Object.prototype.hasOwnProperty.call(values, 'status') ||
+    Object.prototype.hasOwnProperty.call(values, 'err_code')
+}
+
+function validBucketCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 0xFFFF_FFFF
+}
+
+function timerJitterDistribution(
+  values: Record<string, unknown>,
+  verdict: string,
+): TimerJitterDistribution | null {
+  if (!hasTimerResponse(values)) return null
+  const counts = TIMER_BUCKET_KEYS.map((key) => (
+    validBucketCount(values[key]) ? values[key] : null
+  ))
+  const completeBuckets = counts.every((count) => count !== null)
+  const total = completeBuckets
+    ? counts.reduce((sum, count) => sum + (count ?? 0), 0)
+    : null
+  const successfulResponse =
+    (values.status === 0 && values.err_code === 0) || verdict.toLowerCase() === 'pass'
+  let warning = ''
+  if (!completeBuckets) {
+    warning = '统计不完整：桶字段缺失或不是有效的 U32 计数。'
+  } else if (successfulResponse && total !== 250) {
+    warning = `统计不完整：成功响应的桶合计为 ${total}，预期为 250。`
+  }
+  return { counts, total, warning }
+}
+
+function TimerJitterHistogram({ distribution }: { distribution: TimerJitterDistribution }) {
+  const maximum = Math.max(1, ...distribution.counts.filter((count): count is number => count !== null))
+  return (
+    <section className="panel timer-jitter-histogram" aria-label="定时器抖动分布">
+      <header className="panel__header">
+        <div>
+          <h3>定时器抖动分布</h3>
+          <p>相邻实际周期相对 250 µs 期望周期的绝对偏差</p>
+        </div>
+        <span className="mono-count">{distribution.total === null ? '合计 —' : `合计 ${distribution.total}`}</span>
+      </header>
+      <div className="timer-jitter-histogram__bars" role="list">
+        {TIMER_BUCKET_LABELS.map((label, index) => {
+          const count = distribution.counts[index]
+          const height = count === null || count === 0
+            ? 0
+            : Math.max(4, count / maximum * 100)
+          return (
+            <div className="timer-jitter-histogram__bucket" key={TIMER_BUCKET_KEYS[index]} role="listitem">
+              <div className="timer-jitter-histogram__bar-area">
+                <i aria-hidden="true" style={{ height: `${height}%` }} />
+              </div>
+              <strong>{count === null ? '—' : count}</strong>
+              <span>{label}</span>
+            </div>
+          )
+        })}
+      </div>
+      {distribution.warning && <p className="timer-jitter-histogram__warning" role="status">{distribution.warning}</p>}
+    </section>
+  )
+}
+
 export function OverviewPage() {
   const {
     connectionState,
@@ -55,6 +150,19 @@ export function OverviewPage() {
   } = useSession()
   const { latestSample } = useTelemetry()
   const values = latestSample?.values ?? {}
+  const isTimerJitter = (snapshot.algorithmId || snapshot.descriptor.algorithmId) === TIMER_JITTER_ALGORITHM_ID
+  const responseValues = recordValue(snapshot.rawData.responseValues) ?? {}
+  const terminalSnapshot = ['finished', 'stopped', 'error'].includes(snapshot.phase)
+  const timerValues = hasTimerBucket(values)
+    ? values
+    : terminalSnapshot && hasTimerBucket(responseValues)
+      ? responseValues
+      : hasTimerResponse(values)
+        ? values
+        : terminalSnapshot && hasTimerResponse(responseValues) ? responseValues : {}
+  const timerDistribution = isTimerJitter
+    ? timerJitterDistribution(timerValues, snapshot.verdict)
+    : null
   const numericValues = Object.entries(values).filter((entry): entry is [string, number] => (
     typeof entry[1] === 'number'
   ))
@@ -65,7 +173,10 @@ export function OverviewPage() {
     ? primaryFields
     : numericFields.slice(0, 6))
     .filter((field) => typeof values[field] === 'number')
-  const secondaryValues = numericValues.filter(([field]) => !visibleFields.includes(field))
+  const secondaryValues = numericValues.filter(([field]) => (
+    !visibleFields.includes(field) &&
+    !(timerDistribution !== null && TIMER_BUCKET_KEYS.includes(field))
+  ))
   const testTitle = snapshot.descriptor.title || snapshot.testItemId || snapshot.algorithmId || '当前测试'
   const digitalStimulus = snapshot.digitalStimulus
   const digitalSwitchBits = digitalStimulus.switches.map(({ dutBit }) => dutBit)
@@ -117,6 +228,8 @@ export function OverviewPage() {
           </div>
         )}
       </section>
+
+      {timerDistribution && <TimerJitterHistogram distribution={timerDistribution} />}
 
       {showDigitalStimulus && (
         <DigitalStimulusPanel

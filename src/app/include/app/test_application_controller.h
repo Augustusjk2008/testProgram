@@ -5,6 +5,7 @@
 #include <QVariantMap>
 #include <QVector>
 
+#include <functional>
 #include <memory>
 
 namespace hwtest::app {
@@ -212,15 +213,20 @@ struct ApplicationSnapshot {
     QString dataFilePath;
     QString dataSaveError;
     PostRunAnalysisSnapshot analysis;
+    // Selected local PC serial port used only by the unified serial echo test.
+    QString auxiliarySerialPortName;
 };
 
 class TestApplicationController final : public QObject {
     Q_OBJECT
 
 public:
+    using SerialPortProvider = std::function<QVector<SerialPortInfo>()>;
+
     // All actions and snapshot reads must run on this QObject's affinity thread.
     // GUI/Web adapters must marshal calls with a queued invocation.
     explicit TestApplicationController(QObject* parent = nullptr);
+    TestApplicationController(QObject* parent, SerialPortProvider serialPortProvider);
     ~TestApplicationController() override;
 
     ActionResult loadConfigurations(const QString& testConfigPath,
@@ -246,6 +252,7 @@ public:
     ActionResult analysisResult(const AnalysisResultQuery& query,
                                 AnalysisChannelProjection* output) const;
     ApplicationSnapshot snapshot() const;
+    ActionResult selectAuxiliarySerialPort(const QString& portName);
 
 signals:
     void snapshotChanged(const hwtest::app::ApplicationSnapshot& snapshot);

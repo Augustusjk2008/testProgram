@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <exception>
 #include <thread>
+#include <utility>
 
 namespace hwtest::app {
 
@@ -189,6 +190,56 @@ QString serialPortNameFor(const QVariantMap& halConfig, const QString& resourceI
     }
     return resource.value(QStringLiteral("properties")).toMap()
         .value(QStringLiteral("portName")).toString().trimmed();
+}
+
+QVector<SerialPortInfo> systemSerialPorts()
+{
+    QVector<SerialPortInfo> result;
+    const QVector<hwtest::hal::SerialPortDescriptor> ports =
+        hwtest::hal::availableSerialPorts();
+    result.reserve(ports.size());
+    for (const hwtest::hal::SerialPortDescriptor& port : ports) {
+        result.push_back(SerialPortInfo{port.portName,
+                                        port.description,
+                                        port.manufacturer,
+                                        port.serialNumber,
+                                        port.systemLocation});
+    }
+    return result;
+}
+
+bool isUnifiedSerialTestConfiguration(const TestDescriptor& descriptor,
+                                      const QString& selectedAlgorithmId)
+{
+    return descriptor.configId == QStringLiteral("mbddf-serial-test") &&
+        selectedAlgorithmId == QStringLiteral("mbddf.serial_test");
+}
+
+ActionResult validateUnifiedSerialTestStart(const TestDescriptor& descriptor,
+                                            const QString& selectedAlgorithmId,
+                                            const QString& controlProviderId,
+                                            const QString& primarySerialPortName,
+                                            const QString& auxiliarySerialPortName,
+                                            const QVariantMap& parameters)
+{
+    if (!isUnifiedSerialTestConfiguration(descriptor, selectedAlgorithmId) ||
+        parameters.value(QStringLiteral("test_mode")).toInt() != 1) {
+        return {};
+    }
+
+    const QString auxiliary = auxiliarySerialPortName.trimmed();
+    if (auxiliary.isEmpty()) {
+        return failure(
+            QStringLiteral("auxiliary_serial_port_required"),
+            QStringLiteral("Serial echo mode requires a selected auxiliary PC serial port"));
+    }
+    if (controlProviderId == QStringLiteral("qt.serial") &&
+        auxiliary.compare(primarySerialPortName.trimmed(), Qt::CaseInsensitive) == 0) {
+        return failure(
+            QStringLiteral("auxiliary_serial_conflict"),
+            QStringLiteral("The auxiliary PC serial port must differ from the primary control serial port"));
+    }
+    return {};
 }
 
 QString runParameterKindName(
@@ -432,6 +483,7 @@ public:
     bool waitInProgress = false;
     bool asyncStopInProgress = false;
     std::thread asyncStopThread;
+    TestApplicationController::SerialPortProvider serialPortProvider;
 
     ActionResult releaseBoardFixtureSessions()
     {
@@ -552,9 +604,19 @@ public:
 };
 
 TestApplicationController::TestApplicationController(QObject* parent)
+    : TestApplicationController(parent, &systemSerialPorts)
+{
+}
+
+TestApplicationController::TestApplicationController(
+    QObject* parent,
+    SerialPortProvider serialPortProvider)
     : QObject(parent)
     , m_impl(std::make_unique<Impl>())
 {
+    m_impl->serialPortProvider = serialPortProvider
+        ? std::move(serialPortProvider)
+        : SerialPortProvider(&systemSerialPorts);
     qRegisterMetaType<ActionResult>();
     qRegisterMetaType<ApplicationSample>();
     qRegisterMetaType<ApplicationSnapshot>();
@@ -775,18 +837,8 @@ QVector<SerialPortInfo> TestApplicationController::availableSerialPorts() const
         return {};
     }
 
-    QVector<SerialPortInfo> result;
-    const QVector<hwtest::hal::SerialPortDescriptor> ports =
-        hwtest::hal::availableSerialPorts();
-    result.reserve(ports.size());
-    for (const hwtest::hal::SerialPortDescriptor& port : ports) {
-        result.push_back(SerialPortInfo{port.portName,
-                                        port.description,
-                                        port.manufacturer,
-                                        port.serialNumber,
-                                        port.systemLocation});
-    }
-    return result;
+    return m_impl->serialPortProvider ? m_impl->serialPortProvider()
+                                      : QVector<SerialPortInfo>{};
 }
 
 ActionResult TestApplicationController::selectControl(const QString& resourceId)
@@ -862,6 +914,94 @@ ActionResult TestApplicationController::selectSerialPort(const QString& portName
     return {};
 }
 
+ActionResult TestApplicationController::selectAuxiliarySerialPort(const QString& portName)
+{
+    if (!onAffinityThread(this)) {
+        return affinityFailure();
+    }
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
+    }
+    if (m_impl->snapshot.phase != QStringLiteral("configured")) {
+        return failure(
+            QStringLiteral("invalid_state"),
+            QStringLiteral("Auxiliary serial port can only be selected while configured and disconnected"));
+    }
+    if (!isUnifiedSerialTestConfiguration(m_impl->descriptor,
+                                          m_impl->selectedAlgorithmId)) {
+        return failure(
+            QStringLiteral("auxiliary_serial_unavailable"),
+            QStringLiteral("Auxiliary serial port selection is only available for the unified serial test"));
+    }
+
+    const QString requestedPort = portName.trimmed();
+    if (requestedPort.isEmpty()) {
+        return failure(QStringLiteral("auxiliary_serial_port_required"),
+                       QStringLiteral("Auxiliary serial port name must not be empty"));
+    }
+
+    const QVector<SerialPortInfo> availablePorts = availableSerialPorts();
+    const auto selectedPort = std::find_if(
+        availablePorts.cbegin(), availablePorts.cend(),
+        [&](const SerialPortInfo& port) {
+            return port.portName.compare(requestedPort, Qt::CaseInsensitive) == 0;
+        });
+    if (selectedPort == availablePorts.cend()) {
+        return failure(
+            QStringLiteral("auxiliary_serial_port_not_found"),
+            QStringLiteral("Auxiliary serial port '%1' is not currently available")
+                .arg(requestedPort));
+    }
+    const QString normalized = selectedPort->portName;
+
+    const QVariantMap transport = m_impl->executionConfig
+                                      .value(QStringLiteral("transport")).toMap();
+    const QVariantMap resourceByLink = transport.value(QStringLiteral("busEcho")).toMap()
+                                            .value(QStringLiteral("resourceByLink")).toMap();
+    if (resourceByLink.isEmpty()) {
+        return failure(
+            QStringLiteral("auxiliary_serial_not_configured"),
+            QStringLiteral("Unified serial echo resources are not configured"));
+    }
+
+    QSet<QString> resourceIds;
+    for (auto iterator = resourceByLink.cbegin(); iterator != resourceByLink.cend(); ++iterator) {
+        const QString resourceId = iterator.value().toString().trimmed();
+        if (resourceId.isEmpty()) {
+            return failure(
+                QStringLiteral("auxiliary_serial_not_configured"),
+                QStringLiteral("Unified serial echo resource mapping contains an empty resource id"));
+        }
+        resourceIds.insert(resourceId);
+    }
+
+    QVariantMap hardware = m_impl->halConfig.value(QStringLiteral("hardware")).toMap();
+    const QVariantMap resources = hardware.value(QStringLiteral("resources")).toMap();
+    QVariantMap updatedResources = resources;
+    for (const QString& resourceId : resourceIds) {
+        QVariantMap resource = resources.value(resourceId).toMap();
+        const QVariantMap originalProperties = resource.value(QStringLiteral("properties")).toMap();
+        if (resource.value(QStringLiteral("providerId")).toString().trimmed() !=
+                QStringLiteral("qt.serial") ||
+            originalProperties.value(QStringLiteral("role")).toString().trimmed() !=
+                QStringLiteral("auxiliary-link")) {
+            return failure(
+                QStringLiteral("auxiliary_serial_not_configured"),
+                QStringLiteral("Unified serial echo resource '%1' must be a qt.serial auxiliary-link")
+                    .arg(resourceId));
+        }
+        QVariantMap properties = originalProperties;
+        properties.insert(QStringLiteral("portName"), normalized);
+        resource.insert(QStringLiteral("properties"), properties);
+        updatedResources.insert(resourceId, resource);
+    }
+    hardware.insert(QStringLiteral("resources"), updatedResources);
+    m_impl->halConfig.insert(QStringLiteral("hardware"), hardware);
+    m_impl->snapshot.auxiliarySerialPortName = normalized;
+    emit snapshotChanged(m_impl->snapshot);
+    return {};
+}
+
 ActionResult TestApplicationController::prepare()
 {
     if (!onAffinityThread(this)) {
@@ -890,6 +1030,19 @@ ActionResult TestApplicationController::prepare()
         const ActionResult result = halFailure(initialized, QStringLiteral("Unable to initialize HAL"));
         shutdown();
         return result;
+    }
+
+    m_impl->boardFixture = std::make_unique<HalBoardTestFixture>();
+    if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.do_write")) {
+        // DO readback is an unconditional hardware prerequisite. Open it while
+        // connecting so missing adapters, DLLs, or device identities are
+        // reported by prepare(), and retain the session until disconnect.
+        const ActionResult fixtureBound = m_impl->bindBoardFixtureSessions(
+            boardFixtureRequirement(m_impl->selectedAlgorithmId, {}));
+        if (!fixtureBound.ok) {
+            shutdown();
+            return fixtureBound;
+        }
     }
 
     if (m_impl->selectedAlgorithmId == QStringLiteral("mbddf.di_read")) {
@@ -962,7 +1115,6 @@ ActionResult TestApplicationController::prepare()
 
     auto transport = std::make_unique<hwtest::algorithm::mbddf::HalControlTransport>(
         m_impl->device, m_impl->snapshot.controlResourceId);
-    m_impl->boardFixture = std::make_unique<HalBoardTestFixture>();
     m_impl->executor = createMbdDfExecutor(m_impl->selectedAlgorithmId,
                                            std::move(transport),
                                            m_impl->device->controlChannel(),
@@ -1121,7 +1273,9 @@ ActionResult TestApplicationController::prepare()
                              m_impl->snapshot.phase == QStringLiteral("finished") ||
                              m_impl->snapshot.phase == QStringLiteral("stopped") ||
                              m_impl->snapshot.phase == QStringLiteral("error");
-                         if (terminal) {
+                         if (terminal &&
+                             m_impl->selectedAlgorithmId !=
+                                 QStringLiteral("mbddf.do_write")) {
                              const ActionResult released =
                                  m_impl->releaseBoardFixtureSessions();
                              if (!released.ok) {
@@ -1307,11 +1461,22 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     }
     runOptions.parameters = normalizedParameters.value;
 
-    const BoardFixtureRequirement fixtureRequirement = boardFixtureRequirement(
-        m_impl->selectedAlgorithmId, normalizedParameters.value);
-    const ActionResult fixtureBound =
-        m_impl->bindBoardFixtureSessions(fixtureRequirement);
-    if (!fixtureBound.ok) return fixtureBound;
+    const ActionResult auxiliarySerialValidated = validateUnifiedSerialTestStart(
+        m_impl->descriptor,
+        m_impl->selectedAlgorithmId,
+        m_impl->snapshot.providerId,
+        m_impl->snapshot.serialPortName,
+        m_impl->snapshot.auxiliarySerialPortName,
+        normalizedParameters.value);
+    if (!auxiliarySerialValidated.ok) return auxiliarySerialValidated;
+
+    if (m_impl->selectedAlgorithmId != QStringLiteral("mbddf.do_write")) {
+        const BoardFixtureRequirement fixtureRequirement = boardFixtureRequirement(
+            m_impl->selectedAlgorithmId, normalizedParameters.value);
+        const ActionResult fixtureBound =
+            m_impl->bindBoardFixtureSessions(fixtureRequirement);
+        if (!fixtureBound.ok) return fixtureBound;
+    }
 
     if (m_impl->descriptor.postRunAnalysis.supported) {
         PostRunAnalysisStartSpec analysisSpec;
@@ -1370,7 +1535,9 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     }
     const auto started = m_impl->runner->startTestWithOptions(runOptions);
     if (!started.ok()) {
-        m_impl->releaseBoardFixtureSessions();
+        if (m_impl->selectedAlgorithmId != QStringLiteral("mbddf.do_write")) {
+            m_impl->releaseBoardFixtureSessions();
+        }
         m_impl->analysisCoordinator.discardPrepared();
         m_impl->dataRecorder.cancel();
         m_impl->snapshot.dataSaveEnabled = false;
@@ -1757,6 +1924,7 @@ ActionResult TestApplicationController::shutdown()
     const QString selectedResource = m_impl->snapshot.controlResourceId;
     const QString selectedProvider = m_impl->snapshot.providerId;
     const QString selectedSerialPort = m_impl->snapshot.serialPortName;
+    const QString selectedAuxiliarySerialPort = m_impl->snapshot.auxiliarySerialPortName;
 
     if (m_impl->runner) {
         const hwtest::biz::Status status = m_impl->runner->shutdown();
@@ -1853,12 +2021,14 @@ ActionResult TestApplicationController::shutdown()
         m_impl->snapshot.controlResourceId = selectedResource;
         m_impl->snapshot.providerId = selectedProvider;
         m_impl->snapshot.serialPortName = selectedSerialPort;
+        m_impl->snapshot.auxiliarySerialPortName = selectedAuxiliarySerialPort;
     } else if (configured) {
         m_impl->latchedShutdownFailure = {};
         m_impl->snapshot.phase = QStringLiteral("configured");
         m_impl->snapshot.controlResourceId = selectedResource;
         m_impl->snapshot.providerId = selectedProvider;
         m_impl->snapshot.serialPortName = selectedSerialPort;
+        m_impl->snapshot.auxiliarySerialPortName = selectedAuxiliarySerialPort;
     }
     emit snapshotChanged(m_impl->snapshot);
     return firstFailure;
