@@ -15,12 +15,12 @@
 | tests/hal/ | hwtest_hal_tests | 10 | 56 | HAL 接口、资源、安全、Mock、多 Adapter 路由、真实 C ABI 调用、宿主串口枚举、Qt 控制 Provider、多控制资源独立会话与串口占用、版本化设备投影及可选任务 ABI |
 | tests/log/ | hwtest_log_tests | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
 | tests/biz/ | hwtest_biz_tests | 6 | 44 | 配置、计划、单次/PC 周期/设备流调度、零间隔严格串行及暂停/恢复/停止门禁、设备流禁用步骤重试、不透明运行参数透传、Qt 工作线程、样本、报告和架构边界 |
-| tests/algorithm/ | hwtest_algorithm_tests | 13 | 102 | MB_DDF CSV、1..255 payload、F32 来源类型、流式控制传输、BUS LOOP/ECHO 链路与双通道短读回写、运行参数 Schema/归一化、任务范围控制连接与同 worker 停止收尾、固定命令、惯测/舵机设备流、DI stimulus；以及后处理公共端口、版本化捕获、五种舵机波形、扫频局部同步估计、状态归约、取消、有限 JSON 和可追溯 fixture |
-| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 12 | 154 | 共享启动/控制器、配置目录十一项发现、BUS 模式/辅助资源/紧凑字段契约、TUI/GUI/WebSocket、DI 与运行能力、零间隔参数、连续 TXT 保存、惯测/舵机 Qt UDP；以及分析资源配置、STOP 双栅栏和尾样本、完整舵机捕获—分析—查询链、Web v1 capability/批量遥测协商、全局安全序号、FIFO/背压和出站边界 |
+| tests/algorithm/ | hwtest_algorithm_tests | 13 | 104 | MB_DDF CSV、1..255 payload、F32 来源类型、流式控制传输、BUS LOOP/ECHO 链路与双通道短读回写、运行参数 Schema/归一化、任务范围控制连接与同 worker 停止收尾、固定命令、惯测/舵机设备流、IMU 宿主时间戳间隔、DI stimulus；以及后处理公共端口、版本化捕获、五种舵机波形、扫频局部同步估计、状态归约、取消、有限 JSON 和可追溯 fixture |
+| tests/app/ | hwtest_app_tests / hwtest_gui_tests / hwtest_web_tests | 13 | 156 | 共享启动/控制器、配置目录十一项发现、BUS 模式/辅助资源/紧凑字段契约、设备流本地时间配置、TUI/GUI/WebSocket、DI 与运行能力、零间隔参数、连续 TXT 保存、惯测/舵机 Qt UDP；以及分析资源配置、STOP 双栅栏和尾样本、完整舵机捕获—分析—查询链、Web v1 capability/批量遥测协商、全局安全序号、FIFO/背压和出站边界 |
 | src/adapters/ni_daqmx/tests/ | hwtest_ni_daqmx_adapter_fake_tests | 1 | 0 | 原生 NI-DAQmx Adapter 与 Fake NIDAQmx API 的自定义 main/CTest |
-| 合计 | 7 个 GoogleTest + 1 个 Fake CTest | 45 | 363 | 44 个含 GoogleTest 定义的源文件及一个非 GoogleTest 测试源 |
+| 合计 | 7 个 GoogleTest + 1 个 Fake CTest | 46 | 367 | 45 个含 GoogleTest 定义的源文件及一个非 GoogleTest 测试源 |
 
-363 是当前测试源码中的 GoogleTest 定义数。Windows 完整构建并完成测试发现后的当前 CTest 清单为 374 条：363 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试和 1 条 `NiDaqmxAdapterFakeTest`。清单数量本身不表示通过，执行证据见下述按时间记录。
+367 是当前测试源码中的 GoogleTest 定义数。Windows 完整构建并完成测试发现后的当前 CTest 清单为 378 条：367 条动态发现的 GoogleTest 加 10 条应用入口/脚本进程测试和 1 条 `NiDaqmxAdapterFakeTest`。清单数量本身不表示通过，执行证据见下述按时间记录。
 
 2026-07-27 在 Windows/Visual Studio 2022 x64 构建树中设置已批准的 `MB_DDF_PROTOCOL_CSV_DIR` 后，Debug 与 Release 完整构建均成功，两个配置的 CTest 均为 232/232 通过。该结果包含仓库 Fake NIDAQmx、动态 Adapter fixture 和自退出的应用进程测试；证据等级仍按下文分类。
 
@@ -51,9 +51,11 @@ DDS B27 `helm_unlock`、解锁首帧、运行帧、STOP 回零尾帧、发布失
 
 2026-07-29 新增 BUS LOOP/ECHO 根宿主闭环并收敛 DUT 链路后，宿主使用仓库内 37 份协议快照完成 Debug 与 Release 全量构建/CTest；两个配置各有 374 条注册项，均为 373 项执行通过、1 项条件跳过、0 失败。跳过项仍是上述缺少外部导入附件的配置迁移用例，不计为通过。新增 18 个 GoogleTest 覆盖 HAL 多控制资源独立会话/确定性关闭/同物理串口冲突，BUS 0/1/3 参数白名单、COM3 拒绝、LOOP 运行期链路与次数判定，ECHO 固定 114 字节分段短读、原样回写、两个方向逐字节比较、5 秒超时、紧凑样本，以及十一项配置发现、运行模式和辅助资源不进入主控制口列表。浏览器前端仍为 17 个文件、81/81 Vitest 通过并完成单文件生产构建；DUT Windows PyQt 主机侧为 211/211、工具测试 20/20、37 份 CSV 校验通过，AArch64 Debug `hw_tests` 画像交叉构建 `MB_DDF_HW_Tests` 与 `MB_DDF_HW_Smoke` 等目标成功。所有验证均为 Fake、本机回环、主机侧或交叉构建；未打开真实 COM1/COM2/COM4、未部署或运行目标板，因此不构成 BUS LOOP/ECHO 真机验收。Release 仅出现既有 Qt 5/MSVC `C4996/STL4043` 弃用警告；PyQt 仅出现既有依赖弃用告警。
 
-44 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 363。
+2026-07-30 将惯测设备流的宿主合成时间间隔改为测试配置后，新增测试先在旧实现上观察到配置 `4000 us` 仍产生 `2500 us` 时间增量、零值未拒绝，以及真实惯测配置缺少字段的预期失败；实现与配置补齐后均转为通过。宿主使用仓库内 37 份协议快照完成 Debug 与 Release 全量构建/CTest；两个配置各有 378 条注册项，均为 377 项执行通过、1 项条件跳过、0 失败。新增 4 个 GoogleTest 覆盖显式 `hostTimestampIntervalUs` 对 `timestampUs`/`streamElapsedUs` 的影响、缺省 2500 微秒兼容值、非法非正值在打开传输前拒绝、START/STOP 请求字节完全不变、惯测真实配置显式声明，以及舵机配置继续不声明该字段并保留 DDS 权威时间轴。跳过项仍是缺少外部导入附件的配置迁移用例，不计为通过。本轮未修改协议 CSV、DUT、HAL 或前端，也未运行目标板/真实惯测链路，自动化不构成产品 400 Hz 精度、丢帧或真机停止收尾证据。
 
-浏览器前端当前有 17 个 `*.test.ts`/`*.test.tsx` 文件、81 条 Vitest。除既有协议、参数、遥测缓冲/图组、DI 和性能结果行为外，新增覆盖旧 `sample`/新 `sampleBatch` 兼容、全局序号重复/倒序/缺口诊断、50,000 点淘汰统计、像素级 min/max 抽样、连接 epoch 隔离、零间隔参数，以及高频遥测 store 与低频会话 Context 的渲染边界。它们由 `npm test` 独立运行，不计入上述 356 条 CTest。
+45 个含 GoogleTest 定义的源文件使用 `*_test.cpp` 命名；另有 1 个 NI Fake 自定义 main 测试源。四个 HAL DLL fixture、Fake NIDAQmx 库/头、GUI/Web 自定义 GoogleTest 入口、应用测试支持库和测试 helper 不包含 GoogleTest 定义，不计入 367。
+
+浏览器前端当前有 17 个 `*.test.ts`/`*.test.tsx` 文件、81 条 Vitest。除既有协议、参数、遥测缓冲/图组、DI 和性能结果行为外，新增覆盖旧 `sample`/新 `sampleBatch` 兼容、全局序号重复/倒序/缺口诊断、50,000 点淘汰统计、像素级 min/max 抽样、连接 epoch 隔离、零间隔参数，以及高频遥测 store 与低频会话 Context 的渲染边界。它们由 `npm test` 独立运行，不计入上述 378 条 CTest。
 
 ## 2. 当前覆盖与条件资产
 
@@ -151,6 +153,7 @@ DDS B27 `helm_unlock`、解锁首帧、运行帧、STOP 回零尾帧、发布失
 - 公共 HAL 或 BIZ 头文件、配置字段、状态语义、错误码、资源类型或 Adapter ABI 变化时，必须同步相应契约文档和回归测试。
 - 修改 BIZ 时，必须运行 hwtest_biz_tests 和 BIZ 架构扫描；BIZ 测试不得引入硬件执行依赖。
 - 修改协议 CSV 规则、解析器或资产引用时，必须同步 device-communication-protocol.md 和协议契约测试，并记录基线路径、观测时间与清单；manifest/hash 机制落地后再记录固定版本和内容哈希。
+- 修改设备流宿主合成时间轴配置时，必须覆盖显式间隔、缺省兼容值、非法非正值、样本 UTC/相对时间增量、START/STOP 请求字节不变，以及具有权威 DDS 时间的舵机配置不声明也不消费该字段；不得把宿主标注间隔写成 DUT 输出周期控制证据。
 - 修改 Mock/Fake 行为时，必须说明证据级别；可配置超时/错误注入和 SYSTEM_STATUS/ELEC_HEALTH_STATUS 控制通道 Mock Provider 集成仍未实现，不得作为既有能力验收。动态 Fake C ABI fixture 只能验证 ABI/Adapter 路径，不能改写为厂家 SDK 或真机结果。
 - 修改 Qt Provider、通用 C ABI、原生 Vendor Adapter 或真实硬件路径时，必须新增相应级别的隔离测试；当前 Qt UDP 有本机隔离测试，通用 C ABI 已有动态 Fake DLL、多 Adapter 懒加载、状态映射、数字批写和可选 task ABI 回归，PXI-6259 NI-DAQmx 已有可选 SDK 构建路径及 `NiDaqmxAdapterFakeTest`，BIZ 已有 Qt dispatcher/计时器注册回归，Qt 串口已有带历史告警的早期 smoke、无响应无告警诊断和迁移后成功无告警的手工复测；CTest `hardware` 标签、自动化异常路径和全面真实硬件验收仍未实现。
 - 修改 `digitalStimulus` 配置、刺激 DTO/动作、revision 语义或安全收尾时，必须同步算法、应用、WebSocket 和前端纯逻辑回归；至少覆盖配置白名单、陈旧 revision 无写入、全量批写、写失败状态、动作参数拒绝和停止/收尾的 Fake/Mock 边界。成功 Web DI 写、revision 冲突和断开安全态的 Web 端到端覆盖仍待补齐。

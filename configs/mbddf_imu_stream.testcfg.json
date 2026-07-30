@@ -67,6 +67,7 @@
       "stopResponseProfileId": "imu_stream_stop_response"
     },
     "stream": {
+      "hostTimestampIntervalUs": 2500,
       "readTimeoutMs": 20,
       "startTimeoutMs": 2000,
       "stopTimeoutMs": 2000

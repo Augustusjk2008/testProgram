@@ -31,6 +31,7 @@ endif()
 add_executable(hwtest_app_tests
     analysis_result_store_test.cpp
     bus_configuration_test.cpp
+    device_stream_configuration_test.cpp
     frontend_launch_options_test.cpp
     post_run_analysis_coordinator_test.cpp
     test_application_controller_test.cpp

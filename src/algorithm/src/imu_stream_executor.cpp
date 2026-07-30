@@ -19,7 +19,7 @@ using hwtest::biz::TestResult;
 using hwtest::biz::TestStep;
 using hwtest::biz::TestVerdict;
 
-constexpr qint64 kImuSamplePeriodUs = 2500;
+constexpr int kDefaultImuHostTimestampIntervalUs = 2500;
 constexpr qint64 kMaxJsonSafeInteger = (qint64{1} << 53) - 1;
 
 Status status(ErrorCode code, const QString& message, const QString& operation)
@@ -220,11 +220,15 @@ Status ImuStreamAlgorithmExecutor::prepare(const hwtest::biz::TestPlan& plan,
     }
 
     const QVariantMap stream = nestedMap(executionConfig, QStringLiteral("stream"));
-    if (!positiveInt(stream, QStringLiteral("readTimeoutMs"), 20, &m_readTimeoutMs) ||
+    if (!positiveInt(stream, QStringLiteral("hostTimestampIntervalUs"),
+                     kDefaultImuHostTimestampIntervalUs,
+                     &m_hostTimestampIntervalUs) ||
+        !positiveInt(stream, QStringLiteral("readTimeoutMs"), 20, &m_readTimeoutMs) ||
         !positiveInt(stream, QStringLiteral("startTimeoutMs"), 2000, &m_startTimeoutMs) ||
         !positiveInt(stream, QStringLiteral("stopTimeoutMs"), 2000, &m_stopTimeoutMs)) {
         return status(ErrorCode::ConfigSchemaError,
-                      QStringLiteral("IMU stream timeouts must be positive integers"),
+                      QStringLiteral("IMU stream host timestamp interval and timeouts "
+                                     "must be positive integers"),
                       QStringLiteral("mbddf.imu_stream.prepare"));
     }
     if (!parseInitialSequence(executionConfig.value(QStringLiteral("initialSequence")),
@@ -346,13 +350,13 @@ Status ImuStreamAlgorithmExecutor::publishFeedback(
                       QStringLiteral("mbddf.imu_stream.feedback"));
     }
     if (m_sampleCount >
-        static_cast<quint64>(kMaxJsonSafeInteger / kImuSamplePeriodUs)) {
+        static_cast<quint64>(kMaxJsonSafeInteger / m_hostTimestampIntervalUs)) {
         return status(ErrorCode::InternalError,
                       QStringLiteral("IMU stream elapsed timestamp overflow"),
                       QStringLiteral("mbddf.imu_stream.feedback"));
     }
     const qint64 streamElapsedUs =
-        static_cast<qint64>(m_sampleCount) * kImuSamplePeriodUs;
+        static_cast<qint64>(m_sampleCount) * m_hostTimestampIntervalUs;
     if (!m_hasTimestampAnchor) {
         m_timestampAnchorUtcUs = nowUs();
         m_hasTimestampAnchor = true;

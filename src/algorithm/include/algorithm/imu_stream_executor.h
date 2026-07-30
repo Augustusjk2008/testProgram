@@ -55,6 +55,9 @@ private:
     int m_readTimeoutMs = 20;
     int m_startTimeoutMs = 2000;
     int m_stopTimeoutMs = 2000;
+    // Host-only interval used to synthesize sample timestamps. It is never
+    // encoded into an IMU START or STOP request.
+    int m_hostTimestampIntervalUs = 2500;
     quint64 m_sampleCount = 0;
     qint64 m_timestampAnchorUtcUs = 0;
     bool m_hasTimestampAnchor = false;

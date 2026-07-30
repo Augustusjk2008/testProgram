@@ -376,6 +376,81 @@ TEST(ImuStreamExecutorTest, SendsOneStartStreamsCompleteSamplesAndSendsOneStop)
     EXPECT_TRUE(executor.finishRun().ok());
 }
 
+TEST(ImuStreamExecutorTest, ConfiguredHostTimestampIntervalAffectsOnlyPcSampleTimes)
+{
+    const QString assets = catalogDirectory();
+    ASSERT_TRUE(QFileInfo(assets).isDir());
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+
+    const QVariantMap feedbackValues{
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("err_code"), 0},
+        {QStringLiteral("source_seq"), 1},
+    };
+    auto transport = std::make_unique<StreamingTransport>(
+        frameFor(catalog, QStringLiteral("imu_stream_start_response"), 0x1234,
+                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{
+            frameFor(catalog, QStringLiteral("imu_stream_feedback_response"), 0x9000,
+                     feedbackValues),
+            frameFor(catalog, QStringLiteral("imu_stream_feedback_response"), 0x9001,
+                     feedbackValues)},
+        frameFor(catalog, QStringLiteral("imu_stream_stop_response"), 0x1235,
+                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}));
+    StreamingTransport* transportPtr = transport.get();
+    ImuStreamAlgorithmExecutor executor(std::move(transport));
+    QVariantMap configured = executionConfig(assets);
+    QVariantMap stream = configured.value(QStringLiteral("stream")).toMap();
+    stream.insert(QStringLiteral("hostTimestampIntervalUs"), 4000);
+    configured.insert(QStringLiteral("stream"), stream);
+    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(), configured).ok());
+    RunControl control;
+    int observedSamples = 0;
+    Observer observer([&executor, &observedSamples] {
+        if (++observedSamples >= 2) {
+            EXPECT_TRUE(executor.requestStop(100).ok());
+        }
+    });
+
+    const auto outcome = executor.executeStep(streamStep(), control, observer);
+
+    ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
+    ASSERT_EQ(observer.samples.size(), 2);
+    EXPECT_EQ(observer.samples.at(1).timestampUs - observer.samples.at(0).timestampUs,
+              4000);
+    EXPECT_EQ(observer.samples.at(0).streamElapsedUs, 0);
+    EXPECT_EQ(observer.samples.at(1).streamElapsedUs, 4000);
+    const std::vector<QByteArray> writes = transportPtr->writes();
+    ASSERT_EQ(writes.size(), 2u);
+    EXPECT_EQ(writes.at(0),
+              frameFor(catalog, QStringLiteral("imu_stream_start_request"), 0x1234));
+    EXPECT_EQ(writes.at(1),
+              frameFor(catalog, QStringLiteral("imu_stream_stop_request"), 0x1235));
+}
+
+TEST(ImuStreamExecutorTest, RejectsNonPositiveHostTimestampIntervalBeforeOpeningTransport)
+{
+    const QString assets = catalogDirectory();
+    auto transport = std::make_unique<StreamingTransport>(QByteArray{},
+                                                          std::vector<QByteArray>{},
+                                                          QByteArray{});
+    StreamingTransport* transportPtr = transport.get();
+    ImuStreamAlgorithmExecutor executor(std::move(transport));
+    QVariantMap configured = executionConfig(assets);
+    QVariantMap stream = configured.value(QStringLiteral("stream")).toMap();
+    stream.insert(QStringLiteral("hostTimestampIntervalUs"), 0);
+    configured.insert(QStringLiteral("stream"), stream);
+
+    const auto prepared = executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
+                                           configured);
+
+    EXPECT_FALSE(prepared.ok());
+    EXPECT_EQ(prepared.code, hwtest::biz::ErrorCode::ConfigSchemaError);
+    EXPECT_EQ(transportPtr->openCount(), 0);
+}
+
 TEST(ImuStreamExecutorTest, ReanchorsUtcTimeWhenExecuteStepRunsAgain)
 {
     const QString assets = catalogDirectory();

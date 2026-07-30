@@ -230,7 +230,7 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 | `configs/mbddf_dh_pulse_config.testcfg.json` | `mbddf.dh_pulse_config` | `dh_pulse_config_request/response` | `config_enable` 与 23 路 `pulse_width[]` 写入后逐项回读并判定 |
 | `configs/mbddf_timer_jitter.testcfg.json` | `mbddf.timer_jitter` | `timer_jitter_start_request/response`，随后 `timer_jitter_stop_request/response` | START 的 `mode` 当前默认为 0；`executionConfig.lifecycle` 声明 STOP Profile 和 deadline，STOP ACK 失败会使本轮失败 |
 | `configs/mbddf_di.testcfg.json` | `mbddf.di_read` | `di_read_request/response`（`DI_READ`） | 读取 `di_state[0]`、`di_state[1]`；当前配置支持 `single` 和 `pc_periodic`，判定只检查 `status == 0` 与 `err_code == 0` |
-| `configs/mbddf_imu_stream.testcfg.json` | `mbddf.imu_stream` | `09/10` START、`09/01` 主动反馈、`09/11` STOP | 只支持 `device_stream`；PC 各发送一次 START/STOP，中间只读主动反馈；至少一帧有效反馈才通过 |
+| `configs/mbddf_imu_stream.testcfg.json` | `mbddf.imu_stream` | `09/10` START、`09/01` 主动反馈、`09/11` STOP | 只支持 `device_stream`；PC 各发送一次 START/STOP，中间只读主动反馈；至少一帧有效反馈才通过；`executionConfig.stream.hostTimestampIntervalUs` 只用于宿主合成样本时间轴，不进入产品帧 |
 | `configs/mbddf_helm_stream.testcfg.json` | `mbddf.helm_stream` | `07/10` START、`07/01` 主动反馈、`07/11` STOP | 只支持 `device_stream`；DUT 以 1 ms 周期生成四路舵角指令并经 DDS 交互，最多 5 个完整反馈样本组成一帧；测试程序不管理独立舵控程序的启停 |
 
 ### 7.1 惯测设备流
@@ -239,7 +239,9 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 DUT 经 COM3 发送 128 字节 `imu_stream_feedback_response`：B9 为状态、B10-B11 为错误码、B12-B70 为上述完整字段、B71-B126 保留、B127-B128 为 CRC。反馈使用 DUT 自己递增的产品协议序号。400 Hz 不要求软件保证无损，但实现不得固定 sleep 或主动抽样；有有效帧即尝试发送。COM3 在 614400/8E1 下发送 128 B × 400 Hz 约占 91.7% 线速率。
 
-宿主的 `HalControlTransport` 为该模式提供分离的 `writeFrame()`/`readFrame()`。执行器发送 START 并校验 ACK 后持续读取 `09/01`，每帧完整解码并上报样本；本次流第一个已发布样本的 `streamElapsedUs` 为 0，之后按 400 Hz 标称周期固定递增 2500 微秒。该相对轴按“成功解码并已发布的样本序号”生成，不依据 `source_seq` 或产品 U16 `seq`，因此会压缩宿主未观察到的丢帧空洞，不能外推为设备绝对采样时钟。每次 `executeStep()` 的首样本只读取一次 PC UTC 作为新锚点，公开 `timestampUs = UTC 锚点 + streamElapsedUs`，不再逐帧读取 PC 到达时间；公开时间整数均不得超过 JavaScript 安全整数上限 `9007199254740991`。
+宿主的 `HalControlTransport` 为该模式提供分离的 `writeFrame()`/`readFrame()`。执行器发送 START 并校验 ACK 后持续读取 `09/01`，每帧完整解码并上报样本；本次流第一个已发布样本的 `streamElapsedUs` 为 0，之后按测试配置 `executionConfig.stream.hostTimestampIntervalUs` 递增。该字段必须是正整数微秒，当前惯测配置显式设为 2500；旧配置缺失时为兼容既有 400 Hz 时间轴仍回退到 2500 微秒。该相对轴按“成功解码并已发布的样本序号”生成，不依据 `source_seq` 或产品 U16 `seq`，因此会压缩宿主未观察到的丢帧空洞，不能外推为设备绝对采样时钟。每次 `executeStep()` 的首样本只读取一次 PC UTC 作为新锚点，公开 `timestampUs = UTC 锚点 + streamElapsedUs`，不再逐帧读取 PC 到达时间；乘法和公开时间整数均不得超过 JavaScript 安全整数上限 `9007199254740991`。
+
+`hostTimestampIntervalUs` 是宿主算法的本地时间标注参数，不是 DUT 输出周期配置。它不得写入 START/STOP 的 `requestValues`、运行参数 Schema、协议 CSV、HAL 写操作或产品帧，也不得改变 START/STOP 次数、PC 发包频率、DUT 采样/输出节拍、判定或 verdict。`imu_stream_start_request` 仍只有序号与保留填充字段。舵机流已有协议携带的 DDS 权威时间，配置不声明该宿主估算字段，继续按真实 DDS 增量生成时间轴。
 
 `requestStop()` 只设置原子停止标志，worker 在最长 20 ms 读超时后发送 STOP 并等待 ACK。等待 STOP ACK 时到达的有效反馈仍会上报。同一会话 START/STOP 各最多发送一次；STOP 写失败、ACK 超时、解析失败、序号不匹配或远端错误只使本次结果失败，`finishRun()` 只关闭传输，不再补发 STOP。不允许 BIZ 以 `pc_periodic` 重复 START。停止时零有效帧判为 `SampleFail`，一帧及以上通过；传输、CRC、命令、ACK 序号或远端错误保持类型化失败。
 
