@@ -329,17 +329,17 @@ export function RunControlBar() {
           </button>
         ) : null}
 
-        {snapshot.phase === 'running' && (
+        {snapshot.descriptor.stoppable && snapshot.phase === 'running' && (
           <button className="button" disabled={busyAction !== null} onClick={() => execute('pause')} type="button">
             <Pause size={17} weight="fill" />暂停
           </button>
         )}
-        {snapshot.phase === 'paused' && (
+        {snapshot.descriptor.stoppable && snapshot.phase === 'paused' && (
           <button className="button" disabled={busyAction !== null} onClick={() => execute('resume')} type="button">
             <Play size={17} weight="fill" />继续
           </button>
         )}
-        {active && snapshot.phase !== 'stopping' && (
+        {snapshot.descriptor.stoppable && active && snapshot.phase !== 'stopping' && (
           <button className="button button--danger" disabled={busyAction !== null} onClick={() => execute('stop')} type="button">
             <StopIcon size={17} weight="fill" />停止
           </button>

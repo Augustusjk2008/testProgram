@@ -216,6 +216,11 @@ qint64 WebSocketTestClient::sendBinary(const QByteArray& data)
     return m_socket.sendBinaryMessage(data);
 }
 
+void WebSocketTestClient::setReadBufferSize(qint64 bytes)
+{
+    m_socket.setReadBufferSize(bytes);
+}
+
 void WebSocketTestClient::close()
 {
     m_socket.close();

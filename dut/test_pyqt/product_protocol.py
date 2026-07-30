@@ -20,6 +20,17 @@ class ProductProtocolError(ValueError):
     """Raised for malformed fields or product data segments."""
 
 
+_DH_CONTROL_INTEGER_RANGES = (
+    ("power_enable", 0xFF),
+    ("return_enable", 0xFF),
+    ("channel[0]", 0xFFFFFFFF),
+    ("channel[1]", 0xFFFFFFFF),
+    ("report_count", 0xFFFF),
+    ("interval_us", 0xFFFF),
+    ("delay_frames", 0xFFFF),
+)
+
+
 @dataclass(frozen=True)
 class OutboundMessage:
     name: str
@@ -71,6 +82,36 @@ def _field_value(field: ProtocolField, values: Mapping[str, object]):
     if field.default is not None:
         return field.default
     return 0
+
+
+def _wire_integer(value: object, field_name: str, maximum: int) -> int:
+    if isinstance(value, float) and not value.is_integer():
+        raise ProductProtocolError("字段 {} 必须是整数".format(field_name))
+    try:
+        number = int(value.strip(), 0) if isinstance(value, str) else int(value)
+    except (TypeError, ValueError) as exc:
+        raise ProductProtocolError("字段 {} 必须是整数".format(field_name)) from exc
+    if not 0 <= number <= maximum:
+        raise ProductProtocolError(
+            "字段 {} 超出编码范围 0..{}".format(field_name, maximum)
+        )
+    return number
+
+
+def _normalized_values(
+    definition: MessageDefinition, values: Optional[Mapping[str, object]]
+) -> Mapping[str, object]:
+    supplied = dict(values or {})
+    if definition.name != "dh_control_request":
+        return supplied
+    if "delay_us" in supplied:
+        raise ProductProtocolError("DH 控制字段已改为 delay_frames")
+    for field_name, maximum in _DH_CONTROL_INTEGER_RANGES:
+        if field_name in supplied:
+            supplied[field_name] = _wire_integer(
+                supplied[field_name], field_name, maximum
+            )
+    return supplied
 
 
 def _integer_raw(field: ProtocolField, value: object, signed: bool) -> int:
@@ -144,7 +185,7 @@ def encode_payload(
         raise ProductProtocolError("产品数据段长度必须在 1..255 字节")
     if not 0 <= int(sequence) <= 0xFFFF:
         raise ProductProtocolError("序号必须在 0..65535 范围内")
-    supplied = values or {}
+    supplied = _normalized_values(definition, values)
     payload = bytearray(definition.payload_length)
     for field in definition.payload_fields:
         offset = field.payload_offset

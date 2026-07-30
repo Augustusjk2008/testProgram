@@ -508,6 +508,23 @@ public:
         pumpOutput();
     }
 
+    void detachNonStoppableClient(QWebSocket* socket, const QString& requestId)
+    {
+        if (socket == nullptr || socket != activeClient) {
+            return;
+        }
+
+        // Detach the UI from the running device task immediately. In
+        // particular, do not keep feeding telemetry into the old socket while
+        // waiting for its network buffers to drain: that would prevent a new
+        // observer from being accepted for the lifetime of the burst.
+        clearActiveClientProjection();
+        activeClient.clear();
+        sendDirect(socket, makeReply(requestId, ActionResult{}));
+        socket->close(QWebSocketProtocol::CloseCodeNormal,
+                      QStringLiteral("detach"));
+    }
+
     void maybeCloseAfterDrain()
     {
         QWebSocket* socket = closeAfterDrainSocket;
@@ -547,6 +564,14 @@ public:
         outputQueue.clear();
         queuedOutputBytes = 0;
         outputPausedAtHighWater = false;
+        if (isActiveNonStoppable(cachedSnapshot)) {
+            backpressureCleanupStarted = false;
+            backpressureSocket.clear();
+            suppressDisconnectCleanup = socket;
+            socket->close(QWebSocketProtocol::CloseCodeBadOperation,
+                          QStringLiteral("telemetry_backpressure"));
+            return;
+        }
         if (pendingOperation == PendingOperation::None) {
             beginCleanup(PendingOperation::BackpressureCleanup, QString(), socket);
         }
@@ -777,6 +802,33 @@ public:
             return;
         }
 
+        if (isActiveNonStoppable(cachedSnapshot)) {
+            if (request.action == QStringLiteral("stop") ||
+                request.action == QStringLiteral("pause") ||
+                request.action == QStringLiteral("resume")) {
+                send(socket,
+                     makeReply(
+                         request.id,
+                         protocolError(
+                             QStringLiteral("CapabilityUnsupported"),
+                             QStringLiteral("This finite device stream must complete naturally"))));
+                return;
+            }
+            if (request.action == QStringLiteral("quit")) {
+                send(socket,
+                     makeReply(
+                         request.id,
+                         protocolError(
+                             QStringLiteral("invalid_state"),
+                             QStringLiteral("The server cannot quit while a non-stoppable device stream is active"))));
+                return;
+            }
+            if (request.action == QStringLiteral("disconnect")) {
+                detachNonStoppableClient(socket, request.id);
+                return;
+            }
+        }
+
         if (request.action == QStringLiteral("stop")) {
             pendingOperation = PendingOperation::Stop;
             pendingRequestId = request.id;
@@ -813,6 +865,13 @@ public:
             state == QStringLiteral("preprocessing") ||
             state == QStringLiteral("calculating") ||
             state == QStringLiteral("persisting");
+    }
+
+    static bool isActiveNonStoppable(const ApplicationSnapshot& snapshot)
+    {
+        return !snapshot.descriptor.stoppable &&
+            (snapshot.phase == QStringLiteral("running") ||
+             snapshot.phase == QStringLiteral("paused"));
     }
 
     static bool validateRequiredString(const WebRequest& request,
@@ -1666,6 +1725,12 @@ public:
 
     void handleActiveClientDropped()
     {
+        if (isActiveNonStoppable(cachedSnapshot)) {
+            clearPending();
+            backpressureCleanupStarted = false;
+            backpressureSocket.clear();
+            return;
+        }
         if (pendingOperation == PendingOperation::Stop) {
             pendingOperation = PendingOperation::DropCleanup;
             pendingRequestId.clear();

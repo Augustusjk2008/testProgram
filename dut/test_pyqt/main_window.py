@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         self._pending_payload: Optional[bytes] = None
         self._hardware_mode = False
         self._session_busy = False
+        self._active_test_key: Optional[str] = None
         self._continuous_key: Optional[str] = None
         self._continuous_parameters: Dict[str, object] = {}
         self._continuous_stop_pending = False
@@ -401,6 +402,11 @@ class MainWindow(QMainWindow):
         self.current_port_label.setText(name or "未选择")
 
     def toggle_connection(self) -> None:
+        if self._active_test_key == "dh":
+            self._append_log(
+                "WARNING", "DH 点火请求已受理，产品端自然完成前不能断开或切换串口"
+            )
+            return
         if self.channel.is_open:
             self.channel.close()
             return
@@ -465,6 +471,7 @@ class MainWindow(QMainWindow):
     def _update_action_state(self) -> None:
         echo_pending = self._pending_payload is not None
         continuous_active = self._continuous_key is not None
+        dh_active = self._active_test_key == "dh"
         can_run_hardware = (
             self._hardware_mode
             and not self._session_busy
@@ -473,8 +480,10 @@ class MainWindow(QMainWindow):
         )
         self.execute_all_button.setEnabled(can_run_hardware)
         self.stop_button.setEnabled(
-            self._session_busy or echo_pending or continuous_active
+            (self._session_busy or echo_pending or continuous_active)
+            and not dh_active
         )
+        self.connect_button.setEnabled(not dh_active)
         self.send_button.setEnabled(not self._hardware_mode and not echo_pending)
         for page in self.pages_by_key.values():
             page.set_actions_enabled(
@@ -503,6 +512,11 @@ class MainWindow(QMainWindow):
     ) -> None:
         page = self.pages_by_key.get(str(key))
         if page is None:
+            return
+        if str(key) == "dh":
+            page.set_continuous_checked(False)
+            self._append_log("WARNING", "DH 点火只支持单次有限 device stream")
+            self._update_action_state()
             return
         if not enabled:
             if self._continuous_key == str(key):
@@ -626,6 +640,11 @@ class MainWindow(QMainWindow):
         self.session.run_all(overrides)
 
     def _stop_active(self) -> None:
+        if self._active_test_key == "dh":
+            self._append_log(
+                "WARNING", "DH 点火请求已受理，不支持停止；等待产品端自然完成"
+            )
+            return
         if self._pending_payload is not None:
             self._finish_request("已停止", "WARNING", "用户停止回显等待")
             return
@@ -757,9 +776,11 @@ class MainWindow(QMainWindow):
             self._append_log(level, "{}：{}".format(result, detail))
 
     def _on_test_started(self, key: str) -> None:
+        self._active_test_key = key
         page = self.pages_by_key.get(key)
         if page is not None:
             page.reset_for_run()
+        self._update_action_state()
 
     def _on_test_status_changed(self, key: str, status: str, detail: str) -> None:
         if key == "dh":
@@ -776,7 +797,7 @@ class MainWindow(QMainWindow):
     def _on_test_finished(self, key: str, status: str, detail: str) -> None:
         if key == "dh":
             page = self.pages_by_key.get(key)
-            if page is not None:
+            if page is not None and page.should_save_reports():
                 try:
                     saved_path = page.save_reports(status, detail)
                 except Exception as exc:
@@ -788,6 +809,9 @@ class MainWindow(QMainWindow):
                         self._append_log(
                             "COMPLETE", "DH 回告数据已保存：{}".format(saved_path)
                         )
+        if key == self._active_test_key:
+            self._active_test_key = None
+            self._update_action_state()
         if key == self._continuous_key:
             if self._continuous_stop_pending:
                 self._finish_continuous(
@@ -834,6 +858,12 @@ class MainWindow(QMainWindow):
         self.log.append(category, line)
 
     def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        if self._active_test_key == "dh":
+            self._append_log(
+                "WARNING", "DH 点火请求已受理，产品端自然完成前不能关闭窗口"
+            )
+            event.ignore()
+            return
         self._echo_timer.stop()
         self._pending_payload = None
         self._stop_continuous("窗口关闭", "用户停止")

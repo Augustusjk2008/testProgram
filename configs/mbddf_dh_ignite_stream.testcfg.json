@@ -1,0 +1,179 @@
+{
+  "schemaVersion": "1.0",
+  "configId": "mbddf-dh-ignite-stream",
+  "productModel": "MB_DDF_v2",
+  "productName": "MB_DDF DH ignition finite stream",
+  "configVersion": "1.0.0",
+  "steps": [
+    {
+      "stepId": "DH_IGNITE_STREAM",
+      "testItemId": "dh_ignite_stream",
+      "name": "DH 点火测试",
+      "type": "EXCHANGE",
+      "algorithmId": "mbddf.dh_ignite_stream",
+      "parameters": {
+        "protocol": {
+          "requestValues": {
+            "power_enable": 0,
+            "return_enable": 0,
+            "channel_enabled[0]": false,
+            "channel_enabled[1]": false,
+            "channel_enabled[2]": false,
+            "channel_enabled[3]": false,
+            "channel_enabled[4]": false,
+            "channel_enabled[5]": false,
+            "channel_enabled[6]": false,
+            "channel_enabled[7]": false,
+            "channel_enabled[8]": false,
+            "channel_enabled[9]": false,
+            "channel_enabled[10]": false,
+            "channel_enabled[11]": false,
+            "channel_enabled[12]": false,
+            "channel_enabled[13]": false,
+            "channel_enabled[14]": false,
+            "channel_enabled[15]": false,
+            "channel_enabled[16]": false,
+            "channel_enabled[17]": false,
+            "channel_enabled[18]": false,
+            "channel_enabled[19]": false,
+            "channel_enabled[20]": false,
+            "channel_enabled[21]": false,
+            "channel_enabled[22]": false,
+            "report_count": 50,
+            "interval_us": 2500,
+            "delay_frames": 5
+          }
+        }
+      },
+      "timeoutMs": 2000,
+      "retryCount": 0,
+      "enabled": true,
+      "dependsOn": [],
+      "criteria": []
+    }
+  ],
+  "hardwareRequirements": [],
+  "protocolProfiles": [
+    {
+      "id": "dh_control_request",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {
+        "header": "55AA",
+        "lengthBytes": 1,
+        "crc": "CRC-16/XMODEM",
+        "crcByteOrder": "little"
+      },
+      "timing": {"timeoutMs": 2000}
+    },
+    {
+      "id": "dh_control_response",
+      "busType": "CONTROL",
+      "payloadEncoding": "raw",
+      "frameFormat": {
+        "header": "55AA",
+        "lengthBytes": 1,
+        "crc": "CRC-16/XMODEM",
+        "crcByteOrder": "little"
+      },
+      "timing": {"timeoutMs": 2000}
+    }
+  ],
+  "executionConfig": {
+    "protocolAssetRoot": "${MB_DDF_PROTOCOL_CSV_DIR}",
+    "protocol": {
+      "requestProfileId": "dh_control_request",
+      "responseProfileId": "dh_control_response"
+    },
+    "stream": {
+      "readTimeoutMs": 2000,
+      "writeTimeoutMs": 2000
+    },
+    "transport": {
+      "openTimeoutMs": 1000,
+      "readChunkBytes": 260
+    },
+    "serial": {
+      "baudRate": 614400,
+      "dataBits": 8,
+      "parity": "Even",
+      "stopBits": 1,
+      "flowControl": "None"
+    },
+    "initialSequence": 4660
+  },
+  "safetyPolicy": {
+    "enterSafeStateOnStop": false,
+    "enterSafeStateOnError": false
+  },
+  "runtimeConfig": {
+    "parallelEnabled": false,
+    "maxParallel": 1,
+    "defaultTimeoutMs": 2000,
+    "defaultRetryCount": 0,
+    "retryIntervalMs": 0,
+    "taskPriorityDefault": 2,
+    "stopOnFirstFailure": true,
+    "allowResume": false
+  },
+  "reportFields": {
+    "title": "DH 点火测试",
+    "description": "DUT 先回告可配置数量的基线帧，再执行一次点火并回告到配置总帧数；本测试无 STOP。",
+    "supportedRunModes": ["device_stream"],
+    "stoppable": false,
+    "measurements": [
+      {"id": "status", "label": "设备状态", "unit": "", "primary": false},
+      {"id": "err_code", "label": "设备错误码", "unit": "", "primary": false},
+      {"id": "frame_index", "label": "帧索引", "unit": "帧", "primary": false},
+      {"id": "ignition_phase", "label": "点火阶段", "unit": "", "primary": false},
+      {"id": "power_enable_readback", "label": "点火电源使能回告", "unit": "", "primary": false},
+      {"id": "return_enable_readback", "label": "点火回线使能回告", "unit": "", "primary": false},
+      {"id": "dh_status.ch0", "label": "DH0 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch1", "label": "DH1 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch2", "label": "DH2 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch3", "label": "DH3 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch4", "label": "DH4 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch5", "label": "DH5 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch6", "label": "DH6 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch7", "label": "DH7 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch8", "label": "DH8 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch9", "label": "DH9 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch10", "label": "DH10 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch11", "label": "DH11 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch12", "label": "DH12 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch13", "label": "DH13 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch14", "label": "DH14 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch15", "label": "DH15 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch16", "label": "DH16 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch17", "label": "DH17 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch18", "label": "DH18 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch19", "label": "DH19 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch20", "label": "DH20 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch21", "label": "DH21 状态", "unit": "", "primary": false},
+      {"id": "dh_status.ch22", "label": "DH22 状态", "unit": "", "primary": false},
+      {"id": "telemetry[0]", "label": "DH0 遥测电压", "unit": "V", "primary": true},
+      {"id": "telemetry[1]", "label": "DH1 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[2]", "label": "DH2 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[3]", "label": "DH3 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[4]", "label": "DH4 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[5]", "label": "DH5 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[6]", "label": "DH6 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[7]", "label": "DH7 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[8]", "label": "DH8 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[9]", "label": "DH9 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[10]", "label": "DH10 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[11]", "label": "DH11 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[12]", "label": "DH12 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[13]", "label": "DH13 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[14]", "label": "DH14 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[15]", "label": "DH15 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[16]", "label": "DH16 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[17]", "label": "DH17 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[18]", "label": "DH18 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[19]", "label": "DH19 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[20]", "label": "DH20 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[21]", "label": "DH21 遥测电压", "unit": "V", "primary": false},
+      {"id": "telemetry[22]", "label": "DH22 遥测电压", "unit": "V", "primary": false}
+    ]
+  }
+}

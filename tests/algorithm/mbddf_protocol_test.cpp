@@ -362,6 +362,52 @@ TEST(MbddfProtocolTest, LoadsConfirmedImuStreamProfilesAndScaledTemperature)
     EXPECT_EQ(decoded.value(QStringLiteral("software_version")).toUInt(), 0xABCDu);
 }
 
+TEST(MbddfProtocolTest, DhControlUsesFrameDelayWithoutLegacyTimeDelayField)
+{
+    const QString directory = currentCatalogDirectory();
+    if (!QFileInfo(directory).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not present";
+    }
+
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(directory, &error)) << error.toStdString();
+    const MessageDefinition* request = catalog.findByName(
+        QStringLiteral("dh_control_request"));
+    const MessageDefinition* response = catalog.findByName(
+        QStringLiteral("dh_control_response"));
+    ASSERT_NE(request, nullptr);
+    ASSERT_NE(response, nullptr);
+    EXPECT_EQ(catalog.findByCommand(0x06, 0x02, Direction::Request), request);
+    EXPECT_EQ(catalog.findByCommand(0x06, 0x02, Direction::Response), response);
+    EXPECT_EQ(request->payloadLength, 48);
+    EXPECT_EQ(response->payloadLength, 123);
+    EXPECT_NE(request->findField(QStringLiteral("delay_frames")), nullptr);
+    EXPECT_EQ(request->findField(QStringLiteral("delay_us")), nullptr);
+
+    const QVariantMap input{
+        {QStringLiteral("power_enable"), 1},
+        {QStringLiteral("return_enable"), 0},
+        {QStringLiteral("channel[0]"), quint32{0x00400001}},
+        {QStringLiteral("channel[1]"), 0u},
+        {QStringLiteral("report_count"), 50},
+        {QStringLiteral("interval_us"), 2500},
+        {QStringLiteral("delay_frames"), 5},
+    };
+    QByteArray payload;
+    ASSERT_TRUE(encodePayload(*request, input, 0xFFFE, &payload, &error))
+        << error.toStdString();
+    ASSERT_EQ(payload.size(), 48);
+    EXPECT_EQ(payload.mid(0, 21).toHex().toUpper(),
+              QByteArray("110602FEFF010001004000000000003200C4090500"));
+
+    QVariantMap decoded;
+    ASSERT_TRUE(decodePayload(*request, payload, &decoded, &error))
+        << error.toStdString();
+    EXPECT_EQ(decoded.value(QStringLiteral("delay_frames")).toUInt(), 5u);
+    EXPECT_EQ(decoded.value(QStringLiteral("channel[0]")).toUInt(), 0x00400001u);
+}
+
 TEST(MbddfProtocolTest, LoadsFiveSampleHelmFeedbackAndSweepDuration)
 {
     const QString directory = currentCatalogDirectory();

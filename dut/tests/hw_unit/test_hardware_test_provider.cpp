@@ -464,7 +464,57 @@ TEST(HardwareTestProviderTest, DhControlRejectsChannelsOutsideTwentyThreeWithout
     EXPECT_EQ(provider.begin_dh(request), ProductErrorCode::ParamOutOfRange);
 
     ASSERT_TRUE(request.set_unsigned("channel[0]", 0));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
+    EXPECT_EQ(provider.begin_dh(request), ProductErrorCode::ParamOutOfRange);
+
     ASSERT_TRUE(request.set_unsigned("channel[1]", 1));
+    EXPECT_EQ(provider.begin_dh(request), ProductErrorCode::ParamOutOfRange);
+
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
+    ASSERT_TRUE(request.set_unsigned("power_enable", 2));
+    EXPECT_EQ(provider.begin_dh(request), ProductErrorCode::ParamOutOfRange);
+
+    ASSERT_TRUE(request.set_unsigned("power_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("return_enable", 2));
+    EXPECT_EQ(provider.begin_dh(request), ProductErrorCode::ParamOutOfRange);
+}
+
+TEST(HardwareTestProviderTest, DirectDhControlRequiresServiceBurstOrchestration) {
+    ProductProtocol protocol;
+    HardwareTestProvider provider;
+    auto request = protocol.create_message("dh_control_request", false);
+    auto response = protocol.create_message("dh_control_response", false);
+    ASSERT_TRUE(request.set_unsigned("power_enable", 0));
+    ASSERT_TRUE(request.set_unsigned("return_enable", 0));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
+    ASSERT_TRUE(request.set_unsigned("report_count", 2));
+    ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 1));
+
+    EXPECT_EQ(provider.handle(request, response), ProductErrorCode::CmdUnknown);
+}
+
+TEST(HardwareTestProviderTest, DhBeginRepeatsServiceBusinessValidationBeforeHardwareAccess) {
+    ProductProtocol protocol;
+    HardwareTestProvider provider;
+    auto request = protocol.create_message("dh_control_request", false);
+    ASSERT_TRUE(request.set_unsigned("power_enable", 0));
+    ASSERT_TRUE(request.set_unsigned("return_enable", 0));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
+    ASSERT_TRUE(request.set_unsigned("report_count", 0));
+    ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 0));
+    EXPECT_EQ(provider.begin_dh(request), ProductErrorCode::ParamOutOfRange);
+
+    ASSERT_TRUE(request.set_unsigned("report_count", 2));
+    ASSERT_TRUE(request.set_unsigned("interval_us", 2499));
+    EXPECT_EQ(provider.begin_dh(request), ProductErrorCode::ParamOutOfRange);
+
+    ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 2));
     EXPECT_EQ(provider.begin_dh(request), ProductErrorCode::ParamOutOfRange);
 }
 

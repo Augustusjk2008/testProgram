@@ -132,6 +132,7 @@ export interface TestDescriptor {
   algorithmId: string
   title: string
   description: string
+  stoppable: boolean
   supportedRunModes: RunMode[]
   measurements: TestMeasurementDescriptor[]
   runParameterSchemaVersion: string
@@ -317,6 +318,7 @@ export const EMPTY_TEST_DESCRIPTOR: TestDescriptor = {
   algorithmId: '',
   title: '',
   description: '',
+  stoppable: true,
   supportedRunModes: [],
   measurements: [],
   runParameterSchemaVersion: '',

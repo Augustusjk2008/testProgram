@@ -368,6 +368,9 @@ function parseDescriptor(value: JsonObject): TestDescriptor {
       algorithmId: requiredString(value, 'algorithmId'),
       title: requiredString(value, 'title'),
       description: requiredString(value, 'description'),
+      stoppable: Object.prototype.hasOwnProperty.call(value, 'stoppable')
+        ? requiredBoolean(value, 'stoppable')
+        : true,
       supportedRunModes: modeValue as RunMode[],
       measurements,
       runParameterSchemaVersion: schemaVersion,

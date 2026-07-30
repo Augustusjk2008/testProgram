@@ -772,7 +772,6 @@ def test_page_request_resets_once_via_session_start(qtbot, monkeypatch) -> None:
     (
         (HardwareTestStatus.COMPLETED.value, "已接收全部 DH 回告"),
         (HardwareTestStatus.EXECUTION_FAILED.value, "板端返回失败"),
-        (HardwareTestStatus.EXECUTION_FAILED.value, "用户停止"),
     ),
 )
 def test_dh_finish_saves_reports_and_logs_path(
@@ -789,11 +788,33 @@ def test_dh_finish_saves_reports_and_logs_path(
         return saved_path
 
     monkeypatch.setattr(page, "save_reports", save_reports, raising=False)
+    page.save_data_check.setChecked(True)
 
     session.test_finished.emit("dh", status, detail)
 
     assert save_calls == [(status, detail)]
     assert "DH 回告数据已保存：{}".format(saved_path) in window.log_edit.toPlainText()
+
+
+def test_dh_finish_does_not_save_without_explicit_selection(
+    qtbot, monkeypatch
+) -> None:
+    window, _ = make_window(qtbot)
+    session = window.fake_session
+    page = window.pages_by_key["dh"]
+    save_calls = []
+    monkeypatch.setattr(
+        page,
+        "save_reports",
+        lambda *_args: save_calls.append(True),
+        raising=False,
+    )
+
+    session.test_finished.emit(
+        "dh", HardwareTestStatus.COMPLETED.value, "已接收全部 DH 回告"
+    )
+
+    assert save_calls == []
 
 
 def test_dh_save_failure_is_logged_without_escaping_signal_handler(
@@ -807,12 +828,52 @@ def test_dh_save_failure_is_logged_without_escaping_signal_handler(
         raise OSError("磁盘已满")
 
     monkeypatch.setattr(page, "save_reports", fail_to_save, raising=False)
+    page.save_data_check.setChecked(True)
 
     session.test_finished.emit(
-        "dh", HardwareTestStatus.EXECUTION_FAILED.value, "用户停止"
+        "dh", HardwareTestStatus.EXECUTION_FAILED.value, "设备回告失败"
     )
 
     assert "DH 回告数据保存失败：磁盘已满" in window.log_edit.toPlainText()
+
+
+def test_active_dh_disables_stop_and_connection_and_rejects_close(
+    qtbot, monkeypatch
+) -> None:
+    window, channel = make_window(qtbot)
+    session = window.fake_session
+    monkeypatch.setattr(
+        window.pages_by_key["dh"], "reset_for_run", lambda: None
+    )
+    connect_window(qtbot, window)
+
+    session.test_started.emit("dh")
+    session.busy_changed.emit(True)
+
+    assert not window.stop_button.isEnabled()
+    assert not window.connect_button.isEnabled()
+    window._stop_active()
+    window.toggle_connection()
+    assert session.stop_calls == 0
+    assert channel.is_open
+
+    class CloseEvent:
+        ignored = False
+
+        def ignore(self):
+            self.ignored = True
+
+    event = CloseEvent()
+    window.closeEvent(event)
+    assert event.ignored
+    assert channel.is_open
+
+    session.test_finished.emit(
+        "dh", HardwareTestStatus.COMPLETED.value, "已接收全部 DH 回告"
+    )
+    session.busy_changed.emit(False)
+    assert window.stop_button.isEnabled() is False
+    assert window.connect_button.isEnabled()
 
 
 def test_execute_all_collects_parameters_from_every_page(qtbot) -> None:

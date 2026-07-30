@@ -336,6 +336,27 @@ ProductErrorCode Detail::populate_dh_telemetry(
     return ProductErrorCode::Ok;
 }
 
+ProductErrorCode Detail::validate_dh_control_request(
+    const ProductMessage& request) {
+    const auto report_count = request.get_unsigned("report_count");
+    const auto interval_us = request.get_unsigned("interval_us");
+    const auto delay_frames = request.get_unsigned("delay_frames");
+    const auto power_enable = request.get_unsigned("power_enable");
+    const auto return_enable = request.get_unsigned("return_enable");
+    const auto first_channels = request.get_unsigned("channel[0]");
+    const auto second_channels = request.get_unsigned("channel[1]");
+    if (!report_count || !interval_us || !delay_frames || !power_enable ||
+        !return_enable || !first_channels || !second_channels ||
+        *report_count == 0 || *report_count > 0xFFFFu ||
+        *interval_us < 2500u || *interval_us > 0xFFFFu ||
+        *delay_frames > 0xFFFFu || *delay_frames >= *report_count ||
+        *power_enable > 1 || *return_enable > 1 || *first_channels == 0 ||
+        ((*first_channels & ~0x007FFFFFu) != 0) || *second_channels != 0) {
+        return ProductErrorCode::ParamOutOfRange;
+    }
+    return ProductErrorCode::Ok;
+}
+
 ProductErrorCode Detail::run_helm_board_test(const ProductMessage& request,
                                              HW::PwmDevice& pwm,
                                              HW::Ad7606Device& ad7606,
@@ -1135,25 +1156,17 @@ ProductErrorCode HardwareTestProvider::handle(const ProductMessage& request,
     if (request.name() == "imu_stream_stop_request") {
         return impl_->stop_imu_stream();
     }
-    if (request.name() == "dh_control_request") {
-        const auto started = begin_dh(request);
-        return started == ProductErrorCode::Ok
-                   ? handle_dh_control_report(request, response, 0)
-                   : started;
-    }
     return ProductErrorCode::CmdUnknown;
 }
 
 ProductErrorCode HardwareTestProvider::begin_dh(const ProductMessage& request) {
+    const auto validation = Detail::validate_dh_control_request(request);
+    if (validation != ProductErrorCode::Ok) {
+        return validation;
+    }
     const auto power_enable = request.get_unsigned("power_enable");
     const auto return_enable = request.get_unsigned("return_enable");
     const auto first = request.get_unsigned("channel[0]");
-    const auto second = request.get_unsigned("channel[1]");
-    if (!power_enable || !return_enable || !first || !second ||
-        *power_enable > 1 || *return_enable > 1 ||
-        ((*first & ~0x007FFFFFu) != 0) || *second != 0) {
-        return ProductErrorCode::ParamOutOfRange;
-    }
     const auto ready = impl_->dh.ensure_open();
     if (ready != ProductErrorCode::Ok) {
         return ready;
@@ -1191,10 +1204,9 @@ ProductErrorCode HardwareTestProvider::begin_dh(const ProductMessage& request) {
 
 ProductErrorCode HardwareTestProvider::handle_dh_control_report(
     const ProductMessage& request, ProductMessage& response, size_t report_index) {
-    const auto first = request.get_unsigned("channel[0]");
-    const auto second = request.get_unsigned("channel[1]");
-    if (!first || !second || ((*first & ~0x007FFFFFu) != 0) || *second != 0) {
-        return ProductErrorCode::ParamOutOfRange;
+    const auto validation = Detail::validate_dh_control_request(request);
+    if (validation != ProductErrorCode::Ok) {
+        return validation;
     }
     auto ready = impl_->dh.ensure_open();
     if (ready != ProductErrorCode::Ok) {

@@ -69,6 +69,18 @@ RunParameterDescriptor integerParameter(const QString& id,
     return descriptor;
 }
 
+RunParameterDescriptor booleanParameter(const QString& id,
+                                        const QString& label,
+                                        bool defaultValue)
+{
+    RunParameterDescriptor descriptor;
+    descriptor.id = id;
+    descriptor.label = label;
+    descriptor.kind = RunParameterKind::Boolean;
+    descriptor.defaultValue = defaultValue;
+    return descriptor;
+}
+
 RunParameterDescriptor busLinkParameter()
 {
     RunParameterDescriptor descriptor;
@@ -207,6 +219,54 @@ const RunParameterSchema& dhSchema()
     return schema;
 }
 
+const RunParameterSchema& dhIgniteSchema()
+{
+    static const RunParameterSchema schema = [] {
+        RunParameterSchema result;
+        result.version = QStringLiteral("1");
+
+        RunParameterDescriptor power = integerParameter(
+            QStringLiteral("power_enable"), QStringLiteral("点火电源使能"),
+            QString{}, 0, 0, 255);
+        power.description = QStringLiteral("DUT 校验业务取值是否为 0 或 1");
+        result.parameters.push_back(power);
+
+        RunParameterDescriptor returnEnable = integerParameter(
+            QStringLiteral("return_enable"), QStringLiteral("点火回线使能"),
+            QString{}, 0, 0, 255);
+        returnEnable.description = QStringLiteral("DUT 校验业务取值是否为 0 或 1");
+        result.parameters.push_back(returnEnable);
+
+        for (int channel = 0; channel < 23; ++channel) {
+            RunParameterDescriptor enabled = booleanParameter(
+                QStringLiteral("channel_enabled[%1]").arg(channel),
+                QStringLiteral("DH%1 点火通道").arg(channel), false);
+            enabled.description = QStringLiteral("编码到 channel[0] bit%1").arg(channel);
+            result.parameters.push_back(enabled);
+        }
+
+        RunParameterDescriptor count = integerParameter(
+            QStringLiteral("report_count"), QStringLiteral("回告总帧数"),
+            QStringLiteral("帧"), 50, 0, 65535);
+        count.description = QStringLiteral("业务范围由 DUT 校验");
+        result.parameters.push_back(count);
+
+        RunParameterDescriptor interval = integerParameter(
+            QStringLiteral("interval_us"), QStringLiteral("采样起点最小间隔"),
+            QStringLiteral("us"), 2500, 0, 65535);
+        interval.description = QStringLiteral("业务范围由 DUT 校验；PC 用于估算时间轴");
+        result.parameters.push_back(interval);
+
+        RunParameterDescriptor delay = integerParameter(
+            QStringLiteral("delay_frames"), QStringLiteral("点火前基线帧数"),
+            QStringLiteral("帧"), 5, 0, 65535);
+        delay.description = QStringLiteral("DUT 在基线帧完成后、下一帧采样前点火");
+        result.parameters.push_back(delay);
+        return result;
+    }();
+    return schema;
+}
+
 Result<QVariantMap> validateValue(const RunParameterDescriptor& descriptor,
                                  const QVariant& value,
                                  const QVariantMap& values)
@@ -295,6 +355,9 @@ const RunParameterSchema* findRunParameterSchema(const QString& algorithmId)
     }
     if (algorithmId == QStringLiteral("mbddf.dh_pulse_config")) {
         return &dhSchema();
+    }
+    if (algorithmId == QStringLiteral("mbddf.dh_ignite_stream")) {
+        return &dhIgniteSchema();
     }
     if (algorithmId == QStringLiteral("mbddf.bus_loop")) {
         return &busLoopSchema();

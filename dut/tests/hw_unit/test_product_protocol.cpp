@@ -242,6 +242,24 @@ TEST(ProductProtocolTest, ReportsLengthMismatchForKnownCommandInWrongFrameClass)
     EXPECT_EQ(parsed.error().orig_sequence, 0x3456u);
 }
 
+TEST(ProductProtocolTest, KeepsDhControlDelayFramesAtExistingOffset) {
+    ProductProtocol protocol;
+    auto request = protocol.create_message("dh_control_request", false);
+    ASSERT_TRUE(request);
+    EXPECT_EQ(request.get_unsigned("type_group").value_or(0), 0x06u);
+    EXPECT_EQ(request.get_unsigned("sub_type").value_or(0), 0x02u);
+    const auto delay_offset = request.data_offset("delay_frames");
+    ASSERT_TRUE(delay_offset.has_value());
+    EXPECT_EQ(*delay_offset, 19u);
+    EXPECT_FALSE(request.data_offset("delay_us").has_value());
+    EXPECT_EQ(request.get_unsigned("delay_frames").value_or(0), 5u);
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 0x1234));
+
+    const auto parsed = protocol.parse_request(request.bytes());
+    ASSERT_TRUE(parsed);
+    EXPECT_EQ(parsed.message().get_unsigned("delay_frames").value_or(0), 0x1234u);
+}
+
 TEST(ProductProtocolTest, EncodesLittleEndianScalarsAndBitFields) {
     ProductProtocol protocol;
     auto response = protocol.create_message("dh_control_response");

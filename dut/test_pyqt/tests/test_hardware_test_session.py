@@ -240,12 +240,12 @@ def test_timeout_selection_and_dh_formula() -> None:
     assert session.response_timer.interval() == SPI_FLASH_TIMEOUT_MS
     session.stop()
 
-    assert dh_timeout_ms(3, 2500, 500) == 2001
+    assert dh_timeout_ms(3, 2500, 500) == 2000
     assert dh_timeout_ms(120, 2500, 0) == 2000
     assert dh_report_gap_timeout_ms(2500) == 2003
 
 
-def test_dh_uses_fifty_reports_and_2500_us_as_defaults() -> None:
+def test_dh_uses_fifty_reports_2500_us_and_five_delay_frames_as_defaults() -> None:
     session, channel, catalog = make_session()
 
     assert session.run_test("dh")
@@ -255,16 +255,49 @@ def test_dh_uses_fifty_reports_and_2500_us_as_defaults() -> None:
 
     assert request_values["report_count"] == 50
     assert request_values["interval_us"] == 2500
+    assert request_values["delay_frames"] == 5
+    assert "delay_us" not in request_values
+    emit_active_response(
+        session,
+        channel,
+        catalog,
+        "dh_control_response",
+        {"status": 1, "err_code": 0x0102},
+    )
+
+
+def test_stop_does_not_cancel_an_accepted_dh_burst() -> None:
+    session, channel, catalog = make_session()
+    assert session.run_test("dh", {"report_count": 2, "delay_frames": 0})
+
     session.stop()
+
+    assert session.active_test_key == "dh"
+    assert session.is_busy
+    emit_active_response(session, channel, catalog, "dh_control_response")
+    assert session.active_test_key == "dh"
+    emit_response(
+        channel,
+        response(
+            catalog,
+            "dh_control_response",
+            sequence=(session.active_sequence + 1) & 0xFFFF,
+        ),
+    )
+    assert session.status_for("dh") == TestStatus.COMPLETED
 
 
 def test_dh_long_burst_switches_to_progress_based_timeout() -> None:
     session, channel, catalog = make_session()
 
     assert session.run_test(
-        "dh", {"report_count": 120, "interval_us": 2500, "delay_us": 0}
+        "dh", {"report_count": 120, "interval_us": 2500, "delay_frames": 9}
     )
-    assert session.response_timer.interval() == dh_timeout_ms(120, 2500, 0)
+    assert session.response_timer.interval() == dh_timeout_ms(120, 2500, 9)
+    request_values = decode_payload(
+        catalog.get("dh_control_request"), channel.sent_payloads[-1]
+    )
+    assert request_values["delay_frames"] == 9
 
     emit_active_response(session, channel, catalog, "dh_control_response")
 
@@ -295,7 +328,7 @@ def test_dh_collects_only_consecutive_request_sequences_with_wraparound() -> Non
     reports = []
     session.dh_report_received.connect(reports.append)
     assert session.run_test(
-        "dh", {"report_count": 2, "interval_us": 2500, "delay_us": 0}
+        "dh", {"report_count": 2, "interval_us": 2500, "delay_frames": 5}
     )
     request_values = decode_payload(
         catalog.get("dh_control_request"), channel.sent_payloads[-1]
@@ -369,20 +402,54 @@ def test_dh_non_telemetry_failure_finishes_on_the_first_response() -> None:
 @pytest.mark.parametrize(
     "parameters",
     (
-        {"power_enable": 2},
-        {"return_enable": -1},
-        {"channel[0]": 1 << 23},
-        {"channel[1]": 1},
+        {"power_enable": 2, "return_enable": 3},
+        {"channel[0]": 0, "channel[1]": 1},
         {"report_count": 0},
-        {"report_count": 65536},
-        {"interval_us": -1},
+        {"interval_us": 0},
         {"interval_us": 2499},
-        {"interval_us": 65536},
-        {"delay_us": -1},
-        {"delay_us": 65536},
+        {"report_count": 2, "delay_frames": 2},
+        {"channel[0]": 0, "channel[1]": 0},
     ),
 )
-def test_dh_rejects_invalid_enables_channels_and_report_bounds(parameters) -> None:
+def test_dh_accepts_all_values_within_their_wire_encoding_ranges(parameters) -> None:
+    session, channel, catalog = make_session()
+
+    assert session.run_test("dh", parameters)
+    request_values = decode_payload(
+        catalog.get("dh_control_request"), channel.sent_payloads[-1]
+    )
+    for name, value in parameters.items():
+        assert request_values[name] == value
+    emit_active_response(
+        session,
+        channel,
+        catalog,
+        "dh_control_response",
+        {"status": 1, "err_code": 0x0102},
+    )
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    (
+        {"power_enable": -1},
+        {"power_enable": 256},
+        {"return_enable": -1},
+        {"return_enable": 256},
+        {"channel[0]": -1},
+        {"channel[0]": 1 << 32},
+        {"channel[1]": -1},
+        {"channel[1]": 1 << 32},
+        {"report_count": -1},
+        {"report_count": 65536},
+        {"interval_us": -1},
+        {"interval_us": 65536},
+        {"delay_frames": -1},
+        {"delay_frames": 65536},
+        {"delay_frames": 1.5},
+    ),
+)
+def test_dh_rejects_only_non_integer_or_out_of_wire_range_values(parameters) -> None:
     session, channel, _ = make_session()
 
     assert not session.run_test("dh", parameters)

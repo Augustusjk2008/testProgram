@@ -1,6 +1,7 @@
 from copy import deepcopy
 
 import pytest
+from PyQt5.QtWidgets import QSpinBox
 
 from test_pyqt.hardware_test_pages import (
     PAGE_CLASSES,
@@ -261,17 +262,25 @@ def test_dh_pulse_configuration_disables_width_editors_when_config_is_off(
     assert page.collect_parameters()["config_enable"] == 0
 
 
-def test_dh_parameters_pack_only_twenty_three_channels(qtbot, catalog) -> None:
+def test_dh_parameters_use_delay_frames_and_only_wire_encoding_ranges(
+    qtbot, catalog
+) -> None:
     page = make_page(qtbot, catalog, "dh")
+    power_enable_spin = page.findChild(QSpinBox, "dhPowerEnableSpin")
+    return_enable_spin = page.findChild(QSpinBox, "dhReturnEnableSpin")
+    delay_frames_spin = page.findChild(QSpinBox, "dhDelayFramesSpin")
+    assert power_enable_spin is not None
+    assert return_enable_spin is not None
+    assert delay_frames_spin is not None
     for channel_check in page.channel_checks:
         channel_check.setChecked(False)
     for index in (0, 7, 22):
         page.channel_checks[index].setChecked(True)
-    page.power_enable_check.setChecked(True)
-    page.return_enable_check.setChecked(False)
-    page.report_count_spin.setValue(3)
-    page.interval_spin.setValue(2500)
-    page.delay_spin.setValue(400)
+    power_enable_spin.setValue(2)
+    return_enable_spin.setValue(3)
+    page.report_count_spin.setValue(0)
+    page.interval_spin.setValue(2499)
+    delay_frames_spin.setValue(7)
 
     parameters = page.collect_parameters()
     outbound = ProductProtocol(catalog).build_request(
@@ -279,13 +288,13 @@ def test_dh_parameters_pack_only_twenty_three_channels(qtbot, catalog) -> None:
     )
 
     assert parameters == {
-        "power_enable": 1,
-        "return_enable": 0,
+        "power_enable": 2,
+        "return_enable": 3,
         "channel[0]": 0x00400081,
         "channel[1]": 0,
-        "report_count": 3,
-        "interval_us": 2500,
-        "delay_us": 400,
+        "report_count": 0,
+        "interval_us": 2499,
+        "delay_frames": 7,
     }
     assert outbound.values["channel[0]"] == 0x00400081
     assert outbound.values["channel[1]"] == 0
@@ -304,9 +313,27 @@ def test_dh_page_initial_selection_preserves_session_defaults(
     assert parameters["return_enable"] == 1
     assert parameters["report_count"] == 50
     assert parameters["interval_us"] == 2500
+    assert parameters["delay_frames"] == 5
     assert page.report_count_spin.value() == 50
-    assert page.interval_spin.minimum() == 2500
+    assert page.report_count_spin.minimum() == 0
+    assert page.interval_spin.minimum() == 0
     assert page.interval_spin.value() == 2500
+    delay_frames_spin = page.findChild(QSpinBox, "dhDelayFramesSpin")
+    assert delay_frames_spin is not None
+    assert delay_frames_spin.value() == 5
+
+
+def test_dh_delay_frames_does_not_shift_chart_time_axis(qtbot, catalog) -> None:
+    page = make_page(qtbot, catalog, "dh")
+    delay_frames_spin = page.findChild(QSpinBox, "dhDelayFramesSpin")
+    assert delay_frames_spin is not None
+    delay_frames_spin.setValue(17)
+    page.reset_for_run()
+
+    page.render_response(response(catalog, "dh_control_response", sequence=100))
+    page.render_response(response(catalog, "dh_control_response", sequence=101))
+
+    assert page.sample_times_ms == [0.0, 2.5]
 
 
 def test_dh_page_allows_the_output_directory_to_be_selected(
@@ -324,6 +351,18 @@ def test_dh_page_allows_the_output_directory_to_be_selected(
     assert page.save_directory_button.objectName() == "dhSaveDirectoryButton"
     assert page.save_directory_edit.text() == str(tmp_path)
     assert page.saved_file_label.objectName() == "dhSavedFileLabel"
+
+
+def test_dh_page_is_finite_only_and_requires_explicit_save(qtbot, catalog) -> None:
+    page = make_page(qtbot, catalog, "dh")
+
+    assert not page.continuous_button.isVisible()
+    assert not page.continuous_button.isEnabled()
+    assert page.save_data_check.objectName() == "dhSaveDataCheck"
+    assert not page.should_save_reports()
+
+    page.save_data_check.setChecked(True)
+    assert page.should_save_reports()
 
 
 def test_common_page_places_checkable_continuous_button_next_to_run(

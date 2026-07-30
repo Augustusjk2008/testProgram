@@ -1,4 +1,5 @@
 #include "MB_DDF_HW_Test/HardwareTestService.h"
+#include "MB_DDF_HW_Test/HardwareTestProviderDetail.h"
 
 #include "MB_DDF/Debug/Logger.h"
 
@@ -113,33 +114,22 @@ bool HardwareTestService::send_message(ProductMessage& message,
 }
 
 bool HardwareTestService::process_dh_request(const ProductMessage& request) {
-    const auto report_count_value = request.get_unsigned("report_count");
-    const auto delay_value = request.get_unsigned("delay_us");
-    const auto interval_value = request.get_unsigned("interval_us");
-    if (!report_count_value || !delay_value || !interval_value || *report_count_value == 0 ||
-        *report_count_value > 0xFFFFu || *interval_value < 2500u) {
+    const auto validation = Detail::validate_dh_control_request(request);
+    if (validation != ProductErrorCode::Ok) {
         auto response = protocol_.create_message("dh_control_response", false);
-        set_execution_status(response, ProductErrorCode::ParamOutOfRange);
+        set_execution_status(response, validation);
         return send_message(response, static_cast<uint16_t>(
                                         request.get_unsigned("seq").value_or(0)));
     }
 
-    {
-        std::lock_guard<std::mutex> lock(provider_mutex_);
-        const auto error = provider_.begin_dh(request);
-        if (error != ProductErrorCode::Ok) {
-            auto response = protocol_.create_message("dh_control_response", false);
-            set_execution_status(response, error);
-            return send_message(response, static_cast<uint16_t>(
-                                            request.get_unsigned("seq").value_or(0)));
-        }
-    }
+    const auto report_count_value = request.get_unsigned("report_count");
+    const auto delay_frames_value = request.get_unsigned("delay_frames");
+    const auto interval_value = request.get_unsigned("interval_us");
 
     const auto request_sequence = static_cast<uint16_t>(
         request.get_unsigned("seq").value_or(0));
     const auto interval = std::chrono::microseconds(*interval_value);
-    auto next_sample = std::chrono::steady_clock::now() +
-                       std::chrono::microseconds(*delay_value);
+    auto next_sample = std::chrono::steady_clock::now();
     for (uint64_t index = 0; index < *report_count_value; ++index) {
         const auto now = std::chrono::steady_clock::now();
         if (next_sample > now) {
@@ -149,8 +139,18 @@ bool HardwareTestService::process_dh_request(const ProductMessage& request) {
         auto response = protocol_.create_message("dh_control_response", false);
         ProductErrorCode error = ProductErrorCode::TaskExecFailed;
         std::chrono::steady_clock::time_point sample_started;
+        const bool is_baseline = index < *delay_frames_value;
         {
             std::lock_guard<std::mutex> lock(provider_mutex_);
+            if (index == *delay_frames_value) {
+                error = provider_.begin_dh(request);
+                if (error != ProductErrorCode::Ok) {
+                    set_execution_status(response, error);
+                    return send_message(response, static_cast<uint16_t>(
+                                                    request_sequence +
+                                                    static_cast<uint16_t>(index)));
+                }
+            }
             sample_started = std::chrono::steady_clock::now();
             error = provider_.handle_dh_control_report(
                 request, response, static_cast<size_t>(index));
@@ -160,6 +160,10 @@ bool HardwareTestService::process_dh_request(const ProductMessage& request) {
                                            static_cast<uint16_t>(index)))) {
                 return false;
             }
+        }
+        // 基线采集失败时已经发出错误帧，但不得再触发 DH 或继续本次突发。
+        if (is_baseline && error != ProductErrorCode::Ok) {
+            return true;
         }
         // 从本帧实际采样起点计算下一截止时刻，发送耗时只占用周期余量。
         next_sample = sample_started + interval;

@@ -2,7 +2,7 @@
 
 > 适用项目：多产品通用硬件测试软件（Qt 5.15 兼容、Qt 6 Core/Network/SerialPort fallback / C++17 / Windows）
 > 本文定位：产品协议资产、当前 MB_DDF CSV 解析规则、帧编解码和算法运行期语义。
-> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/include/algorithm/run_parameter_schema.h`、`src/algorithm/src/run_parameter_schema.cpp`、`src/algorithm/src/system_status_executor.cpp`、`src/algorithm/include/algorithm/mbddf_exchange_executor.h`、`src/algorithm/include/algorithm/bus_echo_transport.h`、`src/algorithm/src/bus_echo_transport.cpp`、`src/algorithm/src/elec_health_status_executor.cpp`、`src/algorithm/include/algorithm/imu_stream_executor.h`、`src/algorithm/src/imu_stream_executor.cpp`、`src/algorithm/include/algorithm/helm_stream_executor.h`、`src/algorithm/src/helm_stream_executor.cpp` 和 `src/algorithm/src/di_stimulus_controller.cpp`。
+> 代码事实源：`src/algorithm/include/algorithm/mbddf_protocol.h`、`src/algorithm/src/mbddf_protocol.cpp`、`src/algorithm/include/algorithm/run_parameter_schema.h`、`src/algorithm/src/run_parameter_schema.cpp`、`src/algorithm/src/system_status_executor.cpp`、`src/algorithm/include/algorithm/mbddf_exchange_executor.h`、`src/algorithm/include/algorithm/bus_echo_transport.h`、`src/algorithm/src/bus_echo_transport.cpp`、`src/algorithm/src/elec_health_status_executor.cpp`、`src/algorithm/include/algorithm/dh_ignite_stream_executor.h`、`src/algorithm/src/dh_ignite_stream_executor.cpp`、`src/algorithm/include/algorithm/imu_stream_executor.h`、`src/algorithm/src/imu_stream_executor.cpp`、`src/algorithm/include/algorithm/helm_stream_executor.h`、`src/algorithm/src/helm_stream_executor.cpp` 和 `src/algorithm/src/di_stimulus_controller.cpp`。
 > 状态标记：**当前**表示已实现或已由用户确认的资产基线，**目标**表示已确认但尚未实现。
 
 原始建模参考来自 `H:/WorkSpace/PythonWorkspace/openEulerEnvironment/docs/protocol_modeling_workbench_definition.md`。该外部绝对路径只作来源追溯，不是本仓库可复现的发布输入；本项目当前实现与该参考不一致时，以本节明确列出的“当前规则”为准。
@@ -18,6 +18,7 @@
 ```text
 BIZ -> IAlgorithmExecutor -> hwtest_algorithm_mbddf -> IByteTransport
                                                    -> SystemStatusSimulator（当前成功测试）
+                                                   -> DhIgniteStreamAlgorithmExecutor（DH 点火有限设备流）
                                                    -> ImuStreamAlgorithmExecutor（设备持续流）
                                                    -> HelmStreamAlgorithmExecutor（舵机设备持续流）
                                                    -> BusEchoTransport（控制口 + 辅助 COM 双通道协调）
@@ -25,7 +26,7 @@ BIZ -> IAlgorithmExecutor -> hwtest_algorithm_mbddf -> IByteTransport
                                                    -> HalSerialTransport -> hwtest_hal
 ```
 
-统一协议生产路径如下；当前十一个 MB_DDF 配置均经该边界进入控制通道：
+统一协议生产路径如下；当前十二个 MB_DDF 配置均经该边界进入控制通道：
 
 ```text
 BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据）
@@ -60,6 +61,7 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 | `ElecHealthStatusAlgorithmExecutor` | 执行 `mbddf.elec_health_status` 单步算法 |
 | `MbdDfExchangeAlgorithmExecutor` | 按配置执行 `MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG` 等单步请求/响应；可按配置追加一个清理请求（当前用于 `TIMER_JITTER_STOP`） |
 | `BusEchoTransport` | 在一个 5 秒事务预算内协调产品控制资源和 link 0/1/3 对应的辅助控制资源：先下发 `03/02`，再短读累积并原样回写 114 字节，最后读取产品控制响应 |
+| `DhIgniteStreamAlgorithmExecutor` | 执行一次 `06/02` 请求和有限多帧回告；投影 `delay_frames` 基线/点火后分界、U16 回绕序号和理想相对时间轴，受理后不发送 STOP/ABORT |
 | `ImuStreamAlgorithmExecutor` / `HelmStreamAlgorithmExecutor` | 分别执行惯测与舵机 `device_stream` 的一次 START、持续主动反馈和一次 STOP |
 | `RunParameterSchema` | 由算法 ID 声明运行期可编辑字段、默认值、显示条件和语义边界；合并配置值与本次覆盖，拒绝未知、非有限或越界值 |
 | `DiStimulusController` | 解析 `executionConfig.digitalStimulus`，按配置白名单和 revision 构造完整 DI 输出批次；不调用厂家 SDK |
@@ -67,7 +69,7 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 | `HalControlTransport` | 经 `IControlChannel` 发送原始字节，并累积短读、搜索同步字、按长度分帧及保留剩余帧 |
 | `HalSerialTransport` | 将算法字节事务桥接到现有 `ISerialBus` |
 
-当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，分别完成 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 的单次及三轮 PC 周期。BUS 新路径已有协议、双传输 Fake、HAL 多控制会话、DUT 单元/主机侧 PyQt 和 AArch64 交叉构建证据，但未执行 PC COM1/2/4 与目标板的外部 ECHO 真机闭环。舵机链路已有宿主脚本传输、DUT DDS 桥接单元测试和 AArch64 交叉构建证据，但尚未执行真实 COM3/DDS/舵机联合测试。PXI-6259 NI-DAQmx 专用 Adapter 已有源码、可选 CMake 与 Fake NIDAQmx 回归，但没有真实板端、真实 NI SDK 运行或 PXI-6259 结论。早期 SYSTEM_STATUS 实机执行每轮出现 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，两个既有测试项均再次成功，后端完整诊断未再出现该警告。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
+当前有三类闭环证据：直连 `SystemStatusSimulator` 验证 golden frame；Qt UDP 测试经“配置 -> BIZ -> 算法 -> `HalControlTransport` -> HAL -> `qt.udp` -> 本机模拟目标 -> 判定”；2026-07-26 的受控实机 smoke 经同一宿主链路改走 `qt.serial -> COM3 -> MB_DDF_v2`，分别完成 `SYSTEM_STATUS` 和 `ELEC_HEALTH_STATUS` 的单次及三轮 PC 周期。BUS 新路径已有协议、双传输 Fake、HAL 多控制会话、DUT 单元/主机侧 PyQt 和 AArch64 交叉构建证据，但未执行 PC COM1/2/4 与目标板的外部 ECHO 真机闭环。DH 点火有限流已有协议 golden、脚本传输、Qt UDP 应用/Web 生命周期、DUT 服务单元测试、主机侧 PyQt 和 AArch64 交叉构建证据，但没有真实 DH 写入或目标板运行证据。舵机链路已有宿主脚本传输、DUT DDS 桥接单元测试和 AArch64 交叉构建证据，但尚未执行真实 COM3/DDS/舵机联合测试。PXI-6259 NI-DAQmx 专用 Adapter 已有源码、可选 CMake 与 Fake NIDAQmx 回归，但没有真实板端、真实 NI SDK 运行或 PXI-6259 结论。早期 SYSTEM_STATUS 实机执行每轮出现 Qt 工作线程计时器警告；BIZ worker 迁移为 QThread 并补 dispatcher/计时器回归后，两个既有测试项均再次成功，后端完整诊断未再出现该警告。长时和异常收尾仍未覆盖，因此不等于全面真实硬件验收。`HalSerialTransport` 作为旧兼容桥接保留。
 
 ---
 
@@ -93,7 +95,7 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 因此：
 
 - `ProtocolCatalog` 按一文件一定义加载，当前期望为 37 个定义；
-- 十一个当前配置所需的协议 CSV 当前存在；
+- 十二个当前配置所需的协议 CSV 当前存在；
 - 原测试源码中的 36 项断言和 `ad_read_response` 引用是相对批准基线的陈旧预期，现已按当前定义修正；
 - 后续修改该目录时，必须同步协议测试和本节清单；测试结果应记录基线路径、观测时间和实际清单。
 
@@ -186,7 +188,7 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 ## 7. MB_DDF 单步配置与执行
 
-当前应用控制器通过统一注册表接受十一个算法：九项固定请求/响应算法（其中 BUS ECHO 额外协调一个辅助 COM 资源），以及专用的 `mbddf.imu_stream`、`mbddf.helm_stream` 设备流执行器。每份配置只能启用其中一个步骤。`TIMER_JITTER` 的 STOP 仍只是单轮跟随清理；BUS ECHO 的多轮由 BIZ `pc_periodic` 重复完整单轮事务；`IMU_STREAM` 与 `HELM_STREAM` 在一次 `executeStep()` 中产生多帧主动反馈。
+当前应用控制器通过统一注册表接受十二个算法：九项固定请求/响应算法（其中 BUS ECHO 额外协调一个辅助 COM 资源），以及专用的 `mbddf.dh_ignite_stream`、`mbddf.imu_stream`、`mbddf.helm_stream` 设备流执行器。每份配置只能启用其中一个步骤。`TIMER_JITTER` 的 STOP 仍只是单轮跟随清理；BUS ECHO 的多轮由 BIZ `pc_periodic` 重复完整单轮事务；三种设备流都在一次 `executeStep()` 中产生多帧回告，其中只有 IMU/HELM 使用 STOP 收尾，DH 点火按配置帧数自然完成。
 
 `SYSTEM_STATUS` 的 `executionConfig` 形状为：
 
@@ -228,12 +230,23 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 | `configs/mbddf_memperf.testcfg.json` | `mbddf.memperf` | `memperf_test_request/response` | `memperf_type`、`length`、`seed` 由 `step.parameters.protocol.requestValues` 提供；响应 `error_count` 默认要求为 0 |
 | `configs/mbddf_spi_flash.testcfg.json` | `mbddf.spi_flash` | `spi_flash_test_request/response` | 空请求；DUT 擦写固定隔离 4 KiB 测试区，不备份、不恢复，配置仅支持单次 |
 | `configs/mbddf_dh_pulse_config.testcfg.json` | `mbddf.dh_pulse_config` | `dh_pulse_config_request/response` | `config_enable` 与 23 路 `pulse_width[]` 写入后逐项回读并判定 |
+| `configs/mbddf_dh_ignite_stream.testcfg.json` | `mbddf.dh_ignite_stream` | `dh_control_request/response`（`06/02`） | 只支持有限 `device_stream`；PC 发送一次可配 count/interval/delay/使能/通道请求，DUT 先采 `delay_frames` 帧基线、点火一次并回告到 `report_count`；`stoppable=false`，无 STOP/ABORT/自动复位 |
 | `configs/mbddf_timer_jitter.testcfg.json` | `mbddf.timer_jitter` | `timer_jitter_start_request/response`，随后 `timer_jitter_stop_request/response` | START 的 `mode` 当前默认为 0；`executionConfig.lifecycle` 声明 STOP Profile 和 deadline，STOP ACK 失败会使本轮失败 |
 | `configs/mbddf_di.testcfg.json` | `mbddf.di_read` | `di_read_request/response`（`DI_READ`） | 读取 `di_state[0]`、`di_state[1]`；当前配置支持 `single` 和 `pc_periodic`，判定只检查 `status == 0` 与 `err_code == 0` |
 | `configs/mbddf_imu_stream.testcfg.json` | `mbddf.imu_stream` | `09/10` START、`09/01` 主动反馈、`09/11` STOP | 只支持 `device_stream`；PC 各发送一次 START/STOP，中间只读主动反馈；至少一帧有效反馈才通过；`executionConfig.stream.hostTimestampIntervalUs` 只用于宿主合成样本时间轴，不进入产品帧 |
 | `configs/mbddf_helm_stream.testcfg.json` | `mbddf.helm_stream` | `07/10` START、`07/01` 主动反馈、`07/11` STOP | 只支持 `device_stream`；DUT 以 1 ms 周期生成四路舵角指令并经 DDS 交互，最多 5 个完整反馈样本组成一帧；测试程序不管理独立舵控程序的启停 |
 
-### 7.1 惯测设备流
+### 7.1 DH 点火有限设备流
+
+`DH_IGNITE_STREAM` 复用 `DH_CONTROL 06/02` 布局，但不复用 `mbddf.dh_pulse_config` 的单次脉宽配置语义。B23-B24 当前字段名为 `delay_frames`，旧 `delay_us` 时间延迟语义已经删除。算法 Schema 投影 `power_enable`、`return_enable`、23 个通道布尔值、`report_count`、`interval_us` 和 `delay_frames`；PC 仅校验 U8/U16/布尔编码范围，允许把业务上无效但可编码的值发给 DUT。`channel[1]` 固定编码为 0。默认 power/return 均为 0、通道全不选、count 为 50、interval 为 2500 us、delay 为 5；这些安全默认值可能被 DUT 以业务错误拒绝，不会在 PC 端伪装成合法点火请求。
+
+DUT 在任何硬件写入前完整校验：count 为 `1..65535`，interval 为 `2500..65535`，delay 小于 count，power/return 为 0 或 1，`channel[0]` 至少一位且仅 bit0..22，`channel[1]=0`。power/return 为 0 是合法测试输入；只要通道非空，DUT 仍提交点火命令，由硬件门控决定实际输出。`delay_frames=N` 表示前 N 帧只读，点火在第 N+1 帧采样前执行一次；N=0 表示首帧前点火。不存在固定第 5/6 帧分支。首帧若返回 DUT 的 `PARAM_OUT_OF_RANGE`，宿主将其标记为 `ignition_phase=request_rejected` 并立即结束；正常帧按 `baseline`/`post_ignition` 投影。
+
+相邻采样起点至少间隔 `interval_us`，下一截止点从本帧实际采样起点计算；慢读取或发送导致顺延时不追赶。基线采集/发送失败立即结束且不得点火；点火后的采集错误仍发送当前错误帧并继续剩余帧，发送失败终止。第 i 帧响应序号为 `request_seq+i` 并按 U16 回绕。宿主收到第一帧有效响应时只取一次 PC UTC 锚点，公开 `streamElapsedUs=i*interval_us` 和 `timestampUs=锚点+streamElapsedUs`；这是理想索引轴，不证明 DUT 实际采样等间隔。
+
+请求写入成功后本轮不可取消：算法忽略后续 BIZ run-control，不发送 STOP/ABORT，`finishRun()` 只在自然终态关闭传输，也不复位 DH 状态。结果只依据是否收到 count 帧以及每帧 `status/err_code`；不根据 23 路状态或遥测推导物理点火效果。只有启动时显式 `saveData=true` 才保存全部 descriptor 列；未显式启用时不创建文件。
+
+### 7.2 惯测设备流
 
 `IMU_STREAM` 的 DUT 输入来自 COM4。FPGA 已消费 `AA 1A` 帧头、`3B` 长度和 CRC，板端软件只读取 59 字节小端 payload：源序列号、12 个 IEEE-754 F32、`temperature:S16F`（`0.1 ℃/LSB`）、自检状态、工作状态、软件版本原始 U16 和源保留 U16。12 个浮点必须有限；状态或范围字段的非零值仍原样转发。源序列号只作为数据保存，不做连续性或丢帧判定。
 
@@ -245,7 +258,7 @@ DUT 经 COM3 发送 128 字节 `imu_stream_feedback_response`：B9 为状态、B
 
 `requestStop()` 只设置原子停止标志，worker 在最长 20 ms 读超时后发送 STOP 并等待 ACK。等待 STOP ACK 时到达的有效反馈仍会上报。同一会话 START/STOP 各最多发送一次；STOP 写失败、ACK 超时、解析失败、序号不匹配或远端错误只使本次结果失败，`finishRun()` 只关闭传输，不再补发 STOP。不允许 BIZ 以 `pc_periodic` 重复 START。停止时零有效帧判为 `SampleFail`，一帧及以上通过；传输、CRC、命令、ACK 序号或远端错误保持类型化失败。
 
-### 7.2 舵机设备流
+### 7.3 舵机设备流
 
 `HELM_STREAM` 的运行参数由 `mbddf.helm_stream` Schema 定义：`waveform`、`freq`、`ampl`、`offset`、`start`、`max_freq`、`sweep_duration_s` 和低四位 `enable`。波形为正弦、方波、三角、恒值或连续对数扫频；频率和扫频时长必须为有限正数，通道位图为 `0..15`。测试程序的 DUT 与 Web 界面不限制角度幅值或偏置；舵控程序自身现有的内部限幅保持独立。`max_freq` 与 `sweep_duration_s` 只按波形条件显示，但隐藏时仍执行协议语义校验。DH 的 `config_enable` 和 23 路 `pulse_width[]` 使用同一算法 Schema/运行覆盖机制；配置使能时，23 路回读判据以本次实际下发值为准，关闭配置使能时脉宽只读、不参与本次写入一致性判定。
 
@@ -263,7 +276,7 @@ DDS 时间来自设备单调时钟而非 UTC。宿主保留每条原始值为 `d
 
 `executionConfig.lifecycle` 只允许在需要清理 ACK 的单步中使用：请求/响应 Profile 必须成对提供，执行器先完成主请求/响应，再以递增序号发送 follow-up 请求并校验响应命令、序号、`status` 和 `err_code`。这不是设备持续回告能力；当前定时器 START 在 DUT 端同步完成 250 us x 250 周期统计，STOP 只负责幂等清理确认。
 
-十一个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes` 和 `measurements`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；设备流保存固定使用完整 descriptor 列，曲线选择不改变保存格式。BUS ECHO 的 114 个协议数据字段只在算法内部逐字节判定，公开样本和测量只包含状态、链路、字节数和不一致摘要，完整请求/响应仍以帧十六进制及数据 SHA-256 保留在结果诊断中。可编辑运行参数不在 `reportFields` 定义，而由算法 ID 对应的 Schema 唯一声明；应用层只把 Schema 字段作为本次覆盖，固定协议字段仍留在配置请求中，再将规范化结果透传 BIZ。
+十二个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes`、`measurements` 和可选 `stoppable`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；设备流保存固定使用完整 descriptor 列，曲线选择不改变保存格式。`stoppable` 缺失时兼容回退为 true；显式 false 只允许恰好声明 `device_stream`，当前仅 DH 点火有限流使用。BUS ECHO 的 114 个协议数据字段只在算法内部逐字节判定，公开样本和测量只包含状态、链路、字节数和不一致摘要，完整请求/响应仍以帧十六进制及数据 SHA-256 保留在结果诊断中。可编辑运行参数不在 `reportFields` 定义，而由算法 ID 对应的 Schema 唯一声明；应用层只把 Schema 字段作为本次覆盖，固定协议字段仍留在配置请求中，再将规范化结果透传 BIZ。
 
 算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。BUS ECHO 只额外消费 `executionConfig.transport.busEcho.resourceByLink` 中的逻辑 ResourceId 映射；样例的 `BUS_ECHO_COM1/2/4` 均为 `role=auxiliary-link` 的 `qt.serial` 资源，端口名由部署配置填写，不出现在应用的主控制口选择列表。主控制资源与所选辅助资源由同一 `HalDevice` 独立打开，不能映射到同一物理串口。
 
@@ -340,10 +353,11 @@ CAN/CANFD 的帧边界由总线提供，但 payload 内的 MB_DDF 字段、CRC�
 - `TIMER_JITTER_START/STOP`：START 统计响应、递增序号的 STOP 清理 ACK 和清理失败判定；
 - `DI_READ`：`0x04/0x01` 请求、响应字段 `di_state[0]`/`di_state[1]`、序号/CRC、单样本与 `status`/`err_code` 判定；
 - 运行参数 Schema：配置默认值与本次覆盖合并、未知字段、类型、非有限数、范围、条件显示及 BIZ 不透明透传；
+- `DH_IGNITE_STREAM`：只允许有限 `device_stream`，`delay_frames` 字段/默认值、PC 编码级参数校验、一次请求、多帧序号回绕、理想时间轴、基线/点火后分界、远端错误归约、自然结束和无 STOP 写入；DUT 侧覆盖业务参数零写入拒绝、动态基线、一次触发、最小采样起点间隔、基线失败不点火、点火后采集错误继续及发送失败终止；
 - `IMU_STREAM`：只允许 `device_stream`，START/反馈/STOP、固定 2500 微秒已发布样本相对轴、一次 UTC 锚定、零样本失败与 STOP 单次收尾；
 - `HELM_STREAM`：只允许 `device_stream`，START/1..5 样本反馈/STOP、完整 DDS 反馈字段、DDS 相对时间/一次 UTC 锚定、DDS 倒退拒绝、U16 重复/反向/回绕连续性、生效参数记录、零样本失败与 STOP 单次收尾；DUT 侧还覆盖五类波形、可配扫频时长、超时后归零、四路使能、27/41 字节编解码和五样本打包；
 - 数字刺激：配置白名单、重复/范围拒绝、active-low 映射、完整批量写、revision 冲突无写入、写失败状态保留和复位；这些用 `IHalDevice` Fake 或 Mock 验证，不是厂商 Adapter 或真机证据；
 - 纯协议单测可直连 Simulator；产品模拟和算法集成必须经过 HAL，并标明是 HAL Mock 或标准 Provider 隔离模拟目标；
 - 真实硬件协议测试单独标记，不进入默认 CI。
 
-当前验收限制：仓库快照有 37 份 CSV，但尚无 manifest/hash 自动机制。惯测流已有协议、执行器、Qt UDP START/反馈/STOP 和 TXT 保存自动化，以及 DUT AArch64 交叉构建证据；舵机流已有宿主脚本传输、Web 参数、DUT DDS bridge 单元测试和 AArch64 交叉构建证据。尚未部署目标板验证 COM4、DDS/真实舵机、400 Hz 或 1 kHz 长时吞吐、联合启动顺序和实机停止收尾。既有 COM3 真机证据只覆盖 SYSTEM_STATUS/ELEC_HEALTH_STATUS。
+当前验收限制：仓库快照有 37 份 CSV，但尚无 manifest/hash 自动机制。DH 点火有限流已有协议、执行器、Qt UDP 生命周期、Web 参数和 DUT AArch64 交叉构建证据，但未执行真实点火；惯测流已有协议、执行器、Qt UDP START/反馈/STOP 和 TXT 保存自动化，以及 DUT AArch64 交叉构建证据；舵机流已有宿主脚本传输、Web 参数、DUT DDS bridge 单元测试和 AArch64 交叉构建证据。尚未部署目标板验证 DH 写入、COM4、DDS/真实舵机、400 Hz 或 1 kHz 长时吞吐、联合启动顺序和实机停止收尾。既有 COM3 真机证据只覆盖 SYSTEM_STATUS/ELEC_HEALTH_STATUS。

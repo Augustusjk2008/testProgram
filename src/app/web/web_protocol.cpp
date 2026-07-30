@@ -198,6 +198,7 @@ QJsonObject descriptorObject(const TestDescriptor& descriptor)
         {QStringLiteral("title"), descriptor.title},
         {QStringLiteral("description"), descriptor.description},
         {QStringLiteral("supportedRunModes"), supportedRunModes},
+        {QStringLiteral("stoppable"), descriptor.stoppable},
         {QStringLiteral("measurements"), measurements},
         {QStringLiteral("runParameterSchemaVersion"),
          descriptor.runParameterSchemaVersion},

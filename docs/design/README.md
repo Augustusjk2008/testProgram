@@ -33,13 +33,13 @@ docs/design/
 | 范围 | 入口 | 说明 |
 | --- | --- | --- |
 | BIZ | `src/biz/` | `hwtest_biz`；公共头仅直接依赖 Qt Core 和 `hwtest_log_types` |
-| 算法 | `src/algorithm/` | `hwtest_algorithm_mbddf`，包含 MB_DDF 协议 CSV、编解码、固定命令执行器、配置驱动单步交换、惯测/舵机设备流执行器、运行参数 Schema 和 DI 刺激控制器 |
+| 算法 | `src/algorithm/` | `hwtest_algorithm_mbddf`，包含 MB_DDF 协议 CSV、编解码、固定命令执行器、配置驱动单步交换、DH 点火有限流及惯测/舵机设备流执行器、运行参数 Schema 和 DI 刺激控制器 |
 | HAL | `src/hal/` | `hwtest_hal`；控制资源走 `qt.serial`/`qt.udp`，其他设备按 `adapterId` 惰性路由到 Mock 或 C ABI v1 后端；Vendor C ABI 初始化接收驱动级 Adapter 配置，打开代码使用版本化单设备投影；另有默认关闭的 PXI-6259 NI-DAQmx Adapter 与可选采样任务 ABI |
 | 日志 | `src/logging/` | `hwtest_log_types` 与 `hwtest_log` |
 | 应用 | `src/app/`、`front/` | `hwtest_app_core` 统一组合生命周期；`hwtest_pc_runner`、`hwtest_tui`、`hwtest_gui` 与回环 `hwtest_web` 是独立 C++ 入口；`front/` 是独立 React/Vite 遥测控制台，并消费后处理 capability、摘要和按通道结果接口 |
 | 测试 | `tests/hal/`、`tests/log/`、`tests/biz/`、`tests/algorithm/`、`tests/app/` | 七个 GoogleTest 目标，经 CTest 注册 |
 
-`[当前实现]` 仓库已有行式 TUI、Qt Widgets GUI、WebSocket 后端和浏览器遥测控制台，当前开发验证以 Web 链路为主基线。浏览器通过现有配置选择一个独立测试；应用层把配置展示元数据和算法层运行参数 Schema 投影为 WebSocket descriptor，前端据此显示测试名称、支持的运行模式、首页主指标、测量标签/单位、可编辑运行参数及 16 路 DI 刺激/回读，并自动发现样本新增字段。当前配置目录包含十一项：`SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`BUS_LOOP_TEST`、`BUS_ECHO_TEST`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`、带 STOP 清理的 `TIMER_JITTER`、`DI_READ`、只支持设备持续模式的 `IMU_STREAM` 和 `HELM_STREAM`。BUS LOOP 只对 COM1/COM2/COM4 使用 DUT 内部回环；BUS ECHO 由根宿主以 `pc_periodic` 严格串行调度，并通过独立 Qt 串口完成固定 114 字节外部往返。惯测由 PC 经 COM3 发送一次 START，DUT 持续读取 COM4 并主动回告；舵机实测由 DUT 以 1 ms 周期生成指令，经 DDS 与用户独立启停的 `MB_DDF_v2_HelmControl` 交互并批量回告。两类设备流都由 PC 发送 STOP 后结束，配置 descriptor 定义的全部测量列可由应用层按固定表头保存。现有自动化尚不构成 BUS 外部回显、COM4、DDS 舵机或目标板实机验收。其他硬件证据和限制统一见 `testing/testing-specification.md`。
+`[当前实现]` 仓库已有行式 TUI、Qt Widgets GUI、WebSocket 后端和浏览器遥测控制台，当前开发验证以 Web 链路为主基线。浏览器通过现有配置选择一个独立测试；应用层把配置展示元数据和算法层运行参数 Schema 投影为 WebSocket descriptor，前端据此显示测试名称、支持的运行模式、首页主指标、测量标签/单位、可编辑运行参数及 16 路 DI 刺激/回读，并自动发现样本新增字段。当前配置目录包含十二项：`SYSTEM_STATUS`、`ELEC_HEALTH_STATUS`、`BUS_LOOP_TEST`、`BUS_ECHO_TEST`、`MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG`、只支持有限设备流的 `DH_IGNITE_STREAM`、带 STOP 清理的 `TIMER_JITTER`、`DI_READ`、只支持设备持续模式的 `IMU_STREAM` 和 `HELM_STREAM`。BUS LOOP 只对 COM1/COM2/COM4 使用 DUT 内部回环；BUS ECHO 由根宿主以 `pc_periodic` 严格串行调度，并通过独立 Qt 串口完成固定 114 字节外部往返。DH 点火由 PC 经 COM3 发送一次 `06/02`，DUT 按 `delay_frames` 先采只读基线、点火一次并回告到 `report_count` 后自然结束；请求受理后无 STOP/ABORT 或自动复位，Web 断线只分离客户端。惯测由 PC 经 COM3 发送一次 START，DUT 持续读取 COM4 并主动回告；舵机实测由 DUT 以 1 ms 周期生成指令，经 DDS 与用户独立启停的 `MB_DDF_v2_HelmControl` 交互并批量回告。惯测和舵机流由 PC 发送 STOP 后结束；三种设备流的 descriptor 全部测量列都可在显式 `saveData=true` 时由应用层按固定表头保存。现有自动化尚不构成 BUS 外部回显、DH 真实点火、COM4、DDS 舵机或目标板实机验收。其他硬件证据和限制统一见 `testing/testing-specification.md`。
 
 ### 舵机后处理状态
 

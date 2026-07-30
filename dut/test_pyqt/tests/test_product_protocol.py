@@ -146,7 +146,7 @@ def test_dh_control_round_trips_enable_and_valid_channel_bitmap(catalog) -> None
             "channel[1]": 0,
             "report_count": 3,
             "interval_us": 65535,
-            "delay_us": 65535,
+            "delay_frames": 65535,
         },
         sequence=7,
     )
@@ -156,6 +156,8 @@ def test_dh_control_round_trips_enable_and_valid_channel_bitmap(catalog) -> None
     assert decoded["return_enable"] == 1
     assert decoded["channel[0]"] == 0x007FFFFF
     assert decoded["channel[1]"] == 0
+    assert decoded["delay_frames"] == 65535
+    assert "delay_us" not in decoded
 
 
 def test_dh_control_request_uses_burst_defaults(catalog) -> None:
@@ -166,6 +168,30 @@ def test_dh_control_request_uses_burst_defaults(catalog) -> None:
 
     assert decoded["report_count"] == 50
     assert decoded["interval_us"] == 2500
+    assert decoded["delay_frames"] == 5
+
+
+def test_dh_control_default_request_keeps_0602_layout_and_crc_golden(catalog) -> None:
+    outbound = ProductProtocol(catalog, initial_sequence=0x1234).build_request(
+        "dh_control_request"
+    )
+
+    assert encode_frame(outbound.payload) == bytes.fromhex(
+        "55 AA 30 11 06 02 34 12 "
+        "00 00 00 00 00 00 00 00 "
+        "00 00 32 00 C4 09 05 00 "
+        "00 00 00 00 00 00 00 00 "
+        "00 00 00 00 00 00 00 00 "
+        "00 00 00 00 00 00 00 00 "
+        "00 00 00 55 B2"
+    )
+
+
+def test_dh_control_codec_rejects_the_removed_delay_us_alias(catalog) -> None:
+    definition = catalog.get("dh_control_request")
+
+    with pytest.raises(ProductProtocolError, match="delay_frames"):
+        encode_payload(definition, {"delay_us": 5}, sequence=8)
 
 
 def test_spi_flash_result_remains_f32_seconds(catalog) -> None:

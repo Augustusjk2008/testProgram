@@ -235,6 +235,8 @@ TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
     descriptor.algorithmId = step.algorithmId;
 
     const QVariantMap presentation = config.reportFields;
+    descriptor.stoppable = presentation.value(QStringLiteral("stoppable"), true)
+                               .toBool();
     descriptor.title = presentation.value(QStringLiteral("title")).toString().trimmed();
     if (descriptor.title.isEmpty()) {
         descriptor.title = step.name.trimmed();
@@ -313,6 +315,21 @@ TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
         }
     }
     return descriptor;
+}
+
+bool isActiveNonStoppable(const ApplicationSnapshot& snapshot)
+{
+    return !snapshot.descriptor.stoppable &&
+        (snapshot.phase == QStringLiteral("running") ||
+         snapshot.phase == QStringLiteral("paused"));
+}
+
+ActionResult nonStoppableFailure(const QString& action)
+{
+    return failure(
+        QStringLiteral("CapabilityUnsupported"),
+        QStringLiteral("This finite device stream cannot %1 after its request is accepted; wait for natural completion")
+            .arg(action));
 }
 
 DigitalStimulusSnapshot digitalStimulusDescriptor(const QVariantMap& executionConfig)
@@ -498,6 +515,12 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
         testConfig.value.reportFields, &supportedRunModes);
     if (!runModeError.isEmpty()) {
         return failure(QStringLiteral("test_config"), runModeError);
+    }
+    bool stoppable = true;
+    const QString stoppableError = parseStoppableCapability(
+        testConfig.value.reportFields, supportedRunModes, &stoppable);
+    if (!stoppableError.isEmpty()) {
+        return failure(QStringLiteral("test_config"), stoppableError);
     }
 
     QVariantMap runParameterDefaults;
@@ -1233,6 +1256,9 @@ ActionResult TestApplicationController::pause()
     if (!onAffinityThread(this)) {
         return affinityFailure();
     }
+    if (isActiveNonStoppable(m_impl->snapshot)) {
+        return nonStoppableFailure(QStringLiteral("be paused"));
+    }
     if (m_impl->analysisCoordinator.blocksWrites()) {
         return analysisCommandInProgressFailure();
     }
@@ -1252,6 +1278,9 @@ ActionResult TestApplicationController::resume()
     if (!onAffinityThread(this)) {
         return affinityFailure();
     }
+    if (isActiveNonStoppable(m_impl->snapshot)) {
+        return nonStoppableFailure(QStringLiteral("be resumed"));
+    }
     if (m_impl->analysisCoordinator.blocksWrites()) {
         return analysisCommandInProgressFailure();
     }
@@ -1270,6 +1299,9 @@ ActionResult TestApplicationController::stop(int timeoutMs)
 {
     if (!onAffinityThread(this)) {
         return affinityFailure();
+    }
+    if (isActiveNonStoppable(m_impl->snapshot)) {
+        return nonStoppableFailure(QStringLiteral("be stopped"));
     }
     if (m_impl->asyncStopInProgress) {
         return failure(QStringLiteral("stop_in_progress"),
@@ -1319,6 +1351,9 @@ ActionResult TestApplicationController::stopAsync(int timeoutMs)
 {
     if (!onAffinityThread(this)) {
         return affinityFailure();
+    }
+    if (isActiveNonStoppable(m_impl->snapshot)) {
+        return nonStoppableFailure(QStringLiteral("be stopped"));
     }
     if (timeoutMs < 0) {
         return failure(QStringLiteral("invalid_timeout"),
@@ -1535,6 +1570,9 @@ ActionResult TestApplicationController::shutdown()
 {
     if (!onAffinityThread(this)) {
         return affinityFailure();
+    }
+    if (isActiveNonStoppable(m_impl->snapshot)) {
+        return nonStoppableFailure(QStringLiteral("be shut down"));
     }
     if (m_impl->asyncStopInProgress) {
         return failure(QStringLiteral("stop_in_progress"),

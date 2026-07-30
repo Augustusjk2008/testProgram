@@ -36,6 +36,7 @@ inline void expectSemanticallyEquivalentSnapshots(const ApplicationSnapshot& lef
     EXPECT_EQ(left.descriptor.title, right.descriptor.title);
     EXPECT_EQ(left.descriptor.description, right.descriptor.description);
     EXPECT_EQ(left.descriptor.supportedRunModes, right.descriptor.supportedRunModes);
+    EXPECT_EQ(left.descriptor.stoppable, right.descriptor.stoppable);
     ASSERT_EQ(left.descriptor.measurements.size(), right.descriptor.measurements.size());
     for (int index = 0; index < left.descriptor.measurements.size(); ++index) {
         EXPECT_EQ(left.descriptor.measurements.at(index).id,

@@ -109,7 +109,7 @@ def write_report(tmp_path, reports):
         {
             "report_count": len(reports),
             "interval_us": 2500,
-            "delay_us": 400,
+            "delay_frames": 5,
             "channel[0]": 0x007FFFFF,
             "channel[1]": 0,
         },
@@ -155,7 +155,7 @@ def test_write_dh_text_report_writes_complete_long_form_rows(tmp_path) -> None:
     assert all(set(row) == set(EXPECTED_COLUMNS) for row in rows)
     assert rows[0] == {
         "report_index": "1",
-        "sample_time_us": "400",
+        "sample_time_us": "0",
         "seq": "100",
         "response_status": "0",
         "err_code": "0x0000",
@@ -167,7 +167,7 @@ def test_write_dh_text_report_writes_complete_long_form_rows(tmp_path) -> None:
         "telemetry_V": "10",
     }
     assert rows[-1]["report_index"] == "2"
-    assert rows[-1]["sample_time_us"] == "2900"
+    assert rows[-1]["sample_time_us"] == "2500"
     assert rows[-1]["seq"] == "101"
     assert rows[-1]["channel"] == "DH22"
     assert rows[-1]["dh_status"] == "1"
@@ -175,6 +175,8 @@ def test_write_dh_text_report_writes_complete_long_form_rows(tmp_path) -> None:
     assert rows[-1]["telemetry_V"] == "22.2"
     assert "# final_status=已完成" in text
     assert "# final_detail=已接收全部 DH 回告" in text
+    assert "# delay_frames=5" in text
+    assert "delay_us" not in text
 
 
 def test_write_dh_text_report_marks_failed_telemetry_unavailable(tmp_path) -> None:

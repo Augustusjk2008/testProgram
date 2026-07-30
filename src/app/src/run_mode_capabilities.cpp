@@ -58,4 +58,27 @@ QString parseSupportedRunModes(const QVariantMap& reportFields,
     return {};
 }
 
+QString parseStoppableCapability(const QVariantMap& reportFields,
+                                  const QVector<QString>& runModes,
+                                  bool* stoppable)
+{
+    if (stoppable == nullptr) {
+        return QStringLiteral("Stoppable capability output is required");
+    }
+    *stoppable = true;
+    const QVariant value = reportFields.value(QStringLiteral("stoppable"));
+    if (!value.isValid()) return {};
+    if (value.userType() != QMetaType::Bool) {
+        return QStringLiteral("reportFields.stoppable must be a boolean");
+    }
+    *stoppable = value.toBool();
+    if (!*stoppable &&
+        (runModes.size() != 1 ||
+         runModes.first() != QStringLiteral("device_stream"))) {
+        return QStringLiteral(
+            "reportFields.stoppable=false requires device_stream as the only supported run mode");
+    }
+    return {};
+}
+
 } // namespace hwtest::app

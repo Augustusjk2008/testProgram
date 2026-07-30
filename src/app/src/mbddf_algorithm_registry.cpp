@@ -2,6 +2,7 @@
 
 #include <algorithm/bus_echo_transport.h>
 #include <algorithm/elec_health_status_executor.h>
+#include <algorithm/dh_ignite_stream_executor.h>
 #include <algorithm/imu_stream_executor.h>
 #include <algorithm/helm_stream_executor.h>
 #include <algorithm/mbddf_exchange_executor.h>
@@ -43,6 +44,10 @@ const QVector<MbdDfAlgorithmRegistration>& mbddfAlgorithmRegistry()
          QStringLiteral("dh_pulse_config_request"),
          QStringLiteral("dh_pulse_config_response"),
          QStringLiteral("DH_PULSE_CONFIG")},
+        {QStringLiteral("mbddf.dh_ignite_stream"),
+         QStringLiteral("dh_control_request"),
+         QStringLiteral("dh_control_response"),
+         QStringLiteral("DH_IGNITE_STREAM")},
         {QStringLiteral("mbddf.timer_jitter"),
          QStringLiteral("timer_jitter_start_request"),
          QStringLiteral("timer_jitter_start_response"),
@@ -95,6 +100,10 @@ std::unique_ptr<hwtest::biz::IAlgorithmExecutor> createMbdDfExecutor(
     }
     if (algorithmId == QStringLiteral("mbddf.imu_stream")) {
         return std::make_unique<ImuStreamAlgorithmExecutor>(std::move(transport));
+    }
+    if (algorithmId == QStringLiteral("mbddf.dh_ignite_stream")) {
+        return std::make_unique<DhIgniteStreamAlgorithmExecutor>(
+            std::move(transport));
     }
     if (algorithmId == QStringLiteral("mbddf.helm_stream")) {
         return std::make_unique<HelmStreamAlgorithmExecutor>(std::move(transport));

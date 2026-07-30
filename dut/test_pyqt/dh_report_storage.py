@@ -94,7 +94,7 @@ def write_dh_text_report(
     )
 
     interval_us = _integer(parameters.get("interval_us"), 2500)
-    delay_us = _integer(parameters.get("delay_us"), 0)
+    delay_frames = _integer(parameters.get("delay_frames"), 5)
     selected_mask = _integer(parameters.get("channel[0]")) & 0x007FFFFF
     selected_channels = ",".join(
         "DH{}".format(index)
@@ -109,7 +109,7 @@ def write_dh_text_report(
         ("final_detail", final_detail),
         ("requested_report_count", parameters.get("report_count", "NA")),
         ("interval_us", interval_us),
-        ("delay_us", delay_us),
+        ("delay_frames", delay_frames),
         ("selected_channels", selected_channels or "none"),
     )
 
@@ -130,7 +130,7 @@ def write_dh_text_report(
             response_status = _integer(report.values.get("status"))
             err_code = _integer(report.values.get("err_code")) & 0xFFFF
             failed = response_status != 0 or err_code != 0
-            sample_time_us = delay_us + (report_index - 1) * interval_us
+            sample_time_us = (report_index - 1) * interval_us
             for channel in range(23):
                 status = report.values.get("dh_status.ch{}".format(channel))
                 status_value = None if status is None else _integer(status)

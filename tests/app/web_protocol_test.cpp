@@ -204,6 +204,7 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
     snapshot.descriptor.title = QStringLiteral("系统状态");
     snapshot.descriptor.supportedRunModes = {
         QStringLiteral("single"), QStringLiteral("pc_periodic")};
+    snapshot.descriptor.stoppable = false;
     snapshot.descriptor.measurements = {
         TestMeasurementDescriptor{QStringLiteral("cpu_usage"),
                                   QStringLiteral("CPU 占用率"),
@@ -293,6 +294,8 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
               snapshot.descriptor.configId);
     EXPECT_EQ(descriptor.value(QStringLiteral("title")).toString(),
               snapshot.descriptor.title);
+    EXPECT_TRUE(descriptor.contains(QStringLiteral("stoppable")));
+    EXPECT_FALSE(descriptor.value(QStringLiteral("stoppable")).toBool());
     ASSERT_EQ(descriptor.value(QStringLiteral("supportedRunModes"))
                   .toArray()
                   .size(),

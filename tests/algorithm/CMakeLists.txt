@@ -22,6 +22,7 @@ add_executable(hwtest_algorithm_tests
     bus_echo_transport_test.cpp
     bus_executor_test.cpp
     di_stimulus_controller_test.cpp
+    dh_ignite_stream_executor_test.cpp
     imu_stream_executor_test.cpp
     helm_stream_executor_test.cpp
     post_run_analysis_contract_test.cpp

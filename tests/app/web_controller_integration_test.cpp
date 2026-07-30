@@ -10,11 +10,15 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 
+#include <algorithm>
 #include <memory>
 
 namespace hwtest::app::web {
@@ -893,6 +897,147 @@ TEST_F(WebSocketUdpIntegrationTest, DroppedRunningClientStopsAndReaccepts)
     test::WebSocketTestClient replacement;
     ASSERT_TRUE(replacement.connectTo(server->webSocketUrl()));
     EXPECT_TRUE(replacement.waitForMessageCount(2));
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     NonStoppableDhDetachAndDropKeepRunAliveUntilNaturalCompletion)
+{
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+    test::MbddfUdpTestPeer peer;
+    QTemporaryDir directory;
+    QString error;
+    QString halConfigPath;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    WebSocketServerOptions serverOptions;
+    serverOptions.port = 0;
+    FrontendLaunchOptions frontend{
+        QStringLiteral(HWTEST_APP_DH_IGNITE_STREAM_CONFIG),
+        halConfigPath,
+        {},
+        {},
+    };
+    WebSocketFrontendServer server(&controller, frontend, serverOptions);
+    test::WebSocketTestClient first;
+    connectClient(&server, &first);
+    ASSERT_TRUE(sendAndWait(&first, QStringLiteral("load"), QStringLiteral("load"))
+                    .value(QStringLiteral("ok")).toBool());
+    ASSERT_TRUE(sendAndWait(&first, QStringLiteral("prepare"), QStringLiteral("prepare"))
+                    .value(QStringLiteral("ok")).toBool());
+    const QJsonObject algorithmParameters{
+        {QStringLiteral("channel_enabled[0]"), true},
+        {QStringLiteral("report_count"), 20},
+        {QStringLiteral("interval_us"), 2500},
+        {QStringLiteral("delay_frames"), 0},
+    };
+    const QJsonObject started = sendAndWait(
+        &first,
+        QStringLiteral("start"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("device_stream")},
+                    {QStringLiteral("saveData"), false},
+                    {QStringLiteral("algorithmParameters"), algorithmParameters}});
+    ASSERT_TRUE(started.value(QStringLiteral("ok")).toBool())
+        << started.value(QStringLiteral("message")).toString().toStdString();
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+
+    const QJsonObject pause = sendAndWait(
+        &first, QStringLiteral("pause"), QStringLiteral("pause"));
+    EXPECT_FALSE(pause.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(pause.value(QStringLiteral("code")).toString(),
+              QStringLiteral("CapabilityUnsupported"));
+    const QJsonObject resume = sendAndWait(
+        &first, QStringLiteral("resume"), QStringLiteral("resume"));
+    EXPECT_FALSE(resume.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(resume.value(QStringLiteral("code")).toString(),
+              QStringLiteral("CapabilityUnsupported"));
+    const QJsonObject stop = sendAndWait(
+        &first, QStringLiteral("stop"), QStringLiteral("stop"));
+    EXPECT_FALSE(stop.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(stop.value(QStringLiteral("code")).toString(),
+              QStringLiteral("CapabilityUnsupported"));
+    const QJsonObject quit = sendAndWait(
+        &first, QStringLiteral("quit"), QStringLiteral("quit"));
+    EXPECT_FALSE(quit.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(quit.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_state"));
+    EXPECT_TRUE(server.isListening());
+
+    const QVariantMap responseValues{
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("err_code"), 0},
+        {QStringLiteral("dh_status.ch0"), 1},
+        {QStringLiteral("telemetry[0]"), 1.25},
+    };
+    first.setReadBufferSize(1);
+    for (quint16 index = 0; index < 5; ++index) {
+        ASSERT_TRUE(peer.sendToLastRequester(QStringLiteral("dh_control_response"),
+                                             static_cast<quint16>(0x1234 + index),
+                                             responseValues,
+                                             &error))
+            << error.toStdString();
+    }
+    QElapsedTimer received;
+    received.start();
+    while (controller.snapshot().sampleCount < 5 && received.elapsed() < 3000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(1);
+    }
+    ASSERT_EQ(controller.snapshot().sampleCount, 5u);
+    ASSERT_GT(first.sendText(requestText(QStringLiteral("detach"),
+                                         QStringLiteral("disconnect"))),
+              0);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+    test::WebSocketTestClient observer;
+    ASSERT_TRUE(observer.connectTo(server.webSocketUrl()))
+        << observer.errorString().toStdString();
+    ASSERT_TRUE(observer.waitForMessageCount(2));
+    first.setReadBufferSize(0);
+    QJsonObject detached;
+    ASSERT_TRUE(first.waitForReply(QStringLiteral("detach"), &detached, 5000));
+    EXPECT_TRUE(detached.value(QStringLiteral("ok")).toBool())
+        << detached.value(QStringLiteral("message")).toString().toStdString();
+    ASSERT_TRUE(first.waitForDisconnected(5000));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("running"));
+
+    const int observerMessagesBeforeSamples = observer.messages().size();
+    for (quint16 index = 5; index < 20; ++index) {
+        ASSERT_TRUE(peer.sendToLastRequester(QStringLiteral("dh_control_response"),
+                                             static_cast<quint16>(0x1234 + index),
+                                             responseValues,
+                                             &error))
+            << error.toStdString();
+    }
+    ASSERT_TRUE(observer.waitForMessageCount(observerMessagesBeforeSamples + 1, 5000));
+    EXPECT_TRUE(std::any_of(observer.messages().cbegin(), observer.messages().cend(),
+                            [](const QJsonObject& message) {
+                                return message.value(QStringLiteral("type")).toString() ==
+                                    QStringLiteral("sample");
+                            }));
+    QJsonObject terminal;
+    ASSERT_TRUE(observer.waitForSnapshotPhase(QStringLiteral("finished"),
+                                              &terminal,
+                                              5000));
+    const QJsonObject snapshot = terminal.value(QStringLiteral("snapshot")).toObject();
+    EXPECT_EQ(snapshot.value(QStringLiteral("sampleCount")).toInt(), 20);
+    EXPECT_EQ(snapshot.value(QStringLiteral("verdict")).toString(),
+              QStringLiteral("Pass"));
+
+    const QJsonObject cleanup = sendAndWait(
+        &observer, QStringLiteral("cleanup"), QStringLiteral("disconnect"));
+    EXPECT_TRUE(cleanup.value(QStringLiteral("ok")).toBool());
+    EXPECT_TRUE(observer.waitForDisconnected(5000));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("configured"));
 }
 
 enum class EquivalenceScenario {

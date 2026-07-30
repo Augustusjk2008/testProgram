@@ -192,15 +192,18 @@ public:
     }
 
     HWTest::ProductErrorCode begin_dh(const HWTest::ProductMessage&) override {
+        ++begin_calls;
         events.emplace_back("begin");
-        return HWTest::ProductErrorCode::Ok;
+        return begin_error;
     }
 
     HWTest::ProductErrorCode handle_dh_control_report(const HWTest::ProductMessage&,
                                                       HWTest::ProductMessage&,
                                                       size_t report_index) override {
         events.emplace_back("report" + std::to_string(report_index));
-        return HWTest::ProductErrorCode::Ok;
+        return report_index < report_errors.size()
+                   ? report_errors[report_index]
+                   : HWTest::ProductErrorCode::Ok;
     }
 
     bool helm_feedback_active() const override { return false; }
@@ -208,7 +211,10 @@ public:
         return HWTest::ProductErrorCode::Ok;
     }
 
+    HWTest::ProductErrorCode begin_error{HWTest::ProductErrorCode::Ok};
+    std::vector<HWTest::ProductErrorCode> report_errors;
     std::vector<std::string> events;
+    int begin_calls{0};
 };
 
 class HelmStartOrderingProvider final : public HWTest::IHardwareTestProvider {
@@ -380,9 +386,11 @@ TEST(HardwareTestServiceTest, SendsRequestedNumberOfDhReportsWithRequestSequence
     auto request = builder.create_message("dh_control_request", false);
     ASSERT_TRUE(request.set_unsigned("power_enable", 1));
     ASSERT_TRUE(request.set_unsigned("return_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
     ASSERT_TRUE(request.set_unsigned("seq", 0x9000));
     ASSERT_TRUE(request.set_unsigned("report_count", 3));
-    ASSERT_TRUE(request.set_unsigned("delay_us", 0));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 0));
     ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
     endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
     HWTest::HardwareTestService service(endpoint, provider, 0xFFFE,
@@ -401,6 +409,253 @@ TEST(HardwareTestServiceTest, SendsRequestedNumberOfDhReportsWithRequestSequence
                   .get_unsigned("seq").value_or(1), 0x9002u);
 }
 
+TEST(HardwareTestServiceTest, SendsReadOnlyBaselinesBeforeBeginningDh) {
+    RecordingEndpoint endpoint;
+    DhOrderingProvider provider;
+    HWTest::ProductProtocol builder;
+    auto request = builder.create_message("dh_control_request", false);
+    ASSERT_TRUE(request.set_unsigned("power_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("return_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
+    ASSERT_TRUE(request.set_unsigned("seq", 0x9000));
+    ASSERT_TRUE(request.set_unsigned("report_count", 4));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 2));
+    ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
+    endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
+    size_t send_index = 0;
+    endpoint.before_send = [&](HW::BufferView) {
+        provider.events.emplace_back("send" + std::to_string(send_index++));
+    };
+    HWTest::HardwareTestService service(endpoint, provider, 0,
+                                        [](std::chrono::microseconds) {});
+
+    ASSERT_TRUE(service.process_once(HW::Timeout::poll()));
+    EXPECT_EQ(provider.begin_calls, 1);
+    EXPECT_EQ(provider.events,
+              (std::vector<std::string>{"report0", "send0", "report1", "send1",
+                                        "begin", "report2", "send2", "report3", "send3"}));
+    ASSERT_EQ(endpoint.sent.size(), 4u);
+    for (size_t index = 0; index < endpoint.sent.size(); ++index) {
+        const auto response = decode_sent("dh_control_response", endpoint.sent[index]);
+        EXPECT_EQ(response.get_unsigned("seq").value_or(0),
+                  0x9000u + index);
+        EXPECT_EQ(response.get_unsigned("status").value_or(1), 0u);
+    }
+}
+
+TEST(HardwareTestServiceTest, RejectsInvalidDhRequestBeforeAnyProviderCall) {
+    struct InvalidCase {
+        const char* name;
+        std::function<void(HWTest::ProductMessage&)> apply;
+    };
+    const std::vector<InvalidCase> cases{
+        {"zero report count", [](HWTest::ProductMessage& request) {
+             ASSERT_TRUE(request.set_unsigned("report_count", 0));
+         }},
+        {"interval below minimum", [](HWTest::ProductMessage& request) {
+             ASSERT_TRUE(request.set_unsigned("interval_us", 2499));
+         }},
+        {"delay equals report count", [](HWTest::ProductMessage& request) {
+             ASSERT_TRUE(request.set_unsigned("delay_frames", 3));
+         }},
+        {"delay exceeds report count", [](HWTest::ProductMessage& request) {
+             ASSERT_TRUE(request.set_unsigned("delay_frames", 4));
+         }},
+        {"empty channel mask", [](HWTest::ProductMessage& request) {
+             ASSERT_TRUE(request.set_unsigned("channel[0]", 0));
+         }},
+        {"channel zero high bit", [](HWTest::ProductMessage& request) {
+             ASSERT_TRUE(request.set_unsigned("channel[0]", uint64_t{1} << 23));
+         }},
+        {"channel one used", [](HWTest::ProductMessage& request) {
+             ASSERT_TRUE(request.set_unsigned("channel[1]", 1));
+         }},
+        {"invalid power", [](HWTest::ProductMessage& request) {
+             ASSERT_TRUE(request.set_unsigned("power_enable", 2));
+         }},
+        {"invalid return", [](HWTest::ProductMessage& request) {
+             ASSERT_TRUE(request.set_unsigned("return_enable", 2));
+         }},
+    };
+
+    for (const auto& test_case : cases) {
+        RecordingEndpoint endpoint;
+        DhOrderingProvider provider;
+        HWTest::ProductProtocol builder;
+        auto request = builder.create_message("dh_control_request", false);
+        ASSERT_TRUE(request.set_unsigned("power_enable", 1)) << test_case.name;
+        ASSERT_TRUE(request.set_unsigned("return_enable", 1)) << test_case.name;
+        ASSERT_TRUE(request.set_unsigned("channel[0]", 1)) << test_case.name;
+        ASSERT_TRUE(request.set_unsigned("channel[1]", 0)) << test_case.name;
+        ASSERT_TRUE(request.set_unsigned("report_count", 3)) << test_case.name;
+        ASSERT_TRUE(request.set_unsigned("delay_frames", 1)) << test_case.name;
+        ASSERT_TRUE(request.set_unsigned("interval_us", 2500)) << test_case.name;
+        test_case.apply(request);
+        endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
+        HWTest::HardwareTestService service(endpoint, provider, 0,
+                                            [](std::chrono::microseconds) {});
+
+        ASSERT_TRUE(service.process_once(HW::Timeout::poll())) << test_case.name;
+        EXPECT_TRUE(provider.events.empty()) << test_case.name;
+        EXPECT_EQ(provider.begin_calls, 0) << test_case.name;
+        ASSERT_EQ(endpoint.sent.size(), 1u) << test_case.name;
+        const auto response = decode_sent("dh_control_response", endpoint.sent.front());
+        EXPECT_EQ(response.get_unsigned("status").value_or(0), 1u) << test_case.name;
+        EXPECT_EQ(response.get_unsigned("err_code").value_or(0),
+                  static_cast<uint16_t>(HWTest::ProductErrorCode::ParamOutOfRange))
+            << test_case.name;
+    }
+}
+
+TEST(HardwareTestServiceTest, StopsWithoutBeginningDhWhenBaselineCaptureFails) {
+    RecordingEndpoint endpoint;
+    DhOrderingProvider provider;
+    provider.report_errors = {HWTest::ProductErrorCode::TaskExecFailed};
+    HWTest::ProductProtocol builder;
+    auto request = builder.create_message("dh_control_request", false);
+    ASSERT_TRUE(request.set_unsigned("power_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("return_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
+    ASSERT_TRUE(request.set_unsigned("report_count", 3));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 1));
+    ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
+    endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
+    HWTest::HardwareTestService service(endpoint, provider, 0,
+                                        [](std::chrono::microseconds) {});
+
+    ASSERT_TRUE(service.process_once(HW::Timeout::poll()));
+    EXPECT_EQ(provider.events, (std::vector<std::string>{"report0"}));
+    EXPECT_EQ(provider.begin_calls, 0);
+    ASSERT_EQ(endpoint.sent.size(), 1u);
+    EXPECT_EQ(decode_sent("dh_control_response", endpoint.sent.front())
+                  .get_unsigned("err_code").value_or(0),
+              static_cast<uint16_t>(HWTest::ProductErrorCode::TaskExecFailed));
+}
+
+TEST(HardwareTestServiceTest, StopsWithoutBeginningDhWhenBaselineSendFails) {
+    RecordingEndpoint endpoint;
+    endpoint.always_busy = true;
+    DhOrderingProvider provider;
+    HWTest::ProductProtocol builder;
+    auto request = builder.create_message("dh_control_request", false);
+    ASSERT_TRUE(request.set_unsigned("power_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("return_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
+    ASSERT_TRUE(request.set_unsigned("report_count", 2));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 1));
+    ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
+    endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
+    HWTest::HardwareTestService service(endpoint, provider, 0,
+                                        [](std::chrono::microseconds) {});
+
+    EXPECT_FALSE(service.process_once(HW::Timeout::poll()));
+    EXPECT_EQ(provider.events, (std::vector<std::string>{"report0"}));
+    EXPECT_EQ(provider.begin_calls, 0);
+    EXPECT_EQ(endpoint.send_attempts, 1001);
+}
+
+TEST(HardwareTestServiceTest, ContinuesReportingAfterCaptureFailureFollowingDhBegin) {
+    RecordingEndpoint endpoint;
+    DhOrderingProvider provider;
+    provider.report_errors = {HWTest::ProductErrorCode::Ok,
+                              HWTest::ProductErrorCode::TaskExecFailed,
+                              HWTest::ProductErrorCode::Ok};
+    HWTest::ProductProtocol builder;
+    auto request = builder.create_message("dh_control_request", false);
+    ASSERT_TRUE(request.set_unsigned("power_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("return_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
+    ASSERT_TRUE(request.set_unsigned("report_count", 3));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 1));
+    ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
+    endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
+    size_t send_index = 0;
+    endpoint.before_send = [&](HW::BufferView) {
+        provider.events.emplace_back("send" + std::to_string(send_index++));
+    };
+    HWTest::HardwareTestService service(endpoint, provider, 0,
+                                        [](std::chrono::microseconds) {});
+
+    ASSERT_TRUE(service.process_once(HW::Timeout::poll()));
+    EXPECT_EQ(provider.begin_calls, 1);
+    EXPECT_EQ(provider.events,
+              (std::vector<std::string>{"report0", "send0", "begin", "report1", "send1",
+                                        "report2", "send2"}));
+    ASSERT_EQ(endpoint.sent.size(), 3u);
+    EXPECT_EQ(decode_sent("dh_control_response", endpoint.sent[0])
+                  .get_unsigned("status").value_or(1),
+              0u);
+    EXPECT_EQ(decode_sent("dh_control_response", endpoint.sent[1])
+                  .get_unsigned("err_code").value_or(0),
+              static_cast<uint16_t>(HWTest::ProductErrorCode::TaskExecFailed));
+    EXPECT_EQ(decode_sent("dh_control_response", endpoint.sent[2])
+                  .get_unsigned("status").value_or(1),
+              0u);
+}
+
+TEST(HardwareTestServiceTest, StopsAfterBeginFailureFollowingSuccessfulBaselines) {
+    RecordingEndpoint endpoint;
+    DhOrderingProvider provider;
+    provider.begin_error = HWTest::ProductErrorCode::TaskExecFailed;
+    HWTest::ProductProtocol builder;
+    auto request = builder.create_message("dh_control_request", false);
+    ASSERT_TRUE(request.set_unsigned("power_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("return_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
+    ASSERT_TRUE(request.set_unsigned("seq", 0x3456));
+    ASSERT_TRUE(request.set_unsigned("report_count", 3));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 1));
+    ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
+    endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
+    size_t send_index = 0;
+    endpoint.before_send = [&](HW::BufferView) {
+        provider.events.emplace_back("send" + std::to_string(send_index++));
+    };
+    HWTest::HardwareTestService service(endpoint, provider, 0,
+                                        [](std::chrono::microseconds) {});
+
+    ASSERT_TRUE(service.process_once(HW::Timeout::poll()));
+    EXPECT_EQ(provider.begin_calls, 1);
+    EXPECT_EQ(provider.events,
+              (std::vector<std::string>{"report0", "send0", "begin", "send1"}));
+    ASSERT_EQ(endpoint.sent.size(), 2u);
+    EXPECT_EQ(decode_sent("dh_control_response", endpoint.sent[0])
+                  .get_unsigned("seq").value_or(0),
+              0x3456u);
+    const auto failure = decode_sent("dh_control_response", endpoint.sent[1]);
+    EXPECT_EQ(failure.get_unsigned("seq").value_or(0), 0x3457u);
+    EXPECT_EQ(failure.get_unsigned("err_code").value_or(0),
+              static_cast<uint16_t>(HWTest::ProductErrorCode::TaskExecFailed));
+}
+
+TEST(HardwareTestServiceTest, StopsAfterSendFailureFollowingDhBegin) {
+    RecordingEndpoint endpoint;
+    endpoint.always_busy = true;
+    DhOrderingProvider provider;
+    HWTest::ProductProtocol builder;
+    auto request = builder.create_message("dh_control_request", false);
+    ASSERT_TRUE(request.set_unsigned("power_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("return_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
+    ASSERT_TRUE(request.set_unsigned("report_count", 2));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 0));
+    ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
+    endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
+    HWTest::HardwareTestService service(endpoint, provider, 0,
+                                        [](std::chrono::microseconds) {});
+
+    EXPECT_FALSE(service.process_once(HW::Timeout::poll()));
+    EXPECT_EQ(provider.events, (std::vector<std::string>{"begin", "report0"}));
+    EXPECT_EQ(provider.begin_calls, 1);
+    EXPECT_EQ(endpoint.send_attempts, 1001);
+}
+
 TEST(HardwareTestServiceTest, RejectsDhIntervalBelowMinimumBeforeBeginningDh) {
     RecordingEndpoint endpoint;
     DhOrderingProvider provider;
@@ -408,9 +663,11 @@ TEST(HardwareTestServiceTest, RejectsDhIntervalBelowMinimumBeforeBeginningDh) {
     auto request = builder.create_message("dh_control_request", false);
     ASSERT_TRUE(request.set_unsigned("power_enable", 1));
     ASSERT_TRUE(request.set_unsigned("return_enable", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
     ASSERT_TRUE(request.set_unsigned("seq", 0x2345));
     ASSERT_TRUE(request.set_unsigned("report_count", 2));
-    ASSERT_TRUE(request.set_unsigned("delay_us", 0));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 0));
     ASSERT_TRUE(request.set_unsigned("interval_us", 2499));
     endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
     HWTest::HardwareTestService service(endpoint, provider, 0,
@@ -636,16 +893,18 @@ TEST(HardwareTestServiceTest, PermanentBusyFailsWithinBoundWithoutReassigningSeq
               0u);
 }
 
-TEST(HardwareTestServiceTest, SendsEachDhReportWithoutAddingTransmitTimeToCadence) {
+TEST(HardwareTestServiceTest, BeginsDhBeforeFirstReportWhenDelayFramesIsZeroAndKeepsCadence) {
     RecordingEndpoint endpoint;
     DhOrderingProvider provider;
     HWTest::ProductProtocol builder;
     auto request = builder.create_message("dh_control_request", false);
     ASSERT_TRUE(request.set_unsigned("power_enable", 0));
     ASSERT_TRUE(request.set_unsigned("return_enable", 0));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
     ASSERT_TRUE(request.set_unsigned("report_count", 2));
-    ASSERT_TRUE(request.set_unsigned("delay_us", 0));
-    ASSERT_TRUE(request.set_unsigned("interval_us", 10000));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 0));
+    ASSERT_TRUE(request.set_unsigned("interval_us", 50000));
     endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
     std::vector<std::chrono::microseconds> cadence_waits;
     HWTest::HardwareTestService service(
@@ -670,7 +929,7 @@ TEST(HardwareTestServiceTest, SendsEachDhReportWithoutAddingTransmitTimeToCadenc
                                         "report1", "send1"}));
     ASSERT_EQ(cadence_waits.size(), 1u);
     EXPECT_GT(cadence_waits.front(), std::chrono::microseconds(0));
-    EXPECT_LT(cadence_waits.front(), std::chrono::microseconds(9000));
+    EXPECT_LT(cadence_waits.front(), std::chrono::microseconds(49000));
 }
 
 TEST(HardwareTestServiceTest, PulseConfigUsesDedicatedResponseDescriptor) {
@@ -710,9 +969,11 @@ TEST(HardwareTestServiceTest, DhSequenceWrapsFromFFFFToZero) {
     auto request = builder.create_message("dh_control_request", false);
     ASSERT_TRUE(request.set_unsigned("power_enable", 0));
     ASSERT_TRUE(request.set_unsigned("return_enable", 0));
+    ASSERT_TRUE(request.set_unsigned("channel[0]", 1));
+    ASSERT_TRUE(request.set_unsigned("channel[1]", 0));
     ASSERT_TRUE(request.set_unsigned("seq", 0xFFFFu));
     ASSERT_TRUE(request.set_unsigned("report_count", 2));
-    ASSERT_TRUE(request.set_unsigned("delay_us", 0));
+    ASSERT_TRUE(request.set_unsigned("delay_frames", 0));
     ASSERT_TRUE(request.set_unsigned("interval_us", 2500));
     endpoint.received.emplace_back(request.bytes().begin(), request.bytes().end());
     HWTest::HardwareTestService service(endpoint, provider, 3,

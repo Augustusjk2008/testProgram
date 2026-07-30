@@ -39,6 +39,35 @@ function samplePayload(overrides: Record<string, unknown> = {}): Record<string, 
   }
 }
 
+function descriptorPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    configId: 'mbddf-device-stream',
+    productModel: 'MB_DDF_v2',
+    productName: '设备持续测试',
+    configVersion: '1.0.0',
+    stepId: 'DEVICE_STREAM',
+    testItemId: 'device_stream',
+    algorithmId: 'mbddf.device_stream',
+    title: '设备持续测试',
+    description: '',
+    supportedRunModes: ['device_stream'],
+    measurements: [],
+    runParameterSchemaVersion: '',
+    runParameters: [],
+    runParameterDefaults: {},
+    ...overrides,
+  }
+}
+
+function snapshotWithDescriptor(descriptor: Record<string, unknown>) {
+  return parseServerMessage(JSON.stringify({
+    v: 1,
+    type: 'snapshot',
+    seq: 1,
+    snapshot: { descriptor },
+  }))
+}
+
 class FakeWebSocket {
   static readonly OPEN = 1
   static instances: FakeWebSocket[] = []
@@ -473,6 +502,23 @@ describe('HwtestClient protocol boundary', () => {
       seq: 4,
       snapshot: { dataSaveEnabled: 'true' },
     }))).toThrow(/dataSaveEnabled/i)
+  })
+
+  it('defaults missing descriptor stoppable to true and preserves an explicit false', () => {
+    const legacy = snapshotWithDescriptor(descriptorPayload())
+    const nonStoppable = snapshotWithDescriptor(descriptorPayload({ stoppable: false }))
+
+    expect(legacy.type).toBe('snapshot')
+    expect(nonStoppable.type).toBe('snapshot')
+    if (legacy.type === 'snapshot' && nonStoppable.type === 'snapshot') {
+      expect(legacy.snapshot.descriptor.stoppable).toBe(true)
+      expect(nonStoppable.snapshot.descriptor.stoppable).toBe(false)
+    }
+  })
+
+  it('rejects a non-boolean descriptor stoppable value', () => {
+    expect(() => snapshotWithDescriptor(descriptorPayload({ stoppable: 'false' })))
+      .toThrow(/descriptor.*stoppable/i)
   })
 
   it('strictly parses digital stimulus snapshots and replies', () => {

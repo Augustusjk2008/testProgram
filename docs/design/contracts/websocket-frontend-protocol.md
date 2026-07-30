@@ -6,7 +6,7 @@
 
 `[当前实现]` 服务器使用 Qt WebSockets，仅监听 IPv4 回环地址 `127.0.0.1`，默认端口为 `18765`，唯一资源路径为 `/ws`。它不提供 HTTP、静态文件、TLS、数据库、登录或远程访问。仓库根目录的 `front/` 已提供独立的 React/Vite 遥测控制台；前端既可使用开发服务器，也可使用构建后的单文件 HTML，二者都与 `hwtest_web` 分开运行，浏览器仍只连接回环 WebSocket。
 
-`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider、`DigitalStimulusPanel` 和通用运行参数编辑器接入总览页。参数编辑器只消费后端 descriptor 中由算法层提供的 Schema，按 `configId + runParameterSchemaVersion` 在浏览器保存编辑值，并把覆盖值放入本次 `start.algorithmParameters`；它不写回测试配置。数字刺激面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。浏览器也已接入性能导航、`snapshot.analysis`、四通道身份缓存和 uPlot 伯德图输入；性能页只消费后端 `analysisResult`，不从实时 `SampleBuffer` 重算。此浏览器控制面实现不等价于 PXI-6259 或舵机真机已连接或已验收。
+`[当前实现]` 浏览器源码已将数字刺激协议类型、WebSocket transport、SessionProvider、`DigitalStimulusPanel` 和通用运行参数编辑器接入总览页。参数编辑器只消费后端 descriptor 中由算法层提供的 Schema，按 `configId + runParameterSchemaVersion` 在浏览器保存编辑值，并把覆盖值放入本次 `start.algorithmParameters`；它不写回测试配置。数字刺激面板仅在快照声明可用、恰有 16 路且全部 `dutBit` 为 0..15 时显示；它以 32 ms 同开关合并、单飞行串行队列发送动作，显示 active-low 物理电平、`di_state[0]` 回读、`di_state[1]` 诊断和 settling 状态。连续模式参数区另提供“保存全部测量列”复选框，只把布尔选择随 `start` 发送；浏览器不能提交保存路径或字段清单。descriptor 的 `stoppable=false` 时，浏览器在运行/暂停态隐藏 pause/resume/stop，配置选择保持禁用，终态后恢复；不能从 algorithmId 推断该能力。图表配置优先按 `configId`、缺失时按 `algorithmId` 隔离保存。浏览器也已接入性能导航、`snapshot.analysis`、四通道身份缓存和 uPlot 伯德图输入；性能页只消费后端 `analysisResult`，不从实时 `SampleBuffer` 重算。此浏览器控制面实现不等价于 PXI-6259、DH 点火或舵机真机已连接或已验收。
 
 `[当前实现]` 服务器投影后处理 capability/摘要并接受只读 `analysisResult` 请求；应用控制器已接通 STOP 尾样本封存、硬件收尾双栅栏、`queued` 到终态的后台分析、分析期间写门禁及运行中 worker 协作取消。算法层提供五种波形与扫频伯德计算端口。`capturing` 只表示输入正在采集，只有带匹配 `{taskId, analysisGeneration}` 的分析终态才表示该轮结果可查询。
 
@@ -18,9 +18,9 @@
 - Origin 为空或为浏览器从 `file://` 单文件页面发送的 opaque 值 `null` 时允许连接。其他非空 Origin 必须是有效的 `http` 或 `https` URL，主机名必须为 `localhost` 或 `127.0.0.1`；比较主机名时不区分大小写。其他 Origin 在握手阶段被拒绝，因此没有 WebSocket 关闭帧。
 - 单条文本消息以其 UTF-8 编码长度计不得超过 `16384` 字节。超限时服务器发送 `message_too_large` 连接级错误，并以 `1009`（Message Too Big）关闭。
 - 二进制消息不属于本协议。服务器发送 `invalid_envelope` 连接级错误，并以 `1003`（Unsupported Data）关闭。
-- 客户端执行 `disconnect` 后，服务器完成安全收尾并以 `1000`（Normal Closure）关闭该连接，随后继续监听新客户端。
-- 客户端执行 `quit` 后，服务器完成同样的安全收尾、回复请求、以 `1000` 关闭连接，然后停止监听并排队退出进程。
-- 浏览器异常掉线时无法发送 reply；服务器仍须执行第 7 节的安全收尾，完成后继续监听。
+- 客户端执行 `disconnect` 后，服务器通常完成安全收尾并以 `1000`（Normal Closure）关闭该连接，随后继续监听新客户端。不可停止有限流活动时是显式例外：回复成功后仅关闭并分离该客户端，不停止或 shutdown 当前任务；新客户端可重连观察当前快照和后续样本。
+- 客户端执行 `quit` 后，服务器通常完成同样的安全收尾、回复请求、以 `1000` 关闭连接，然后停止监听并排队退出进程。不可停止有限流活动时 `quit` 返回 `invalid_state`，连接、监听和任务均保持。
+- 浏览器异常掉线时无法发送 reply；服务器通常执行第 7 节的安全收尾，完成后继续监听。不可停止有限流活动时只分离客户端，不调用 stop/shutdown，任务自然完成后仍可接纳重连。
 
 连接级错误无法对应某个合法请求时，使用普通 reply 结构，但 `id` 固定为空字符串。
 
@@ -32,7 +32,7 @@
 - 服务器发送紧凑 JSON，不依赖空白或对象成员顺序。
 - 每个有效请求恰好产生一个相同 `id` 的 reply。快照和样本是独立异步事件，可以出现在请求与 reply 之间。
 - 所有对浏览器可见的事件序号必须是 `0..9007199254740991` 内的整数。服务端不得把超出 JavaScript 安全整数范围的 `snapshot.seq`、`sample.seq`、`sampleBatch.firstSeq` 或 `sampleBatch.lastSeq` 转成 JSON number 后发送。
-- `setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`setTelemetryDelivery`、descriptor 中的 `postRunAnalysis`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。新客户端收到旧服务端缺失的后处理字段时，安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。
+- `setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`setTelemetryDelivery`、descriptor 中的 `stoppable`/`postRunAnalysis`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。新客户端收到旧服务端缺失的 `stoppable` 时兼容回退为 true；缺失后处理字段时安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。显式 `stoppable` 必须为 boolean，其他类型是协议边界错误。
 
 ## 4. 消息结构
 
@@ -111,6 +111,7 @@
 | `stepId`、`testItemId`、`algorithmId` | string | 当前唯一启用步骤身份 |
 | `title`、`description` | string | 当前测试的展示名称和说明 |
 | `supportedRunModes` | string[] | 当前配置声明的运行模式；元素只能是 `single`、`pc_periodic` 或 `device_stream`，且不得同时包含 `pc_periodic` 与 `device_stream`；字段缺失时后端只投影 `single` |
+| `stoppable` | boolean | 当前测试在活动态是否允许 pause/resume/stop/shutdown；配置缺失时为 true，false 只允许恰好支持 `device_stream` 的配置，当前用于 DH 点火有限流 |
 | `measurements` | object[] | 待测量元数据；每项包含 `id`、`label`、`unit`、`primary` |
 | `runParameterSchemaVersion` | string | 算法层运行参数 Schema 版本；无可编辑参数时为空 |
 | `runParameters` | object[] | 参数定义；每项包含 `id`、`label`、`description`、`kind`、`unit`、`required`、独占边界标志和 `choices`，可选 `minimum`、`maximum`、`visibleWhen` |
@@ -188,7 +189,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `missing_field` | 必填字段缺失、字符串为空，或动作必需参数缺失 | 是 |
 | `server_busy` | 已有活跃客户端 | 否，关闭码 `1008` |
 | `message_too_large` | UTF-8 文本超过 `16384` 字节 | 否，关闭码 `1009` |
-| `telemetry_backpressure` | 活跃客户端的出站 FIFO 加 Qt socket 待写字节超过 `maxQueuedOutputBytes` 硬上限 | 否；记录诊断、执行现有安全停止/收尾后以 `1011` 关闭，绝不静默丢样 |
+| `telemetry_backpressure` | 活跃客户端的出站 FIFO 加 Qt socket 待写字节超过 `maxQueuedOutputBytes` 硬上限 | 否；记录诊断并以 `1011` 关闭。普通任务执行现有安全停止/收尾；不可停止有限流只分离连接，任务继续自然运行，绝不把背压解释为 STOP |
 | `command_in_progress` | `[当前实现]` 正在异步停止、安全收尾，或分析处于 `queued` 到终态之间时又收到新会话写动作 | 是 |
 | `test_config_not_found` | `selectTest.configId` 不在后端启动时发现的配置白名单中 | 是 |
 | `invalid_run_mode` | `start.mode` 不是固定三种模式之一 | 是 |
@@ -220,13 +221,13 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `selectSerialPort` | `{"portName":"COM7"}` | 调用 `selectSerialPort`；`portName` 必须是非空字符串 |
 | `prepare` | `{}` | 调用 `prepare` |
 | `start` | `{}` 或 `{"mode":"device_stream","saveData":true,"algorithmParameters":{"waveform":4,"ampl":3.5}}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`，且必须由当前 descriptor 声明；`intervalMs` 为 `0..3600000` 的整数，`0` 表示上一轮完整收发结束后不增加额外等待，所有步骤仍严格串行；`maxCycles` 为 `0..1000000000` 的整数且 `0` 表示 PC 周期不限轮数。两者只有 `pc_periodic` 具备调度含义，其他模式由控制器归一为 `1000/1`；`saveData` 只能是 boolean，`pc_periodic` 与 `device_stream` 均可启用保存，`single` 强制不保存；`algorithmParameters` 必须是 object，键和值再由当前算法 Schema 校验 |
-| `pause` | `{}` | 调用 `pause` |
-| `resume` | `{}` | 调用 `resume` |
+| `pause` | `{}` | 调用 `pause`；活动 descriptor `stoppable=false` 时返回 `CapabilityUnsupported`，不调用控制器动作 |
+| `resume` | `{}` | 调用 `resume`；活动 descriptor `stoppable=false` 时返回 `CapabilityUnsupported`，不调用控制器动作 |
 | `setDigitalStimulus` | `{"switchId":"di0","active":true,"expectedRevision":0}` | 必须且只能包含这三个字段；`switchId` 为非空 string，`active` 为 boolean，`expectedRevision` 为 0..9007199254740991 的非负安全整数。未知字段（包括 `resourceId`、`adapterId`、端口或路径）一律 `invalid_envelope`；控制器再按已加载配置白名单验证 `switchId`。reply 的 `data.digitalStimulus` 返回当前状态 |
 | `resetDigitalStimulus` | `{}` | 只能使用空对象；任何参数均为 `invalid_envelope`。调用控制器复位，reply 的 `data.digitalStimulus` 返回当前状态 |
-| `stop` | `{}` | 调用 `stopAsync`；发起成功时只在 `stopCompleted` 后发送 reply，初始调用失败时立即回复且不等待不存在的完成信号 |
-| `disconnect` | `{}` | 必要时先异步停止，再调用 `shutdown`；最后回复并关闭当前连接，服务器继续监听 |
-| `quit` | `{}` | 执行与 `disconnect` 相同的安全收尾，随后关闭服务器并退出进程 |
+| `stop` | `{}` | 调用 `stopAsync`；发起成功时只在 `stopCompleted` 后发送 reply，初始调用失败时立即回复且不等待不存在的完成信号。活动 descriptor `stoppable=false` 时立即返回 `CapabilityUnsupported`，不调用控制器动作 |
+| `disconnect` | `{}` | 通常必要时先异步停止，再调用 `shutdown`；最后回复并关闭当前连接，服务器继续监听。不可停止有限流活动时回复成功后仅分离连接，不停止、不 shutdown，允许重连 |
+| `quit` | `{}` | 通常执行与 `disconnect` 相同的安全收尾，随后关闭服务器并退出进程。不可停止有限流活动时返回 `invalid_state`，不得关闭连接、监听或进程 |
 
 除 `start`、`selectTest`、`selectControl`、`selectSerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`start` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知顶层字段按 `invalid_envelope` 拒绝；`algorithmParameters` 内的未知字段由应用/算法边界以 `ParameterRangeError` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
 
@@ -266,11 +267,11 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 - Web 层不得调用 `waitForTerminal()`。运行进度和终态只通过 `snapshotChanged` 观察。
 - `sampleReceived` 只消费已形成的应用 DTO；默认 `single` 直接形成旧 `sample` 事件，已协商 `batch` 时进入每连接私有 `WebTelemetryBatcher`。批量器只按数目、字节、时间和 task 边界打包，不解释、合并或绘制业务字段，也不为连续测试写文件。连续数据文件在 Web 投影前已由共享应用控制器记录，TUI/GUI/WebSocket 适配器都不持有 recorder。`analysis` 不进入 sample 事件；伯德数组只能经 `analysisResult` 读取，避免每个样本重复携带大载荷。
 - 活跃客户端的样本 batch、关键快照和控制 reply 进入同一个按调用顺序的出站 FIFO。WebSocket、批量器定时器、快照合并定时器、FIFO 和 `bytesToWrite()` 只在 WebSocket server 亲和线程访问；不得跨线程发送或阻塞等待网络 drain。
-- 默认出站限制为：`maxBatchSamples=64`、`maxBatchBytes=32768`、`maxBatchLatencyMs=20`、`snapshotIntervalMs=100`、`socketHighWaterBytes=1048576`、`socketLowWaterBytes=262144`、`maxQueuedOutputBytes=4194304`。`bytesToWrite()` 到达高水位后暂停继续提交到 Qt socket；在 `bytesWritten()` 使其降至低水位后恢复。达到硬上限时，服务端记录 `telemetry_backpressure`、停止接收新的遥测投影、执行既有安全停止/收尾并关闭旧连接；不保留历史、不重放，也不得把旧 epoch 的 FIFO 内容交给重连客户端。
+- 默认出站限制为：`maxBatchSamples=64`、`maxBatchBytes=32768`、`maxBatchLatencyMs=20`、`snapshotIntervalMs=100`、`socketHighWaterBytes=1048576`、`socketLowWaterBytes=262144`、`maxQueuedOutputBytes=4194304`。`bytesToWrite()` 到达高水位后暂停继续提交到 Qt socket；在 `bytesWritten()` 使其降至低水位后恢复。达到硬上限时，服务端记录 `telemetry_backpressure`、停止向旧连接投影新遥测并关闭旧连接；普通任务执行既有安全停止/收尾，不可停止有限流只分离连接且继续自然运行。不保留历史、不重放，也不得把旧 epoch 的 FIFO 内容交给重连客户端。
 - `setDigitalStimulus` 和 `resetDigitalStimulus` 只在控制器处于 `ready`、`running`、`paused`、`finished` 或 `stopped`，且 DI 已准备时才会执行；Web 层不持有或传递物理资源/Adapter 参数。
 - `stop` 保存请求 id，调用 `stopAsync()` 后保持事件循环运行；发起成功后收到 `stopCompleted` 才回复。若 `stopAsync()` 因状态、超时参数或已有停止而立即失败，则直接返回该控制器错误并清除 Web 层 pending 状态。
 - `[当前实现]` 异步停止、断开收尾或后处理处于 `queued` 到终态期间，`snapshot`、`analysisResult`、`testConfigs`、`controls` 和 `ports` 等只读动作仍允许；其他新会话写动作回复 `command_in_progress`，不得再次触发控制器写动作。当前捕获任务 STOP 和所有 cleanup 始终允许。
-- `disconnect`、`quit`、异常掉线和服务器内部 `DropCleanup` 在状态为 `running` 或 `paused` 时按 `stopAsync -> stopCompleted -> shutdown` 顺序执行；其他状态直接尝试 `shutdown`。DI 配置的停止/收尾会在 BIZ 停止后尽力 `resetDigitalStimulus`，随后按刺激设备会话、DUT 会话、HAL 的顺序释放；这不是进程崩溃、主机掉电或未验证台架的物理安全保证。shutdown 同时请求后处理协作取消并在配置时限内 join，不使用 `terminate()` 或 detach；join 超时返回 `analysis_shutdown_timeout` 并保留仍被线程引用的对象，服务器继续保持 cleanup 门禁并重试。SPA 页面内导航不等于断线，不取消分析。
+- `disconnect`、`quit`、异常掉线和服务器内部 `DropCleanup` 在普通测试状态为 `running` 或 `paused` 时按 `stopAsync -> stopCompleted -> shutdown` 顺序执行；其他普通状态直接尝试 `shutdown`。活动 descriptor `stoppable=false` 时是显式例外：`disconnect`/异常掉线/背压只 detach，`quit` 拒绝，均不调用 stop、shutdown 或 DI 复位。DI 配置的普通停止/收尾会在 BIZ 停止后尽力 `resetDigitalStimulus`，随后按刺激设备会话、DUT 会话、HAL 的顺序释放；这不是进程崩溃、主机掉电或未验证台架的物理安全保证。shutdown 同时请求后处理协作取消并在配置时限内 join，不使用 `terminate()` 或 detach；join 超时返回 `analysis_shutdown_timeout` 并保留仍被线程引用的对象，服务器继续保持 cleanup 门禁并重试。SPA 页面内导航不等于断线，不取消分析。
 - `shutdown` 的失败必须通过对应 reply 返回；异常掉线时没有 reply，但服务器仍清理会话并恢复到可接纳下一客户端的状态。
 - 服务器停止监听或客户端对象销毁，不得先于已经排队的安全收尾。
 

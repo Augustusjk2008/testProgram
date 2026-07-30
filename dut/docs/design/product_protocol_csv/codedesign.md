@@ -155,18 +155,23 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
    （`0xA000/0x00A0`），配置 Multiple 点火模式，然后提交所选通道。即使任一使能值为
    `0`，非空通道仍提交点火命令，由硬件使能状态决定实际输出。所选通道去重后每四路
    一批；末批不足四路时重复最后一个有效通道填满，避免含 `0xFF` 的尾批在实板不响应。
-4. 板端提交点火后等待 `delay_us` 采集首帧；`report_count=N` 表示响应总帧数，范围
-   `1..65535`，`interval_us` 范围为 `2500..65535`，`delay_us` 范围为 `0..65535`；默认值
-   分别为 50、2500 us 和 0。越界参数在硬件写入前返回 `PARAM_OUT_OF_RANGE`。
-5. 第 `i` 帧响应的 `seq=请求 seq+i`（U16 回绕）。板端按单调时钟等待截止点，记录本帧
+4. `report_count=N` 表示响应总帧数，范围 `1..65535`；`interval_us` 范围为
+   `2500..65535`；`delay_frames` 为 U16 且必须小于 `report_count`，默认值分别为 50、
+   2500 us 和 5。power/return 只允许 0/1，二者为 0 仍是合法测试输入；通道位图必须非空、
+   只使用 `channel[0].bit0..22` 且 `channel[1]=0`。全部业务参数在任何硬件写入前验证，
+   非法时只发送一帧 `PARAM_OUT_OF_RANGE`。
+5. `delay_frames=N` 表示先采集并发送 N 帧只读基线，再在下一帧采样前恰好提交一次点火；
+   N=0 时在首帧前提交。基线采集或发送失败立即结束且不得点火；点火后采集错误以错误响应
+   占用当前帧并继续剩余回告，发送失败终止。协议不提供 STOP/ABORT，结束后不自动复位。
+6. 第 `i` 帧响应的 `seq=请求 seq+i`（U16 回绕）。板端按单调时钟等待截止点，记录本帧
    实际采样起点、采样并立即发送；下一截止点使用“本帧实际采样起点 + interval_us”。串口
    发送只占当前周期余量，不额外叠加到请求间隔；发送超过周期时下一帧不会追赶压缩，实际
    采样起点间隔仍不小于 `interval_us`。本版不要求突发期间并行处理其他命令，也不做协议级
    自动重发。
-6. 电源读回按 `0xAAAA/0xFFFF` 映射为逻辑 1/0；回线寄存器虽然写入
+7. 电源读回按 `0xAAAA/0xFFFF` 映射为逻辑 1/0；回线寄存器虽然写入
    `0xA000/0x00A0`，读回低 8 位按 `0xAA/0xFF` 映射为 1/0。每路点火状态按寄存器
    `0xFFFF/0xAAAA/0xBBBB` 映射为 `0/1/2`（未 DH/成功/失败）。
-7. 每帧报告读取同一份 ADS1258 快照。`telemetry[0]=raw[1]`（局部 `0x84`，热电池
+8. 每帧报告读取同一份 ADS1258 快照。`telemetry[0]=raw[1]`（局部 `0x84`，热电池
    激活），`telemetry[1..22]=raw[4..25]`（局部 `0x90..0xE4`，22 路点火电压）。板端
    完成按通道定标后以 `0.001 V/LSB` 编码 `S32F`；读取或编码失败时整帧返回执行错误，
    不把脉宽寄存器或部分字段伪装成遥测。
@@ -277,7 +282,7 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
 | 6 | DO | `do_write_request/response` | 两组位图默认 0，仅 bit 0-15 有效 |
 | 7 | 电气健康 | `elec_health_status_request/response` | 无 |
 | 8 | DH 脉宽配置 | `dh_pulse_config_request/response` | 使能；DH0=80 ms，DH1..22=63 ms |
-| 9 | DH 控制 | `dh_control_request/response` | 电源/回线使能；`0x007FFFFF/0`，count 50，interval 2500 us，delay 0 |
+| 9 | DH 控制 | `dh_control_request/response` | 电源/回线使能；`0x007FFFFF/0`，count 50，interval 2500 us，delay_frames 5 |
 | 10 | 舵控板级 | `helm_board_test_request/response` | 四路 PWM 百分比=0，四路方向=0 |
 | 11 | 定时器 | `timer_jitter_start/stop_*` | mode 0/1，默认 0；250 us x 250 周期 |
 
@@ -289,12 +294,14 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
 `HELM_BOARD_TEST` 并列且没有互斥或生命周期绑定。
 
 内存类型：0-2 为 seed 图样写入/校验，3-6 分别为读、写、拷贝和 NT store 带宽测试。
-PC 默认超时为普通 2 秒、总线 60 秒、内存 120 秒、SPI Flash 180 秒；DH 首帧超时按
-`delay_us + 2 s`，收到首帧后按 `interval_us + 2 s` 的相邻回告进度重新计时，不再把串口
-线传输时间或剩余报告数叠加到超时。任何测试均不自动重试。DH 页面把完整去重回告保存为
-UTF-8-SIG TSV 长表：用户指定目录，文件名固定为 `DH_data_YYYYMMDD_HHMMSS_ffffff.txt`，
-每帧输出 23 行；完成、失败和停止均保存已经收到的数据。文件中的 `sample_time_us` 是按
-`delay_us + (report_index-1)*interval_us` 计算的计划采样时刻，协议未携带实测时间戳。
+PC 默认超时为普通 2 秒、总线 60 秒、内存 120 秒、SPI Flash 180 秒；DH 首帧不再叠加
+时间延迟，收到首帧后按 `interval_us + 2 s` 的相邻回告进度重新计时，不把串口线传输时间
+或剩余报告数叠加到超时。任何测试均不自动重试。DH 页面只在用户显式勾选“保存完整数据”
+时把完整去重回告写为 UTF-8-SIG TSV 长表：用户指定目录，文件名固定为
+`DH_data_YYYYMMDD_HHMMSS_ffffff.txt`，每帧输出 23 行；自然完成或失败时保存已经收到的
+数据，活动任务不能由 PC 停止。文件中的 `sample_time_us` 从 0 开始，按
+`(report_index-1)*interval_us` 计算计划采样时刻；`delay_frames` 只标识基线帧数，不叠加
+时间，协议未携带实测时间戳。
 舵机连续实测由 Web 主基线进入，旧 PyQt 导航和“执行全部”仍只包含舵控板级测试。
 
 除 BUS 外，PC 页面“连续”是用户显式开启的重复执行，不属于协议层失败自动重试：每轮普通

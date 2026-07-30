@@ -149,6 +149,89 @@ TEST(RunParameterSchemaTest, DhSchemaExposesEnableAndEveryPulseWidth)
     }
 }
 
+TEST(RunParameterSchemaTest, DhIgniteSchemaExposesSafeDefaultsAndEncodingBounds)
+{
+    const RunParameterSchema* schema = findRunParameterSchema(
+        QStringLiteral("mbddf.dh_ignite_stream"));
+    ASSERT_NE(schema, nullptr);
+    EXPECT_EQ(schema->version, QStringLiteral("1"));
+    ASSERT_EQ(schema->parameters.size(), 28);
+
+    const RunParameterDescriptor* power = parameter(
+        *schema, QStringLiteral("power_enable"));
+    const RunParameterDescriptor* returnEnable = parameter(
+        *schema, QStringLiteral("return_enable"));
+    ASSERT_NE(power, nullptr);
+    ASSERT_NE(returnEnable, nullptr);
+    EXPECT_EQ(power->kind, RunParameterKind::Integer);
+    EXPECT_EQ(power->defaultValue.toInt(), 0);
+    EXPECT_EQ(power->minimum.toInt(), 0);
+    EXPECT_EQ(power->maximum.toInt(), 255);
+    EXPECT_EQ(returnEnable->kind, RunParameterKind::Integer);
+    EXPECT_EQ(returnEnable->defaultValue.toInt(), 0);
+    EXPECT_EQ(returnEnable->minimum.toInt(), 0);
+    EXPECT_EQ(returnEnable->maximum.toInt(), 255);
+
+    for (int channel = 0; channel < 23; ++channel) {
+        const RunParameterDescriptor* enabled = parameter(
+            *schema,
+            QStringLiteral("channel_enabled[%1]").arg(channel));
+        ASSERT_NE(enabled, nullptr) << channel;
+        EXPECT_EQ(enabled->kind, RunParameterKind::Boolean);
+        EXPECT_FALSE(enabled->defaultValue.toBool());
+    }
+
+    const RunParameterDescriptor* count = parameter(
+        *schema, QStringLiteral("report_count"));
+    const RunParameterDescriptor* interval = parameter(
+        *schema, QStringLiteral("interval_us"));
+    const RunParameterDescriptor* delay = parameter(
+        *schema, QStringLiteral("delay_frames"));
+    ASSERT_NE(count, nullptr);
+    ASSERT_NE(interval, nullptr);
+    ASSERT_NE(delay, nullptr);
+    EXPECT_EQ(count->defaultValue.toInt(), 50);
+    EXPECT_EQ(interval->defaultValue.toInt(), 2500);
+    EXPECT_EQ(delay->defaultValue.toInt(), 5);
+    EXPECT_EQ(count->minimum.toInt(), 0);
+    EXPECT_EQ(interval->minimum.toInt(), 0);
+    EXPECT_EQ(delay->minimum.toInt(), 0);
+    EXPECT_EQ(count->maximum.toInt(), 65535);
+    EXPECT_EQ(interval->maximum.toInt(), 65535);
+    EXPECT_EQ(delay->maximum.toInt(), 65535);
+}
+
+TEST(RunParameterSchemaTest, DhIgniteLeavesBusinessValidationToDut)
+{
+    const auto normalized = normalizeRunParameters(
+        QStringLiteral("mbddf.dh_ignite_stream"), {},
+        {{QStringLiteral("power_enable"), 2},
+         {QStringLiteral("return_enable"), 255},
+         {QStringLiteral("report_count"), 0},
+         {QStringLiteral("interval_us"), 0},
+         {QStringLiteral("delay_frames"), 65535}});
+    ASSERT_TRUE(normalized.ok())
+        << normalized.status.error.message.toStdString();
+    for (int channel = 0; channel < 23; ++channel) {
+        EXPECT_FALSE(normalized.value
+                         .value(QStringLiteral("channel_enabled[%1]").arg(channel))
+                         .toBool());
+    }
+
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.dh_ignite_stream"), {},
+                     {{QStringLiteral("power_enable"), 256}})
+                     .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.dh_ignite_stream"), {},
+                     {{QStringLiteral("report_count"), 65536}})
+                     .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.dh_ignite_stream"), {},
+                     {{QStringLiteral("channel_enabled[0]"), 1}})
+                     .ok());
+}
+
 TEST(RunParameterSchemaTest, BusLoopExposesOnlyTestableComLinksAndBoundedCount)
 {
     const RunParameterSchema* schema = findRunParameterSchema(

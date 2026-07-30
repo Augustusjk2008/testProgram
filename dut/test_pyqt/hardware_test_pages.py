@@ -793,7 +793,6 @@ class DhTestPage(BaseHardwareTestPage):
         self._report_keys = set()
         self._selector_synced_count = 0
         self._sample_interval_us = 2500
-        self._sample_delay_us = 0
         self._run_started_at: Optional[datetime] = None
         self._run_parameters: Dict[str, object] = {}
         self._selected_channel_mask = (
@@ -803,24 +802,30 @@ class DhTestPage(BaseHardwareTestPage):
         self.status_series: List[List[float]] = [[] for _ in range(23)]
         self.telemetry_series: List[List[float]] = [[] for _ in range(23)]
         super().__init__(spec, catalog, parent)
+        self.continuous_button.setChecked(False)
+        self.continuous_button.setEnabled(False)
+        self.action_layout.removeWidget(self.continuous_button)
+        self.continuous_button.hide()
         self._ui_refresh_timer = QTimer(self)
         self._ui_refresh_timer.setSingleShot(True)
         self._ui_refresh_timer.setInterval(self._UI_REFRESH_INTERVAL_MS)
         self._ui_refresh_timer.timeout.connect(self._flush_pending_ui)
 
     def build_parameters(self) -> None:
-        self.power_enable_check = QCheckBox("使能", self)
-        self.power_enable_check.setObjectName("dhPowerEnable")
-        self.power_enable_check.setChecked(
-            bool(self.spec.defaults.get("power_enable", 1))
+        self.power_enable_spin = QSpinBox(self)
+        self.power_enable_spin.setObjectName("dhPowerEnableSpin")
+        self.power_enable_spin.setRange(0, 0xFF)
+        self.power_enable_spin.setValue(
+            int(self.spec.defaults.get("power_enable", 1))
         )
-        self.return_enable_check = QCheckBox("使能", self)
-        self.return_enable_check.setObjectName("dhReturnEnable")
-        self.return_enable_check.setChecked(
-            bool(self.spec.defaults.get("return_enable", 1))
+        self.return_enable_spin = QSpinBox(self)
+        self.return_enable_spin.setObjectName("dhReturnEnableSpin")
+        self.return_enable_spin.setRange(0, 0xFF)
+        self.return_enable_spin.setValue(
+            int(self.spec.defaults.get("return_enable", 1))
         )
-        self.add_parameter_row("DH 电源", self.power_enable_check)
-        self.add_parameter_row("DH 回线", self.return_enable_check)
+        self.add_parameter_row("DH 电源", self.power_enable_spin)
+        self.add_parameter_row("DH 回线", self.return_enable_spin)
 
         self.channel_checks = [
             QCheckBox("DH{}".format(index), self) for index in range(23)
@@ -850,25 +855,32 @@ class DhTestPage(BaseHardwareTestPage):
 
         self.report_count_spin = QSpinBox(self)
         self.report_count_spin.setObjectName("dhReportCountSpin")
-        self.report_count_spin.setRange(1, 65535)
+        self.report_count_spin.setRange(0, 65535)
         self.report_count_spin.setValue(
             int(self.spec.defaults.get("report_count", 1))
         )
         self.interval_spin = QSpinBox(self)
         self.interval_spin.setObjectName("dhIntervalSpin")
-        self.interval_spin.setRange(2500, 65535)
+        self.interval_spin.setRange(0, 65535)
         self.interval_spin.setSuffix(" us")
         self.interval_spin.setValue(int(self.spec.defaults.get("interval_us", 2500)))
-        self.delay_spin = QSpinBox(self)
-        self.delay_spin.setObjectName("dhDelaySpin")
-        self.delay_spin.setRange(0, 65535)
-        self.delay_spin.setSuffix(" us")
-        self.delay_spin.setValue(int(self.spec.defaults.get("delay_us", 0)))
+        self.delay_frames_spin = QSpinBox(self)
+        self.delay_frames_spin.setObjectName("dhDelayFramesSpin")
+        self.delay_frames_spin.setRange(0, 65535)
+        self.delay_frames_spin.setSuffix(" 帧")
+        self.delay_frames_spin.setValue(
+            int(self.spec.defaults.get("delay_frames", 5))
+        )
 
         self.add_parameter_row("通道选择", selector)
         self.add_parameter_row("回告次数", self.report_count_spin)
         self.add_parameter_row("回告间隔", self.interval_spin)
-        self.add_parameter_row("首帧等待", self.delay_spin)
+        self.add_parameter_row("基线帧数", self.delay_frames_spin)
+
+        self.save_data_check = QCheckBox("保存完整数据", self)
+        self.save_data_check.setObjectName("dhSaveDataCheck")
+        self.save_data_check.setChecked(False)
+        self.add_parameter_row("数据保存", self.save_data_check)
 
         default_directory = QStandardPaths.writableLocation(
             QStandardPaths.DocumentsLocation
@@ -1013,13 +1025,13 @@ class DhTestPage(BaseHardwareTestPage):
                 words[index // 32] |= 1 << (index % 32)
         self._selected_channel_mask = words[0]
         return {
-            "power_enable": int(self.power_enable_check.isChecked()),
-            "return_enable": int(self.return_enable_check.isChecked()),
+            "power_enable": int(self.power_enable_spin.value()),
+            "return_enable": int(self.return_enable_spin.value()),
             "channel[0]": words[0],
             "channel[1]": 0,
             "report_count": int(self.report_count_spin.value()),
             "interval_us": int(self.interval_spin.value()),
-            "delay_us": int(self.delay_spin.value()),
+            "delay_frames": int(self.delay_frames_spin.value()),
         }
 
     @staticmethod
@@ -1034,8 +1046,7 @@ class DhTestPage(BaseHardwareTestPage):
         self.reports.append(decoded)
         report_index = len(self.reports) - 1
         self.sample_times_ms.append(
-            (self._sample_delay_us + report_index * self._sample_interval_us)
-            / 1000.0
+            report_index * self._sample_interval_us / 1000.0
         )
         failed = _message_failed(decoded)
         for index in range(23):
@@ -1220,7 +1231,6 @@ class DhTestPage(BaseHardwareTestPage):
 
     def reset_for_run(self) -> None:
         self._sample_interval_us = int(self.interval_spin.value())
-        self._sample_delay_us = int(self.delay_spin.value())
         self._run_parameters = self.collect_parameters()
         self._run_started_at = datetime.now()
         self.saved_file_label.setText("尚未保存")
@@ -1240,6 +1250,9 @@ class DhTestPage(BaseHardwareTestPage):
         )
         self.saved_file_label.setText(str(saved_path))
         return saved_path
+
+    def should_save_reports(self) -> bool:
+        return self.save_data_check.isChecked()
 
     def showEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         super().showEvent(event)

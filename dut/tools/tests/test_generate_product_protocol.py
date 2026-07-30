@@ -469,6 +469,10 @@ def test_repository_catalog_matches_planned_protocol_revisions() -> None:
     dh_request = read_asset_fields("dh_control_request.csv")
     assert dh_request["report_count"]["default"] == "50"
     assert dh_request["interval_us"]["default"] == "2500"
+    assert "delay_us" not in dh_request
+    assert dh_request["delay_frames"]["index"] == "B23-24"
+    assert dh_request["delay_frames"]["type"] == "U16"
+    assert dh_request["delay_frames"]["default"] == "5"
 
     helm_request = read_asset_fields("helm_start_request.csv")
     helm_response = read_asset_fields("helm_start_response.csv")

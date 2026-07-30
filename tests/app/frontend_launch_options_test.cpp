@@ -96,12 +96,13 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
         parser, QStringLiteral(HWTEST_PROJECT_SOURCE_DIR), defaults, &options);
 
     ASSERT_TRUE(result.ok) << result.message.toStdString();
-    ASSERT_EQ(options.testConfigs.size(), 11);
+    ASSERT_EQ(options.testConfigs.size(), 12);
     bool foundSystem = false;
     bool foundElectrical = false;
     bool foundMemory = false;
     bool foundSpiFlash = false;
     bool foundDhPulse = false;
+    bool foundDhIgnite = false;
     bool foundTimer = false;
     bool foundDiRead = false;
     bool foundImuStream = false;
@@ -114,6 +115,8 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
         foundMemory = foundMemory || option.configId == QStringLiteral("mbddf-memperf");
         foundSpiFlash = foundSpiFlash || option.configId == QStringLiteral("mbddf-spi-flash");
         foundDhPulse = foundDhPulse || option.configId == QStringLiteral("mbddf-dh-pulse-config");
+        foundDhIgnite = foundDhIgnite ||
+            option.configId == QStringLiteral("mbddf-dh-ignite-stream");
         foundTimer = foundTimer || option.configId == QStringLiteral("mbddf-timer-jitter");
         foundDiRead = foundDiRead || option.configId == QStringLiteral("mbddf-di-read");
         foundImuStream = foundImuStream ||
@@ -132,6 +135,7 @@ TEST(FrontendLaunchOptionsTest, DiscoversSelectableTestConfigsFromProjectConfigD
     EXPECT_TRUE(foundMemory);
     EXPECT_TRUE(foundSpiFlash);
     EXPECT_TRUE(foundDhPulse);
+    EXPECT_TRUE(foundDhIgnite);
     EXPECT_TRUE(foundTimer);
     EXPECT_TRUE(foundDiRead);
     EXPECT_TRUE(foundImuStream);

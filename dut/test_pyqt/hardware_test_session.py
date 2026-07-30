@@ -64,18 +64,11 @@ class TestSpec:
         return {parameter.name: parameter.default for parameter in self.parameters}
 
 
-def dh_timeout_ms(report_count: int, interval_us: int, delay_us: int) -> int:
-    """Return the deadline for the first DH report.
+def dh_timeout_ms(report_count: int, interval_us: int, delay_frames: int) -> int:
+    """Return the first-DH-report deadline without a time-delay offset."""
 
-    Subsequent reports refresh the timer with ``dh_report_gap_timeout_ms``.
-    Keep the full request signature so existing callers do not need a special
-    first-report timeout API.
-    """
-
-    del report_count, interval_us
-    return DH_TIMEOUT_MARGIN_MS + int(
-        math.ceil(max(0, int(delay_us)) / 1000.0)
-    )
+    del report_count, interval_us, delay_frames
+    return DH_TIMEOUT_MARGIN_MS
 
 
 def dh_report_gap_timeout_ms(interval_us: int) -> int:
@@ -175,13 +168,13 @@ TEST_SPECS = (
         "dh_control_response",
         DEFAULT_TIMEOUT_MS,
         (
-            ParameterSpec("power_enable", "DH 电源使能", "int", 1, (0, 1)),
-            ParameterSpec("return_enable", "DH 回线使能", "int", 1, (0, 1)),
+            ParameterSpec("power_enable", "DH 电源使能", "int", 1),
+            ParameterSpec("return_enable", "DH 回线使能", "int", 1),
             ParameterSpec("channel[0]", "通道位图 0", "int", 0x007FFFFF),
             ParameterSpec("channel[1]", "通道位图 1", "int", 0),
             ParameterSpec("report_count", "回告次数", "int", 50),
             ParameterSpec("interval_us", "回告间隔 us", "int", 2500),
-            ParameterSpec("delay_us", "首帧等待 us", "int", 0),
+            ParameterSpec("delay_frames", "基线帧数", "int", 5),
         ),
     ),
     TestSpec(
@@ -435,25 +428,25 @@ class HardwareTestSession(QObject):
         if key == "dh":
             try:
                 merged["power_enable"] = self._bounded_integer(
-                    merged.get("power_enable", 1), "DH 电源使能", 0, 1
+                    merged.get("power_enable", 1), "DH 电源使能", 0, 0xFF
                 )
                 merged["return_enable"] = self._bounded_integer(
-                    merged.get("return_enable", 1), "DH 回线使能", 0, 1
+                    merged.get("return_enable", 1), "DH 回线使能", 0, 0xFF
                 )
                 merged["channel[0]"] = self._bounded_integer(
-                    merged.get("channel[0]", 0), "DH 通道位图 0", 0, 0x007FFFFF
+                    merged.get("channel[0]", 0), "DH 通道位图 0", 0, 0xFFFFFFFF
                 )
                 merged["channel[1]"] = self._bounded_integer(
-                    merged.get("channel[1]", 0), "DH 通道位图 1", 0, 0
+                    merged.get("channel[1]", 0), "DH 通道位图 1", 0, 0xFFFFFFFF
                 )
                 report_count = self._bounded_integer(
-                    merged.get("report_count", 50), "DH 回告次数", 1, 65535
+                    merged.get("report_count", 50), "DH 回告次数", 0, 65535
                 )
                 interval_us = self._bounded_integer(
-                    merged.get("interval_us", 2500), "DH 回告间隔", 2500, 65535
+                    merged.get("interval_us", 2500), "DH 回告间隔", 0, 65535
                 )
-                delay_us = self._bounded_integer(
-                    merged.get("delay_us", 0), "DH 首帧等待", 0, 65535
+                delay_frames = self._bounded_integer(
+                    merged.get("delay_frames", 5), "DH 基线帧数", 0, 65535
                 )
             except ValueError as exc:
                 return self._finish_and_return(
@@ -461,11 +454,11 @@ class HardwareTestSession(QObject):
                 )
             merged["report_count"] = report_count
             merged["interval_us"] = interval_us
-            merged["delay_us"] = delay_us
+            merged["delay_frames"] = delay_frames
             self._dh_remaining = report_count
             self._dh_failure_detail = ""
             self._dh_report_gap_timeout_ms = dh_report_gap_timeout_ms(interval_us)
-            timeout = dh_timeout_ms(report_count, interval_us, delay_us)
+            timeout = dh_timeout_ms(report_count, interval_us, delay_frames)
             return self._send_request(spec.request_name, spec.response_name, merged, timeout)
         if key == "helm":
             self._phase = "helm_start"
@@ -492,6 +485,11 @@ class HardwareTestSession(QObject):
         self._next_all_timer.stop()
         self._run_all_queue = []
         self._running_all = False
+        if self._active_test_key == "dh":
+            self.log_event.emit(
+                "WARNING", "DH 点火请求已受理，不支持停止；等待产品端自然完成"
+            )
+            return
         self._stopping = True
         if self._active_test_key is not None:
             if self._active_test_key == "helm":

@@ -18,6 +18,7 @@ const descriptor: TestDescriptor = {
   algorithmId: 'mbddf.helm_stream',
   title: '舵机连续测试',
   description: '',
+  stoppable: true,
   supportedRunModes: ['device_stream'],
   measurements: [],
   runParameterSchemaVersion: '1',

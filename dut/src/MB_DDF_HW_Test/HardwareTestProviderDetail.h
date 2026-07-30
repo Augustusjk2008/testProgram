@@ -112,6 +112,8 @@ constexpr ProductErrorCode bus_completion_error(
 ProductErrorCode populate_dh_telemetry(const HW::Ads1258Snapshot& snapshot,
                                        ProductMessage& response);
 
+ProductErrorCode validate_dh_control_request(const ProductMessage& request);
+
 HW::ComConfig bus_com_config(bool loopback);
 HW::ComConfig imu_stream_com_config();
 

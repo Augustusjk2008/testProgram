@@ -222,6 +222,38 @@ bool writeTestConfigWithSupportedRunModes(const QString& sourcePath,
     return written;
 }
 
+bool writeTestConfigWithStoppable(const QString& sourcePath,
+                                  const QString& outputPath,
+                                  const QJsonValue& stoppable,
+                                  QString* error)
+{
+    QFile source(sourcePath);
+    if (!source.open(QIODevice::ReadOnly)) {
+        if (error != nullptr) *error = source.errorString();
+        return false;
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(source.readAll());
+    source.close();
+    if (!document.isObject()) {
+        if (error != nullptr) *error = QStringLiteral("Test fixture is not a JSON object");
+        return false;
+    }
+
+    QJsonObject root = document.object();
+    QJsonObject reportFields = root.value(QStringLiteral("reportFields")).toObject();
+    reportFields.insert(QStringLiteral("stoppable"), stoppable);
+    root.insert(QStringLiteral("reportFields"), reportFields);
+    QFile output(outputPath);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (error != nullptr) *error = output.errorString();
+        return false;
+    }
+    const QByteArray json = QJsonDocument(root).toJson();
+    const bool written = output.write(json) == json.size();
+    if (!written && error != nullptr) *error = output.errorString();
+    return written;
+}
+
 QVariantMap helmOneSampleFeedback(quint64 timestampUs,
                                   quint16 serialA,
                                   quint16 serialB,
@@ -330,6 +362,7 @@ TEST(TestApplicationControllerTest, DefaultsMissingRunModeCapabilitiesToSingleOn
     ASSERT_TRUE(loaded.ok) << loaded.message.toStdString();
     EXPECT_EQ(controller.snapshot().descriptor.supportedRunModes,
               QVector<QString>{QStringLiteral("single")});
+    EXPECT_TRUE(controller.snapshot().descriptor.stoppable);
 }
 
 TEST(TestApplicationControllerTest, RejectsMutuallyExclusiveContinuousCapabilities)
@@ -357,6 +390,46 @@ TEST(TestApplicationControllerTest, RejectsMutuallyExclusiveContinuousCapabiliti
     EXPECT_TRUE(loaded.message.contains(QStringLiteral("pc_periodic")));
     EXPECT_TRUE(loaded.message.contains(QStringLiteral("device_stream")));
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+}
+
+TEST(TestApplicationControllerTest, RejectsNonBooleanStoppableCapability)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString error;
+    const QString testConfigPath = directory.filePath(
+        QStringLiteral("invalid-stoppable.testcfg.json"));
+    ASSERT_TRUE(writeTestConfigWithStoppable(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG), testConfigPath,
+        QJsonValue(QStringLiteral("false")), &error)) << error.toStdString();
+
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        testConfigPath, QStringLiteral(HWTEST_APP_HAL_CONFIG));
+
+    EXPECT_FALSE(loaded.ok);
+    EXPECT_EQ(loaded.code, QStringLiteral("test_config"));
+    EXPECT_TRUE(loaded.message.contains(QStringLiteral("stoppable")));
+}
+
+TEST(TestApplicationControllerTest, RejectsNonStoppableSingleConfiguration)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString error;
+    const QString testConfigPath = directory.filePath(
+        QStringLiteral("non-stoppable-single.testcfg.json"));
+    ASSERT_TRUE(writeTestConfigWithStoppable(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG), testConfigPath,
+        QJsonValue(false), &error)) << error.toStdString();
+
+    TestApplicationController controller;
+    const ActionResult loaded = controller.loadConfigurations(
+        testConfigPath, QStringLiteral(HWTEST_APP_HAL_CONFIG));
+
+    EXPECT_FALSE(loaded.ok);
+    EXPECT_EQ(loaded.code, QStringLiteral("test_config"));
+    EXPECT_TRUE(loaded.message.contains(QStringLiteral("device_stream")));
 }
 
 TEST(TestApplicationControllerTest, RejectsRunModeNotDeclaredByConfiguration)
@@ -1532,6 +1605,177 @@ TEST(TestApplicationControllerTest, ImuDeviceStreamSendsStartAndStopAndSavesFixe
     EXPECT_EQ(secondColumns.at(6), QStringLiteral("20.1"));
     EXPECT_TRUE(text.contains(QStringLiteral("\t100\t")));
     EXPECT_TRUE(text.contains(QStringLiteral("\t5\t")));
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest,
+     DhIgniteRejectsLifecycleInterruptionAndCompletesNaturally)
+{
+    ensureQtApplication();
+    const QString protocolDirectory = QDir(QStringLiteral(HWTEST_PROJECT_SOURCE_DIR))
+                                          .filePath(QStringLiteral(
+                                              "dut/docs/design/product_protocol_csv"));
+    ScopedEnvironmentVariable protocolAssets(
+        "MB_DDF_PROTOCOL_CSV_DIR", protocolDirectory.toUtf8());
+    ASSERT_TRUE(QFileInfo(protocolDirectory).isDir());
+
+    test::MbddfUdpTestPeer peer;
+    QString error;
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_DH_IGNITE_STREAM_CONFIG),
+        halConfigPath).ok);
+    ASSERT_FALSE(controller.snapshot().descriptor.stoppable);
+    ASSERT_TRUE(controller.prepare().ok);
+
+    TestRunOptions options;
+    options.mode = QStringLiteral("device_stream");
+    options.saveData = false;
+    options.algorithmParameters = {
+        {QStringLiteral("channel_enabled[0]"), true},
+        {QStringLiteral("report_count"), 2},
+        {QStringLiteral("interval_us"), 2500},
+        {QStringLiteral("delay_frames"), 0},
+    };
+    ASSERT_TRUE(controller.start(options).ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+
+    const ActionResult paused = controller.pause();
+    const ActionResult resumed = controller.resume();
+    const ActionResult stopped = controller.stop(100);
+    const ActionResult stoppedAsync = controller.stopAsync(100);
+    const ActionResult shutDown = controller.shutdown();
+    EXPECT_FALSE(paused.ok);
+    EXPECT_FALSE(resumed.ok);
+    EXPECT_FALSE(stopped.ok);
+    EXPECT_FALSE(stoppedAsync.ok);
+    EXPECT_FALSE(shutDown.ok);
+    EXPECT_EQ(paused.code, QStringLiteral("CapabilityUnsupported"));
+    EXPECT_EQ(resumed.code, QStringLiteral("CapabilityUnsupported"));
+    EXPECT_EQ(stopped.code, QStringLiteral("CapabilityUnsupported"));
+    EXPECT_EQ(stoppedAsync.code, QStringLiteral("CapabilityUnsupported"));
+    EXPECT_EQ(shutDown.code, QStringLiteral("CapabilityUnsupported"));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("running"));
+
+    const QVariantMap responseValues{
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("err_code"), 0},
+        {QStringLiteral("dh_status.ch0"), 1},
+        {QStringLiteral("telemetry[0]"), 1.25},
+    };
+    ASSERT_TRUE(peer.sendToLastRequester(QStringLiteral("dh_control_response"),
+                                         0x1234,
+                                         responseValues,
+                                         &error))
+        << error.toStdString();
+    ASSERT_TRUE(peer.sendToLastRequester(QStringLiteral("dh_control_response"),
+                                         0x1235,
+                                         responseValues,
+                                         &error))
+        << error.toStdString();
+
+    const ActionResult terminal = controller.waitForTerminal(3000);
+    ASSERT_TRUE(terminal.ok) << terminal.message.toStdString();
+    const ApplicationSnapshot snapshot = controller.snapshot();
+    EXPECT_EQ(snapshot.phase, QStringLiteral("finished"));
+    EXPECT_EQ(snapshot.verdict, QStringLiteral("Pass"));
+    EXPECT_EQ(snapshot.sampleCount, 2u);
+    EXPECT_FALSE(snapshot.dataSaveEnabled);
+    EXPECT_TRUE(snapshot.dataFilePath.isEmpty());
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest,
+     DhIgniteWritesTxtOnlyWhenSaveDataIsExplicitlyEnabled)
+{
+    ensureQtApplication();
+    const QString protocolDirectory = QDir(QStringLiteral(HWTEST_PROJECT_SOURCE_DIR))
+                                          .filePath(QStringLiteral(
+                                              "dut/docs/design/product_protocol_csv"));
+    ScopedEnvironmentVariable protocolAssets(
+        "MB_DDF_PROTOCOL_CSV_DIR", protocolDirectory.toUtf8());
+    ASSERT_TRUE(QFileInfo(protocolDirectory).isDir());
+
+    test::MbddfUdpTestPeer peer;
+    QString error;
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_DH_IGNITE_STREAM_CONFIG),
+        halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    TestRunOptions options;
+    options.mode = QStringLiteral("device_stream");
+    options.saveData = true;
+    options.algorithmParameters = {
+        {QStringLiteral("channel_enabled[0]"), true},
+        {QStringLiteral("report_count"), 2},
+        {QStringLiteral("interval_us"), 2500},
+        {QStringLiteral("delay_frames"), 0},
+    };
+    ASSERT_TRUE(controller.start(options).ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+    const QVariantMap responseValues{
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("err_code"), 0},
+        {QStringLiteral("dh_status.ch0"), 1},
+        {QStringLiteral("telemetry[0]"), 1.25},
+    };
+    ASSERT_TRUE(peer.sendToLastRequester(QStringLiteral("dh_control_response"),
+                                         0x1234,
+                                         responseValues,
+                                         &error))
+        << error.toStdString();
+    ASSERT_TRUE(peer.sendToLastRequester(QStringLiteral("dh_control_response"),
+                                         0x1235,
+                                         responseValues,
+                                         &error))
+        << error.toStdString();
+    ASSERT_TRUE(controller.waitForTerminal(3000).ok);
+
+    const ApplicationSnapshot snapshot = controller.snapshot();
+    ASSERT_EQ(snapshot.phase, QStringLiteral("finished"));
+    ASSERT_TRUE(snapshot.dataSaveEnabled);
+    ASSERT_TRUE(snapshot.dataSaveError.isEmpty())
+        << snapshot.dataSaveError.toStdString();
+    ASSERT_TRUE(QFileInfo::exists(snapshot.dataFilePath));
+    QFile saved(snapshot.dataFilePath);
+    ASSERT_TRUE(saved.open(QIODevice::ReadOnly));
+    const QByteArray bytes = saved.readAll();
+    ASSERT_TRUE(bytes.startsWith(QByteArray::fromHex("EFBBBF")));
+    const QString text = QString::fromUtf8(bytes.mid(3));
+    QString header;
+    for (const QString& line : text.split(QLatin1Char('\n'))) {
+        if (line.startsWith(QStringLiteral(
+                "report_index\tsample_time_us\tseq\tresponse_status\terr_code"))) {
+            header = line;
+            break;
+        }
+    }
+    ASSERT_FALSE(header.isEmpty());
+    const QStringList columns = header.split(QLatin1Char('\t'));
+    EXPECT_EQ(columns.count(QStringLiteral("seq")), 1);
+    EXPECT_TRUE(text.contains(QStringLiteral("\n1\t0\t4660\t0\t0x0000\t")));
+    EXPECT_TRUE(text.contains(QStringLiteral("\n2\t2500\t4661\t0\t0x0000\t")));
     EXPECT_TRUE(controller.shutdown().ok);
 }
 

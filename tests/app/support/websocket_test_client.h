@@ -29,6 +29,7 @@ public:
 
     qint64 sendText(const QString& text);
     qint64 sendBinary(const QByteArray& data);
+    void setReadBufferSize(qint64 bytes);
     void close();
 
     const QVector<QJsonObject>& messages() const;

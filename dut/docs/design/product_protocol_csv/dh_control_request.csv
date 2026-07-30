@@ -12,6 +12,6 @@ B11-14,4,U32,DH通道第1组（位图）,channel[0],,0,1
 B15-18,4,U32,DH通道第2组（位图）,channel[1],,0,1
 B19-20,2,U16,回告次数,report_count,,50,1
 B21-22,2,U16,回告间隔us,interval_us,,2500,1
-B23-24,2,U16,等待时间us,delay_us,,,1
+B23-24,2,U16,基线帧数,delay_frames,,5,1
 B25-51,27,RESERVED,填充,pad,,0,1
 B52-53,2,U16,CRC16校验,crc,,,1

@@ -48,6 +48,12 @@ bool makeTestConfigOption(const QString& configPath,
                                 &supportedRunModes).isEmpty()) {
         return false;
     }
+    bool stoppable = true;
+    if (!parseStoppableCapability(loaded.value.reportFields,
+                                  supportedRunModes,
+                                  &stoppable).isEmpty()) {
+        return false;
+    }
 
     const hwtest::biz::TestStep* selectedStep = nullptr;
     for (const hwtest::biz::TestStep& step : loaded.value.steps) {

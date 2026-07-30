@@ -159,6 +159,7 @@ struct TestDescriptor {
     QVector<TestRunParameterDescriptor> runParameters;
     QVariantMap runParameterDefaults;
     PostRunAnalysisCapability postRunAnalysis;
+    bool stoppable = true;
 };
 
 struct DigitalSwitchDescriptor {
