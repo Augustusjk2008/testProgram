@@ -21,6 +21,7 @@ set(HAL_PRIVATE_HEADERS
     src/adapter_loader.h
     src/adapter_router.h
     src/control_io_provider.h
+    src/qt_serial_read_wait.h
     src/qt_serial_control_provider.h
     src/qt_udp_control_provider.h
     src/control_channel_manager.h
@@ -34,6 +35,7 @@ set(HAL_PRIVATE_HEADERS
 set(HAL_SOURCES
     src/hal_types.cpp
     src/hal_error_mapper.cpp
+    src/qt_serial_read_wait.cpp
     src/qt_serial_control_provider.cpp
     src/qt_udp_control_provider.cpp
     src/control_channel_manager.cpp

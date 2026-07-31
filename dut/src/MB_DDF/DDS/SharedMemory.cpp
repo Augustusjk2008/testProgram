@@ -174,7 +174,11 @@ bool SharedMemoryManager::create_or_open_shm() {
 
 bool SharedMemoryManager::map_shm() {
     // 添加MAP_POPULATE标志以预分配物理内存，避免嵌入式平台上的页面错误
-    shm_addr_ = mmap(nullptr, shm_size_, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, shm_fd_, 0);
+    int map_flags = MAP_SHARED;
+#if !defined(SYLIXOS)
+    map_flags |= MAP_POPULATE;
+#endif
+    shm_addr_ = mmap(nullptr, shm_size_, PROT_READ | PROT_WRITE, map_flags, shm_fd_, 0);
     if (shm_addr_ == MAP_FAILED) {
         LOG_ERROR << "mmap failed: " << strerror(errno);
         close(shm_fd_);

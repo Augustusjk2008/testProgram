@@ -451,10 +451,12 @@ bool RingBuffer::wait_for_message(SubscriberState* subscriber, uint32_t timeout_
         if (rc == ETIMEDOUT) {
             break;
         }
+#if !defined(SYLIXOS)
         if (rc == EOWNERDEAD) {
             pthread_mutex_consistent(&sync_->notify_mutex);
             continue;
         }
+#endif
         if (rc != 0) {
             LOG_ERROR << "pthread_cond_wait failed: " << strerror(rc);
             unlock_required = false;

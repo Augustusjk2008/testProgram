@@ -97,6 +97,7 @@ add_executable(hwtest_hal_tests
     hal_service_test.cpp
     hal_types_test.cpp
     mock_adapter_test.cpp
+    qt_serial_read_wait_test.cpp
     resource_mapper_test.cpp
     safety_guard_test.cpp
 )

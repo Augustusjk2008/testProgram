@@ -74,8 +74,12 @@ std::unique_ptr<SystemTimer> SystemTimer::start(const std::string& period_str,
             sev.sigev_notify = SIGEV_THREAD_ID;
             sev.sigev_signo = timer_ptr->signal_no_;
             sev.sigev_value.sival_ptr = timer_ptr;
+#if defined(SYLIXOS)
+            sev.sigev_notify_thread_id = pthread_self();
+#else
             pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
             sev._sigev_un._tid = tid;
+#endif
 
             if (timer_create(CLOCK_MONOTONIC, &sev, &timer_ptr->timer_id_) != 0) {
                 timer_ptr->notifyStartResult(false);

@@ -1,6 +1,7 @@
 #include "qt_serial_control_provider.h"
 
 #include "hal_error_mapper.h"
+#include "qt_serial_read_wait.h"
 
 #include <QIODevice>
 #include <QElapsedTimer>
@@ -167,6 +168,17 @@ int timeoutFor(const OperationOptions& options)
     return options.timeoutMs < 0 ? 0 : options.timeoutMs;
 }
 
+SerialReadWaitError serialReadWaitError(const QSerialPort& port)
+{
+    if (port.error() == QSerialPort::NoError) {
+        return SerialReadWaitError::None;
+    }
+    if (port.error() == QSerialPort::TimeoutError) {
+        return SerialReadWaitError::Timeout;
+    }
+    return SerialReadWaitError::IoError;
+}
+
 } // namespace
 
 QtSerialControlProvider::QtSerialControlProvider() = default;
@@ -311,9 +323,19 @@ HalResult<QByteArray> QtSerialControlProvider::read(int maxBytes,
                                   QStringLiteral("Serial control channel is not open"));
         return result;
     }
-    if (m_port->bytesAvailable() == 0 && !m_port->waitForReadyRead(timeoutFor(options))) {
-        const HalStatusCode code = m_port->error() == QSerialPort::TimeoutError ||
-                m_port->error() == QSerialPort::NoError
+    QElapsedTimer timer;
+    timer.start();
+    const SerialReadWaitCallbacks callbacks{
+        [this] { return m_port->bytesAvailable(); },
+        [this](int timeoutMs) { return m_port->waitForReadyRead(timeoutMs); },
+        [this] { return serialReadWaitError(*m_port); },
+        [this] { m_port->clearError(); },
+        [&timer] { return timer.elapsed(); },
+    };
+    const SerialReadWaitOutcome waitOutcome =
+        waitForSerialRead(callbacks, timeoutFor(options));
+    if (waitOutcome != SerialReadWaitOutcome::Ready) {
+        const HalStatusCode code = waitOutcome == SerialReadWaitOutcome::Timeout
             ? HalStatusCode::Timeout
             : HalStatusCode::IoError;
         result.status = serialError(code, QStringLiteral("control.qtSerial.read"), *m_port);

@@ -15,12 +15,17 @@ bool init_process_shared_mutex(pthread_mutex_t& mutex, bool robust) {
     }
 
     bool ok = pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED) == 0;
+#if defined(SYLIXOS)
+    // SylixOS provides process-shared mutexes, but not the POSIX robust-mutex API.
+    (void)robust;
+#else
     if (ok && robust) {
         const int rc = pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST);
         if (rc != 0) {
             LOG_WARN << "pthread robust mutex unsupported: " << strerror(rc);
         }
     }
+#endif
     if (ok) {
         ok = pthread_mutex_init(&mutex, &attr) == 0;
     }
@@ -61,6 +66,7 @@ bool mutex_is_usable(pthread_mutex_t& mutex) {
     if (rc == EBUSY) {
         return true;
     }
+#if !defined(SYLIXOS)
     if (rc == EOWNERDEAD) {
         LOG_WARN << "recovering robust mutex during startup probe";
         if (pthread_mutex_consistent(&mutex) == 0) {
@@ -68,6 +74,7 @@ bool mutex_is_usable(pthread_mutex_t& mutex) {
             return true;
         }
     }
+#endif
 
     LOG_WARN << "process-shared mutex unusable: " << strerror(rc);
     return false;
@@ -78,10 +85,12 @@ bool lock_mutex(pthread_mutex_t& mutex) {
     if (rc == 0) {
         return true;
     }
+#if !defined(SYLIXOS)
     if (rc == EOWNERDEAD) {
         LOG_WARN << "recovering robust mutex after owner death";
         return pthread_mutex_consistent(&mutex) == 0;
     }
+#endif
 
     LOG_ERROR << "pthread_mutex_lock failed: " << strerror(rc);
     return false;

@@ -8,7 +8,9 @@
 #pragma once
 #include <signal.h>
 #include <time.h>
+#if !defined(SYLIXOS)
 #include <sys/syscall.h>
+#endif
 #include <unistd.h>
 #include <pthread.h>
 #include <sched.h>
