@@ -5,7 +5,7 @@
 
 namespace MB_DDF::HW::Registers::Xadc {
 
-// 全局窗口基址由板级集成信息确认；origin_v3 提供下列局部寄存器偏移。
+// 全局窗口基址由板级集成信息确认；origin_v4 提供下列局部寄存器偏移。
 inline constexpr uint64_t UserBase = 0x150000;
 inline constexpr size_t WindowSize = 0x10000;
 

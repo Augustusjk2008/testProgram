@@ -3,11 +3,13 @@
 #include "MB_DDF_HW/Device/ComDevice.h"
 #include "MB_DDF_HW/Device/DhController.h"
 #include "MB_DDF_HW/Device/DidoDevice.h"
-#include "MB_DDF_HW/Device/FlashDevice.h"
+#include "MB_DDF_HW/Device/FpgaUpdateStateDevice.h"
 #include "MB_DDF_HW/Device/PwmDevice.h"
+#include "MB_DDF_HW/Device/UpdateImageIpVersionDevice.h"
 #include "MB_DDF_HW/Device/XadcDevice.h"
 #include "MB_DDF_HW/Device/Registers/ComRegisters.h"
-#include "MB_DDF_HW/Device/Registers/FlashRegisters.h"
+#include "MB_DDF_HW/Device/Registers/FpgaUpdateStateRegisters.h"
+#include "MB_DDF_HW/Device/Registers/UpdateImageIpVersionRegisters.h"
 #include "MB_DDF_HW/Device/Registers/XadcRegisters.h"
 #include "MB_DDF_HW/Transport/XdmaTransport.h"
 #ifdef MB_DDF_HW_SMOKE_WITH_ADAPTER
@@ -22,7 +24,7 @@
 using namespace MB_DDF::HW;
 namespace {
 
-// Smoke 默认只读；Flash 只读状态/分频，只有 --com-loopback 会修改并恢复 COM 配置。
+// Smoke 默认只读；只有 --com-loopback 会修改并恢复 COM 配置。
 bool ok(const Result<void>& result, const char* action) {
     if (result) {
         return true;
@@ -167,10 +169,15 @@ int main(int argc, char** argv) {
     XdmaTransport xadc_t(
         {"/dev/xdma0", Registers::Xadc::UserBase,
          Registers::Xadc::WindowSize});
-    XdmaTransport flash_t(
-        {"/dev/xdma0", Registers::Flash::UserBase, 0x10000});
+    XdmaTransport update_image_t(
+        {"/dev/xdma0", Registers::UpdateImageIpVersion::UserBase,
+         Registers::UpdateImageIpVersion::WindowSize});
+    XdmaTransport fpga_update_state_t(
+        {"/dev/xdma0", Registers::FpgaUpdateState::UserBase,
+         Registers::FpgaUpdateState::WindowSize});
     for (auto* transport :
-         {&pwm_t, &ad7606_t, &ads1258_t, &dh_t, &dido_t, &xadc_t, &flash_t}) {
+         {&pwm_t, &ad7606_t, &ads1258_t, &dh_t, &dido_t, &xadc_t,
+          &update_image_t, &fpga_update_state_t}) {
         if (!ok(transport->open(), "open device")) {
             return 1;
         }
@@ -181,21 +188,23 @@ int main(int argc, char** argv) {
     DhController dh(dh_t);
     DidoDevice dido(dido_t);
     XadcDevice xadc(xadc_t);
-    FlashDevice flash(flash_t);
+    UpdateImageIpVersionDevice update_image(update_image_t);
+    FpgaUpdateStateDevice fpga_update_state(fpga_update_state_t);
     if (!ok(pwm.check_communication(), "PWM communication") ||
         !ok(ad7606.check_communication(), "AD7606 communication") ||
         !ok(ads1258.check_communication(), "ADS1258 communication") ||
         !ok(dh.check_communication(), "DH communication") ||
         !ok(dido.check_communication(), "DIDO communication") ||
-        !ok(flash.check_communication(), "Flash transport")) {
+        !ok(update_image.check_communication(), "UPDATE image IP version communication") ||
+        !ok(fpga_update_state.check_communication(), "FPGA update state communication")) {
         return 1;
     }
     if (!ok(pwm.read_state(), "PWM state") || !ok(ad7606.read_snapshot(), "AD7606 snapshot") ||
         !ok(ads1258.read_snapshot(), "ADS1258 snapshot") ||
         !ok(dh.read_feedback(), "DH feedback") || !ok(dido.read_snapshot(), "DIDO snapshot") ||
         !ok(xadc.read_value_yx(), "XADC value_YX") ||
-        !ok(flash.read_controller_status(), "Flash controller status") ||
-        !ok(flash.read_clock_divider(), "Flash clock divider")) {
+        !ok(update_image.read_snapshot(), "UPDATE image IP version snapshot") ||
+        !ok(fpga_update_state.read_snapshot(), "FPGA update state snapshot")) {
         return 1;
     }
     const uint64_t com_offsets[] = {0x40000, 0x80000, 0xC0000, 0x100000};

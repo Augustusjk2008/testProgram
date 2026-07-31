@@ -10,10 +10,11 @@ add_library(MB_DDF_HW STATIC
     Device/Ad7606Device.cpp
     Device/Ads1258Device.cpp
     Device/XadcDevice.cpp
+    Device/UpdateImageIpVersionDevice.cpp
+    Device/FpgaUpdateStateDevice.cpp
     Device/DidoDevice.cpp
     Device/DhController.cpp
     Device/ComDevice.cpp
-    Device/FlashDevice.cpp
     Device/SpiFlashDevice.cpp
 )
 

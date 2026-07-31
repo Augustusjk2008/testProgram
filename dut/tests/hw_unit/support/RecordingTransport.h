@@ -3,6 +3,7 @@
 #include "MB_DDF_HW/Transport/ITransport.h"
 #include <deque>
 #include <initializer_list>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -39,6 +40,9 @@ public:
     }
     void set_event(int value) {
         event_ = value;
+    }
+    void fail_next_write_at(uint64_t offset) {
+        fail_next_write_offset_ = offset;
     }
     const std::vector<Access>& accesses() const {
         return accesses_;
@@ -93,8 +97,13 @@ private:
         if (!open_) {
             return Status::error(StatusCode::NotOpen, 0, "not open");
         }
-        registers_[o] = value;
         accesses_.push_back({true, o, width, value});
+        if (fail_next_write_offset_ && *fail_next_write_offset_ == o) {
+            fail_next_write_offset_.reset();
+            return Status::error(StatusCode::IoError, 0,
+                                 "injected register write failure");
+        }
+        registers_[o] = value;
         return {};
     }
     bool open_{false};
@@ -102,6 +111,7 @@ private:
     mutable std::vector<Access> accesses_;
     mutable std::unordered_map<uint64_t, std::deque<uint32_t>> queued_reads_;
     mutable std::unordered_map<uint64_t, uint32_t> registers_;
+    std::optional<uint64_t> fail_next_write_offset_;
     std::vector<Timeout> waited_timeouts_;
 };
 } // namespace MB_DDF::HW::Test

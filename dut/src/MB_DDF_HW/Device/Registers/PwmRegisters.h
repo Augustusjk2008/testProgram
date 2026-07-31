@@ -8,7 +8,8 @@ namespace MB_DDF::HW::Registers::Pwm {
 inline constexpr uint64_t Communication = 0x00;
 inline constexpr uint64_t DutyBase = 0x04, DirectionBase = 0x14, ChannelStride = 0x04;
 inline constexpr uint64_t UpdateEnable = 0x24, Enable = 0x28, Carrier = 0x2C, Peak = 0x30,
-                          Waveform = 0x34, DutyMode = 0x38;
+                          Waveform = 0x34, DutyMode = 0x38, DirectionMode = 0x3C,
+                          ChannelMapping = 0x40;
 constexpr uint64_t duty(unsigned channel) {
     return DutyBase + channel * ChannelStride;
 }

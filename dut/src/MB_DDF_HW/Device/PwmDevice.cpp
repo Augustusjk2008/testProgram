@@ -4,6 +4,22 @@
 
 namespace MB_DDF::HW {
 namespace R = Registers::Pwm;
+
+namespace {
+
+Result<PwmDirectionMode> decode_direction_mode(uint32_t value) {
+    switch (value & 0xFFFFu) {
+    case static_cast<uint16_t>(PwmDirectionMode::PositiveToZero):
+        return PwmDirectionMode::PositiveToZero;
+    case static_cast<uint16_t>(PwmDirectionMode::PositiveToOne):
+        return PwmDirectionMode::PositiveToOne;
+    default:
+        return Status::error(StatusCode::HardwareFault, 0, "invalid PWM direction mode");
+    }
+}
+
+} // namespace
+
 Result<void> PwmDevice::check_communication() const {
     return check_device_communication(transport_);
 }
@@ -16,7 +32,17 @@ Result<void> PwmDevice::configure(const PwmConfig& c) {
     if (!b) {
         return b;
     }
-    return transport_.write32(R::Waveform, c.waveform == PwmWaveform::Sawtooth ? 0xA001u : 0xA002u);
+    auto waveform = transport_.write32(R::Waveform,
+                                       c.waveform == PwmWaveform::Sawtooth ? 0xA001u : 0xA002u);
+    if (!waveform) {
+        return waveform;
+    }
+    auto direction_mode = transport_.write32(R::DirectionMode,
+                                              static_cast<uint16_t>(c.direction_mode));
+    if (!direction_mode) {
+        return direction_mode;
+    }
+    return transport_.write32(R::ChannelMapping, c.channel_mapping.encoded);
 }
 Result<void> PwmDevice::set_duty_mode_unsigned() {
     return transport_.write32(R::DutyMode, 0xFFFFu);
@@ -123,6 +149,20 @@ Result<PwmState> PwmDevice::read_state() const {
         return w.status();
     }
     s.config.waveform = w.value() == 0xA002u ? PwmWaveform::Triangle : PwmWaveform::Sawtooth;
+    auto direction_mode = transport_.read32(R::DirectionMode);
+    if (!direction_mode) {
+        return direction_mode.status();
+    }
+    auto decoded_direction_mode = decode_direction_mode(direction_mode.value());
+    if (!decoded_direction_mode) {
+        return decoded_direction_mode.status();
+    }
+    s.config.direction_mode = decoded_direction_mode.value();
+    auto channel_mapping = transport_.read32(R::ChannelMapping);
+    if (!channel_mapping) {
+        return channel_mapping.status();
+    }
+    s.config.channel_mapping.encoded = static_cast<uint16_t>(channel_mapping.value());
     return s;
 }
 } // namespace MB_DDF::HW

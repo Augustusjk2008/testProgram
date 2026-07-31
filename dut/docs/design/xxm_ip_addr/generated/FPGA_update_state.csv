@@ -1,0 +1,13 @@
+﻿ip_core,access,address_raw,address_value,byte_offset,address_scale,name,description,notes,source_workbook,source_sheet,source_row
+FPGA_update_state,write,0x1,1,4,4,无,无,,FPGA_update_state IP核通用型地址分配表（公开） .xlsx,Sheet1,3
+FPGA_update_state,read,0x0,0,0,4,通信测试（32位，下同）,32'hAAAABBBB,,FPGA_update_state IP核通用型地址分配表（公开） .xlsx,Sheet1,4
+FPGA_update_state,read,0x1,1,4,4,flash擦除状态,"低16位有效，高16位为0；
+16'hAAAA为擦除完成;16'hFFFF为擦除未完成;",,FPGA_update_state IP核通用型地址分配表（公开） .xlsx,Sheet1,5
+FPGA_update_state,read,0x2,2,8,4,flash写状态,"低16位有效，高16位为0；
+16'hAAAA为写完成;16'hFFFF为写未完成;",,FPGA_update_state IP核通用型地址分配表（公开） .xlsx,Sheet1,6
+FPGA_update_state,read,0x3,3,12,4,flash读状态,"低16位有效，高16位为0；
+16'hAAAA为读完成;16'hFFFF为读未完成;",,FPGA_update_state IP核通用型地址分配表（公开） .xlsx,Sheet1,7
+FPGA_update_state,read,0x4,4,16,4,读数据CRC,32位有效。,,FPGA_update_state IP核通用型地址分配表（公开） .xlsx,Sheet1,8
+FPGA_update_state,read,0x5,5,20,4,写数据CRC（暂时不用）,32位有效。,,FPGA_update_state IP核通用型地址分配表（公开） .xlsx,Sheet1,9
+FPGA_update_state,read,0x6,6,24,4,CRC校验通过状态（暂时不用）,"低8位有效，高24位为0；
+8'hAA为通过;8'hFF为未通过;",,FPGA_update_state IP核通用型地址分配表（公开） .xlsx,Sheet1,10

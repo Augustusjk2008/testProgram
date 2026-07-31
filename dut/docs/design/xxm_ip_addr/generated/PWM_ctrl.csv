@@ -36,8 +36,8 @@ D11-D8：3舵pwm使能，4'hA：使能；4'hF：失能；
 D15-D12：4舵pwm使能，4'hA：使能；4'hF：失能；
 默认4个舵pwm失能，输出为0。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,12
 PWM_ctrl,write,0xB,11,44,4,pwm载波频率配置,"低16位有效，高16位无效；
-公式：pwm载波频率配置值 = （波峰值 * 全局时钟周期 / 解算周期）/ 2。
-其中默认载波频率为4000Hz（等同于解算频率）。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,13
+公式：pwm载波频率配置值 = （波峰值 * 全局时钟周期 / PWM周期）/ 2。
+其中默认载波频率为4000Hz（PWM周期 = 250us）。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,13
 PWM_ctrl,write,0xC,12,48,4,波峰值配置,默认为100000000。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,14
 PWM_ctrl,write,0xD,13,52,4,pwm输出波形模式配置,"低16位有效，高16位无效；
 16'hA001：输出波形为锯齿波；
@@ -46,31 +46,52 @@ PWM_ctrl,write,0xD,13,52,4,pwm输出波形模式配置,"低16位有效，高16�
 PWM_ctrl,write,0xE,14,56,4,舵占空比模式配置,"低16位有效，高16位无效；
 16'hAAAA：占空比模式为有符号模式；
 16'hFFFF：占空比模式为无符号模式；
+其他无效；
 默认为有符号模式。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,16
-PWM_ctrl,read,0x0,0,0,4,通信测试（32位，下同）,32'hAAAABBBB,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,17
-PWM_ctrl,read,0x1,1,4,4,舵1占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,18
-PWM_ctrl,read,0x2,2,8,4,舵2占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,19
-PWM_ctrl,read,0x3,3,12,4,舵3占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,20
-PWM_ctrl,read,0x4,4,16,4,舵4占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,21
+PWM_ctrl,write,0xF,15,60,4,舵占空比——方向模式切换,"低16位有效，高16位无效；
+仅在占空比为有符号模式下才有效：
+16'hAAAA：占空比为正时，方向输出0；占空比为负时，方向输出1；
+16'hBBBB：占空比为正时，方向输出1；占空比为负时，方向输出0；
+其他无效；
+默认为16'hAAAA。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,17
+PWM_ctrl,write,0x10,16,64,4,pwm/方向通道选择配置,"低16位有效，高16位无效；
+注意：偏移地址0x1和0x5的功能为舵1的pwm（占空比）和方向控制；
+      偏移地址0x2和0x6的功能为舵2的pwm（占空比）和方向控制；
+      偏移地址0x3和0x7的功能为舵3的pwm（占空比）和方向控制；
+      偏移地址0x4和0x8的功能为舵4的pwm（占空比）和方向控制；
+配置说明：D3-D0：舵1硬件实际通道；
+          D7-D4：舵2硬件实际通道；
+          D11-D8：舵3硬件实际通道；
+          D15-D12：舵4硬件实际通道；
+默认配置为16'h3210。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,18
+PWM_ctrl,read,0x0,0,0,4,通信测试（32位，下同）,32'hAAAABBBB,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,19
+PWM_ctrl,read,0x1,1,4,4,舵1占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,20
+PWM_ctrl,read,0x2,2,8,4,舵2占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,21
+PWM_ctrl,read,0x3,3,12,4,舵3占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,22
+PWM_ctrl,read,0x4,4,16,4,舵4占空比,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,23
 PWM_ctrl,read,0x5,5,20,4,舵1方向,"低1位有效，高31位为0；
-回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,22
-PWM_ctrl,read,0x6,6,24,4,舵2方向,"低1位有效，高31位为0；
-回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,23
-PWM_ctrl,read,0x7,7,28,4,舵3方向,"低1位有效，高31位为0；
 回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,24
-PWM_ctrl,read,0x8,8,32,4,舵4方向,"低1位有效，高31位为0；
+PWM_ctrl,read,0x6,6,24,4,舵2方向,"低1位有效，高31位为0；
 回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,25
+PWM_ctrl,read,0x7,7,28,4,舵3方向,"低1位有效，高31位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,26
+PWM_ctrl,read,0x8,8,32,4,舵4方向,"低1位有效，高31位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,27
 PWM_ctrl,read,0x9,9,36,4,4舵占空比更新使能寄存器,"低1位有效，高31位为0；
-1：使能；0：关闭；",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,26
+1：使能；0：关闭；",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,28
 PWM_ctrl,read,0xA,10,40,4,4舵pwm使能寄存器,"低4位有效，高28位为0；
 D0：1：使能1舵pwm输出；0：关闭1舵pwm输出；
 D1：1：使能2舵pwm输出；0：关闭2舵pwm输出；
 D2：1：使能3舵pwm输出；0：关闭3舵pwm输出；
-D3：1：使能4舵pwm输出；0：关闭4舵pwm输出；",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,27
+D3：1：使能4舵pwm输出；0：关闭4舵pwm输出；",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,29
 PWM_ctrl,read,0xB,11,44,4,pwm载波频率配置,"低16位有效，高16位为0；
-回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,28
-PWM_ctrl,read,0xC,12,48,4,波峰值配置,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,29
-PWM_ctrl,read,0xD,13,52,4,pwm输出波形模式配置,"低16位有效，高16位为0；
 回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,30
+PWM_ctrl,read,0xC,12,48,4,波峰值配置,回读。,,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,31
+PWM_ctrl,read,0xD,13,52,4,pwm输出波形模式配置,"低16位有效，高16位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,32
 PWM_ctrl,read,0xE,14,56,4,舵占空比模式配置,"低16位有效，高16位为0；
-回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,31
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,33
+PWM_ctrl,read,0xF,15,60,4,舵占空比——方向模式切换,"低16位有效，高16位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,34
+PWM_ctrl,read,0x10,16,64,4,pwm/方向通道选择配置,"低16位有效，高16位为0；
+回读。",,PWM_ctrl IP核通用型地址分配表（公开） .xlsx,Sheet1,35

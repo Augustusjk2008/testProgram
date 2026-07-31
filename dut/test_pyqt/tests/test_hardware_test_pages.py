@@ -193,7 +193,7 @@ def test_do_parameters_pack_sixteen_checks_and_fix_second_word_to_zero(
     assert outbound.values["channel[1]"] == 0
 
 
-def test_dido_pages_show_origin_v3_signal_names_and_protect_fixed_outputs(
+def test_dido_pages_show_origin_v4_signal_names_and_protect_fixed_outputs(
     qtbot, catalog
 ) -> None:
     di_page = make_page(qtbot, catalog, "di")

@@ -9,9 +9,11 @@ namespace MB_DDF::HW {
 struct Ad7606Config {
     bool acquisition_enabled{false};
     bool filter_enabled{false};
-    uint8_t oversampling{0}, clock_period{0}, conversion_low_cycles{0}, conversion_wait_cycles{0},
-        reset_cycles{0};
-    uint16_t acquisition_count{0};
+    uint8_t oversampling{0}, clock_period{24}, conversion_low_cycles{3}, conversion_wait_cycles{35},
+        reset_cycles{5};
+    uint16_t acquisition_count{3904};
+    /// 从低到高的四位 nibble 分别表示 AD7606 逻辑通道 1 至 8 的硬件通道映射。
+    uint32_t channel_mapping{0x76543210u};
 };
 
 /// 八通道原始采样快照；低 16 位按有符号数解释。

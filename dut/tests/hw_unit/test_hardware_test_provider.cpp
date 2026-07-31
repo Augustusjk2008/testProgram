@@ -30,35 +30,46 @@ static_assert(MB_DDF::HWTest::Detail::kDhTelemetryAds1258Channels[0] == 1);
 static_assert(MB_DDF::HWTest::Detail::kDhTelemetryAds1258Channels[1] == 4);
 static_assert(MB_DDF::HWTest::Detail::kDhTelemetryAds1258Channels[22] == 25);
 
+MB_DDF::HW::Ads1258Snapshot calibrated_ads1258_snapshot() {
+    MB_DDF::HW::Ads1258Snapshot snapshot{};
+    for (auto& diagnostics : snapshot.diagnostics) {
+        diagnostics = MB_DDF::HW::Ads1258ChipDiagnostics{
+            0u, 0x3C0000u, 0x040831u, 0x780000u, 0x3C0000u};
+    }
+    return snapshot;
+}
+
 } // namespace
 
 TEST(HardwareTestProviderTest, PopulatesDhTelemetryFromConfirmedAds1258Channels) {
     ProductProtocol protocol;
     auto response = protocol.create_message("dh_control_response", false);
-    MB_DDF::HW::Ads1258Snapshot snapshot{};
+    auto snapshot = calibrated_ads1258_snapshot();
     snapshot.raw[0] = 0x00780000u;
     snapshot.raw[1] = 0x00780000u;
     snapshot.raw[2] = 0x00780000u;
     snapshot.raw[3] = 0x00780000u;
-    snapshot.raw[4] = 0x00F00000u;
+    snapshot.raw[4] = 0x00180000u;
     snapshot.raw[25] = 0x0057E400u;
     snapshot.raw[26] = 0x00780000u;
 
     ASSERT_EQ(MB_DDF::HWTest::Detail::populate_dh_telemetry(snapshot, response),
               ProductErrorCode::Ok);
+    const auto channel1 =
+        MB_DDF::HW::Ads1258Device::calibrated_channel_voltage(1, snapshot);
+    const auto channel4 =
+        MB_DDF::HW::Ads1258Device::calibrated_channel_voltage(4, snapshot);
+    const auto channel25 =
+        MB_DDF::HW::Ads1258Device::calibrated_channel_voltage(25, snapshot);
+    ASSERT_TRUE(channel1);
+    ASSERT_TRUE(channel4);
+    ASSERT_TRUE(channel25);
     EXPECT_EQ(response.get_signed("telemetry[0]").value_or(0),
-              std::llround(MB_DDF::HW::Ads1258Device::channel_voltage(
-                               1, snapshot.raw[1]) /
-                           0.001));
+              std::llround(channel1.value() / 0.001));
     EXPECT_EQ(response.get_signed("telemetry[1]").value_or(0),
-              std::llround(MB_DDF::HW::Ads1258Device::channel_voltage(
-                               4, snapshot.raw[4]) /
-                           0.001));
-    EXPECT_LT(response.get_signed("telemetry[1]").value_or(0), 0);
+              std::llround(channel4.value() / 0.001));
     EXPECT_EQ(response.get_signed("telemetry[22]").value_or(0),
-              std::llround(MB_DDF::HW::Ads1258Device::channel_voltage(
-                               25, snapshot.raw[25]) /
-                           0.001));
+              std::llround(channel25.value() / 0.001));
     for (size_t channel = 2; channel < 22; ++channel) {
         EXPECT_EQ(response.get_signed("telemetry[" + std::to_string(channel) + "]")
                       .value_or(1),
@@ -69,7 +80,7 @@ TEST(HardwareTestProviderTest, PopulatesDhTelemetryFromConfirmedAds1258Channels)
 TEST(HardwareTestProviderTest, DhTelemetryRejectsAnIncompatibleResponse) {
     ProductProtocol protocol;
     auto response = protocol.create_message("system_status_response", false);
-    MB_DDF::HW::Ads1258Snapshot snapshot{};
+    auto snapshot = calibrated_ads1258_snapshot();
 
     EXPECT_EQ(MB_DDF::HWTest::Detail::populate_dh_telemetry(snapshot, response),
               ProductErrorCode::TaskExecFailed);

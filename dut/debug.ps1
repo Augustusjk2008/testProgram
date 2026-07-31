@@ -10,8 +10,6 @@ param(
     [switch] $FullHardware,
     [switch] $Com3Echo,
     [switch] $HardwareTest,
-    [switch] $FlashChipEraseTest,
-    [string] $FlashChipEraseConfirm = "",
     [string] $SpiFlashTestAddress = "",
     [switch] $DryRun
 )
@@ -31,12 +29,6 @@ if (($Com3Echo -and $HardwareTest) -or
     ($Com3Echo -and $FullHardware) -or
     ($HardwareTest -and $FullHardware)) {
     throw "-Com3Echo, -HardwareTest, and -FullHardware are mutually exclusive."
-}
-if ($FlashChipEraseTest -and -not $FullHardware) {
-    throw "-FlashChipEraseTest requires -Run -FullHardware."
-}
-if ($FlashChipEraseConfirm -and -not $FlashChipEraseTest) {
-    throw "-FlashChipEraseConfirm requires -FlashChipEraseTest."
 }
 if ($SpiFlashTestAddress -and -not $FullHardware) {
     throw "-SpiFlashTestAddress requires -Run -FullHardware."
@@ -690,9 +682,6 @@ if ($Run) {
     if ($FullHardware) {
         Write-Warning "Full hardware capability mode enabled, including DH main engine 2 ignition."
         $runEnvironment += "MB_DDF_HW_FULL_DEMO=1"
-    }
-    if ($FlashChipEraseTest) {
-        Write-Warning "-FlashChipEraseTest/-FlashChipEraseConfirm are deprecated and ignored. The full demo now tests Micron N25Q512A through /dev/spidev0.0 and restores the original 4 KiB subsector; it never issues ChipErase."
     }
     if ($SpiFlashTestAddress) {
         $runEnvironment += "MB_DDF_HW_SPI_FLASH_TEST_ADDRESS=$SpiFlashTestAddress"

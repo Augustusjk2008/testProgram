@@ -29,10 +29,12 @@ Result<void> Ad7606Device::configure(const Ad7606Config& c) {
         return s;
     }
     const uint32_t values[] = {c.oversampling,           c.clock_period, c.conversion_low_cycles,
-                               c.conversion_wait_cycles, c.reset_cycles, c.acquisition_count};
+                               c.conversion_wait_cycles, c.reset_cycles, c.acquisition_count,
+                               c.channel_mapping};
     const uint64_t offsets[] = {R::Oversampling,   R::ClockPeriod, R::ConversionLow,
-                                R::ConversionWait, R::ResetCycles, R::AcquisitionCount};
-    for (unsigned i = 0; i < 6; ++i) {
+                                R::ConversionWait, R::ResetCycles, R::AcquisitionCount,
+                                R::ChannelMapping};
+    for (unsigned i = 0; i < 7; ++i) {
         s = transport_.write32(offsets[i], values[i]);
         if (!s) {
             return s;
@@ -98,6 +100,11 @@ Result<Ad7606State> Ad7606Device::read_state() const {
         return n.status();
     }
     s.config.acquisition_count = n.value();
+    auto m = transport_.read32(R::ChannelMapping);
+    if (!m) {
+        return m.status();
+    }
+    s.config.channel_mapping = m.value();
     return s;
 }
 } // namespace MB_DDF::HW

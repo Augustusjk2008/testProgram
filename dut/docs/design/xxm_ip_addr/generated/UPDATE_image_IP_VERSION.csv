@@ -1,0 +1,51 @@
+﻿ip_core,access,address_raw,address_value,byte_offset,address_scale,name,description,notes,source_workbook,source_sheet,source_row
+UPDATE_image_IP_VERSION,write,0x1,1,4,4,无,无,,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,3
+UPDATE_image_IP_VERSION,read,0x0,0,0,4,通信测试（32位，下同）,32'hAAAABBBB,,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,4
+UPDATE_image_IP_VERSION,read,0x1,1,4,4,软件类型,"低16位有效，高16位为0；
+16'hFFFF为update_image;16'hEEEE为gorden_image;",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,5
+UPDATE_image_IP_VERSION,read,0x2,2,8,4,软件状态,"低16位有效，高16位为0；
+16'hAAAA为正式版本;16'hBBBB为测试版本;",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,6
+UPDATE_image_IP_VERSION,read,0x3,3,12,4,型号软件当前版本,"32位有效，其中高16位为阶段版本，中间8位为功能性更改版本，低8位为勘误性更改版本；
+当前版本为1.00.00。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,7
+UPDATE_image_IP_VERSION,read,0x4,4,16,4,型号软件当前日期,"32位有效，其中高16位为年份，中间8位为月份，低8位为日（号）；
+当前日期为2026.07.17。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,8
+UPDATE_image_IP_VERSION,read,0x5,5,20,4,DIDO IP基地址,当前基地址为32'h44B40000,,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,9
+UPDATE_image_IP_VERSION,read,0x6,6,24,4,DIDO IP当前版本,"32位有效，其中高16位为阶段版本，中间8位为功能性更改版本，低8位为勘误性更改版本；
+当前版本为1.00.00。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,10
+UPDATE_image_IP_VERSION,read,0x7,7,28,4,DIDO IP当前日期,"32位有效，其中高16位为年份，中间8位为月份，低8位为日（号）；
+当前日期为2026.07.13。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,11
+UPDATE_image_IP_VERSION,read,0x8,8,32,4,DH_ctrl IP基地址,当前基地址为32'h44A30000,,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,12
+UPDATE_image_IP_VERSION,read,0x9,9,36,4,DH_ctrl IP当前版本,"32位有效，其中高16位为阶段版本，中间8位为功能性更改版本，低8位为勘误性更改版本；
+当前版本为1.00.00。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,13
+UPDATE_image_IP_VERSION,read,0xA,10,40,4,DH_ctrl IP当前日期,"32位有效，其中高16位为年份，中间8位为月份，低8位为日（号）；
+当前日期为2026.07.14。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,14
+UPDATE_image_IP_VERSION,read,0xB,11,44,4,AD7606_HELM_ctrl基地址,当前基地址为32'h44A10000,,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,15
+UPDATE_image_IP_VERSION,read,0xC,12,48,4,AD7606_HELM_ctrl当前版本,"32位有效，其中高16位为阶段版本，中间8位为功能性更改版本，低8位为勘误性更改版本；
+当前版本为1.00.00。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,16
+UPDATE_image_IP_VERSION,read,0xD,13,52,4,AD7606_HELM_ctrl当前日期,"32位有效，其中高16位为年份，中间8位为月份，低8位为日（号）；
+当前日期为2026.07.14。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,17
+UPDATE_image_IP_VERSION,read,0xE,14,56,4,PWM_ctrl IP基地址,当前基地址为32'h44A00000,,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,18
+UPDATE_image_IP_VERSION,read,0xF,15,60,4,PWM_ctrl IP当前版本,"32位有效，其中高16位为阶段版本，中间8位为功能性更改版本，低8位为勘误性更改版本；
+当前版本为1.00.00。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,19
+UPDATE_image_IP_VERSION,read,0x10,16,64,4,PWM_ctrl IP当前日期,"32位有效，其中高16位为年份，中间8位为月份，低8位为日（号）；
+当前日期为2026.07.06。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,20
+UPDATE_image_IP_VERSION,read,0x11,17,68,4,ADS1258_ctrl IP基地址,当前基地址为32'h44A20000,,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,21
+UPDATE_image_IP_VERSION,read,0x12,18,72,4,ADS1258_ctrl IP当前版本,"32位有效，其中高16位为阶段版本，中间8位为功能性更改版本，低8位为勘误性更改版本；
+当前版本为1.00.00。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,22
+UPDATE_image_IP_VERSION,read,0x13,19,76,4,ADS1258_ctrl IP当前日期,"32位有效，其中高16位为年份，中间8位为月份，低8位为日（号）；
+当前日期为2026.07.16。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,23
+UPDATE_image_IP_VERSION,read,0x14,20,80,4,XADC IP基地址,当前基地址为32'h44B50000,,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,24
+UPDATE_image_IP_VERSION,read,0x15,21,84,4,XADC IP当前版本,"32位有效，其中高16位为阶段版本，中间8位为功能性更改版本，低8位为勘误性更改版本；
+当前版本为1.00.00。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,25
+UPDATE_image_IP_VERSION,read,0x16,22,88,4,XADC IP当前日期,"32位有效，其中高16位为年份，中间8位为月份，低8位为日（号）；
+当前日期为2026.07.15。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,26
+UPDATE_image_IP_VERSION,read,0x17,23,92,4,COM IP基地址,当前基地址为32'h44A40000,,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,27
+UPDATE_image_IP_VERSION,read,0x18,24,96,4,COM IP当前版本,"32位有效，其中高16位为阶段版本，中间8位为功能性更改版本，低8位为勘误性更改版本；
+当前版本为1.00.00。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,28
+UPDATE_image_IP_VERSION,read,0x19,25,100,4,COM IP当前日期,"32位有效，其中高16位为年份，中间8位为月份，低8位为日（号）；
+当前日期为2026.07.06。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,29
+UPDATE_image_IP_VERSION,read,0x1A,26,104,4,FPGA UPDATA IP基地址,当前基地址为32'h44B70000,,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,30
+UPDATE_image_IP_VERSION,read,0x1B,27,108,4,FPGA UPDATA IP当前版本,"32位有效，其中高16位为阶段版本，中间8位为功能性更改版本，低8位为勘误性更改版本；
+当前版本为1.00.00。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,31
+UPDATE_image_IP_VERSION,read,0x1C,28,112,4,FPGA UPDATA IP当前日期,"32位有效，其中高16位为年份，中间8位为月份，低8位为日（号）；
+当前日期为2026.07.10。",,UPDATE_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx,Sheet1,32

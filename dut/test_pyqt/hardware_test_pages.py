@@ -50,7 +50,7 @@ from .test_page_widgets import (
 CHART_FONT = FontProperties(family="Microsoft YaHei")
 
 
-# Signal names are copied from origin_v3/DIDO_ctrl. Bit cells stay compact;
+# Signal names are copied from origin_v4/DIDO_ctrl. Bit cells stay compact;
 # the visible legend carries the complete board names and polarity.
 DIDO_DI_SIGNALS = {
     0: "DI0 联锁、电气弹动（高有效）",

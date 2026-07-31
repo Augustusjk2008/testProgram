@@ -133,7 +133,7 @@ Result<void> DhController::fire_multiple(std::span<const uint8_t> channels) {
         }
     }
 
-    // 每批编码四个槽位。origin_v3 允许通道重复；末批不足四路时重复
+    // 每批编码四个槽位。origin_v4 允许通道重复；末批不足四路时重复
     // 最后一个有效通道，兼容实板对含 0xFF 尾批不响应的行为。
     for (size_t base = 0; base < unique.size(); base += 4) {
         uint32_t packed = 0;

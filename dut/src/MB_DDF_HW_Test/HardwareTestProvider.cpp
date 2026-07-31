@@ -326,9 +326,14 @@ ProductErrorCode Detail::populate_dh_telemetry(
     auto staged = response;
     for (size_t channel = 0; channel < kDhTelemetryAds1258Channels.size(); ++channel) {
         const size_t source = kDhTelemetryAds1258Channels[channel];
+        const auto voltage =
+            HW::Ads1258Device::calibrated_channel_voltage(source, snapshot);
+        if (!voltage) {
+            return ProductErrorCode::RegReadWriteFailed;
+        }
         if (!staged.set_scaled_signed(
                 "telemetry[" + std::to_string(channel) + "]",
-                HW::Ads1258Device::channel_voltage(source, snapshot.raw[source]))) {
+                voltage.value())) {
             return ProductErrorCode::TaskExecFailed;
         }
     }
@@ -624,23 +629,13 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
             return ready;
         }
 
-        // 临时兼容当前板端 ADS1258 上电状态；硬件默认配置固化后删除本段。
-        constexpr std::array<std::pair<uint64_t, uint32_t>, 6> kTemporaryWrites{{
-            {0x4u * 4u, 0x82u},
-            {0xEu * 4u, 0x20u},
-            {0x13u * 4u, 0x21EC35u},
-            {0x14u * 4u, 0x21EC35u},
-            {0x17u * 4u, 0xAAAAu},
-            {0x18u * 4u, 0xAAAAu},
-        }};
-        for (const auto& [offset, value] : kTemporaryWrites) {
-            const auto operation = ads1258.write_register(offset, value);
-            if (!operation) {
-                LOG_ERROR << "[HW-TEST] ADS1258 临时启动配置写入失败：offset=0x"
-                          << std::hex << offset << " value=0x" << value << std::dec
-                          << "，" << operation.status().message;
-                return status_error(operation.status());
-            }
+        // v4 定标要求内部 OFFSET 语义和双芯片模式；修改配置前必须关闭一路并执行状态回退。
+        // 两个阈值保留当前未完成标定值，待最终标定后再单独评审。
+        const auto configured = ads1258.device().apply_runtime_overrides({});
+        if (!configured) {
+            LOG_ERROR << "[HW-TEST] ADS1258 v4 运行时配置失败："
+                      << configured.status().message;
+            return status_error(configured.status());
         }
         return ProductErrorCode::Ok;
     }
@@ -901,19 +896,24 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
         }
 
         auto staged = response;
-        const auto& raw = ads.value().raw;
+        const auto c_voltage =
+            HW::Ads1258Device::calibrated_channel_voltage(0, ads.value());
+        const auto b_voltage =
+            HW::Ads1258Device::calibrated_channel_voltage(2, ads.value());
+        const auto primary_voltage =
+            HW::Ads1258Device::calibrated_channel_voltage(3, ads.value());
+        if (!c_voltage || !b_voltage || !primary_voltage) {
+            return ProductErrorCode::RegReadWriteFailed;
+        }
         const auto& health = xadc_health.value();
         const bool populated =
-            staged.set_scaled_signed(
-                "c_volt", HW::Ads1258Device::channel_voltage(0, raw[0])) &&
-            staged.set_scaled_signed(
-                "b_volt", HW::Ads1258Device::channel_voltage(2, raw[2])) &&
+            staged.set_scaled_signed("c_volt", c_voltage.value()) &&
+            staged.set_scaled_signed("b_volt", b_voltage.value()) &&
             staged.set_unsigned("activate_bits", activated.value() ? 0x01u : 0u) &&
             staged.set_scaled_signed("external_vol", health.external_voltage) &&
             staged.set_scaled_signed("core_vol", health.core_voltage) &&
             staged.set_scaled_signed("assist_vol", health.assist_voltage) &&
-            staged.set_scaled_signed(
-                "v28_5", HW::Ads1258Device::channel_voltage(3, raw[3])) &&
+            staged.set_scaled_signed("v28_5", primary_voltage.value()) &&
             staged.set_scaled_signed("js_5V", health.js_5v_voltage) &&
             staged.set_scaled_signed("dyt_5V", health.dyt_5v_voltage) &&
             staged.set_scaled_signed("power_24V", health.power_24v_voltage) &&

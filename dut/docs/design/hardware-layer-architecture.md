@@ -283,20 +283,23 @@ DMA 使用一次 `pwrite`/`pread`：
 大多数设备的 `check_communication()` 读取局部 offset `0`，要求值为
 `0xAAAABBBB`，不匹配返回 `HardwareFault`。
 
-COM、XADC 和 Flash 是例外：三者局部 offset `0` 分别是接收 RAM、XADC 软件复位写
-寄存器和 Flash 读 RAM。`ComDevice::check_communication()` 与
-`FlashDevice::check_communication()` 只验证 Transport 已打开；`XadcDevice` 不提供
-签名检查，调用方打开窗口后直接执行只读采样。
+COM 和 XADC 是例外：二者局部 offset `0` 分别是接收 RAM 和 XADC 软件复位写寄存器。
+`ComDevice::check_communication()` 只验证 Transport 已打开；`XadcDevice` 不提供签名检查，
+调用方打开窗口后直接执行只读采样。其余当前已实现且具有通信寄存器的 Device（包括两个
+update 只读 Device）均在局部 offset `0` 校验 `0xAAAABBBB`。
 
 寄存器常量集中在 `Device/Registers`，来源于：
 
-- `docs/design/xxm_ip_addr/origin_v3`：当前原始 Excel 地址表。
+- `docs/design/xxm_ip_addr/origin_v4`：现行原始 Excel 寄存器契约；
+  `GOLDEN_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx` 暂不纳入 generated CSV、
+  Device API 或实现范围。
 - `docs/design/xxm_ip_addr/generated/registers.md`：合并后的完整寄存器文档。
 - `Device/Registers/*.h`：代码使用的局部字节偏移。
 
 ### 6.2 FPGA 地址窗口
 
-当前 Demo、HW_TEST 和 smoke test 使用：
+当前代码定义的 FPGA 地址窗口如下；UPDATE image IP version 与 FPGA update state 当前由
+硬件 smoke 打开，DEMO 与 HW_TEST 不构造这两个 Device：
 
 | 设备 | `user_offset` | `map_length` | event |
 |---|---:|---:|---:|
@@ -310,7 +313,8 @@ COM、XADC 和 Flash 是例外：三者局部 offset `0` 分别是接收 RAM、X
 | COM4 | `0x100000` | `0x40000` | 3 |
 | DIDO | `0x140000` | `0x10000` | 无 |
 | XADC | `0x150000` | `0x10000` | 无 |
-| Flash | `0x160000` | `0x10000` | 无 |
+| UPDATE image IP version | `0x160000` | `0x10000` | 无 |
+| FPGA update state | `0x170000` | `0x10000` | 无 |
 
 例如 AD7606 全局地址 `0x10024` 在 Device 中使用局部 offset `0x24`。
 
@@ -330,6 +334,11 @@ Logger 初始化和编译期入口分派，DDS Core 不依赖测试服务或 `MB
 能力：
 
 - 配置载波计数、峰值和锯齿/三角波。
+- 以强类型 `PwmDirectionMode` 配置并回读有符号占空比的方向模式：局部 `0x3C` 的默认值为
+  `PositiveToZero=0xAAAA`（正占空比方向 0、负占空比方向 1），可选
+  `PositiveToOne=0xBBBB`。
+- 以强类型 `PwmChannelMapping` 配置并回读局部 `0x40` 低 16 位的通道映射；默认
+  `0x3210`，从低到高四个 nibble 对应逻辑舵 1 至 4 的实际 PWM/方向通道。
 - 设置无符号占空比模式。
 - 开关统一更新。
 - 不经 peak/方向/duty 读改流程，直接把四路 enable 写为全关，用于启动安全态。
@@ -348,6 +357,11 @@ Logger 初始化和编译期入口分派，DDS Core 不依赖测试服务或 `MB
 关断例外：它直接向 Enable 寄存器写 `0xFFFF`，保证舵控程序在其他 PWM 配置之前
 尽早禁止四路输出，随后再关闭 update gate 并写入零 duty。
 
+方向模式只在有符号占空比下有效。`configure()` 写 Carrier、Peak、Waveform、
+DirectionMode 和 ChannelMapping，刻意不写 `DutyMode`；需要分离方向/占空比的当前安全
+路径仍须显式调用 `set_duty_mode_unsigned()` 写 `0xFFFF`。回读到非 `0xAAAA/0xBBBB` 的
+方向模式会返回 `HardwareFault`。
+
 ### 6.4 Ad7606Device
 
 能力：
@@ -355,44 +369,68 @@ Logger 初始化和编译期入口分派，DDS Core 不依赖测试服务或 `MB
 - 采集开关、滤波开关。
 - 过采样、时钟和转换时序配置。
 - 采集计数配置。
+- 配置并回读 32 位 AD 通道映射。
 - 通过“关闭再开启采集”复位。
 - 读取八路原始采样和配置状态。
 
-采样寄存器低 16 位按 `int16_t` 解释。读取是立即快照，不等待下一次转换完成。
-`origin_v3` 将八路通用电压换算修订为
-`voltage = raw(signed) / 65536 * 10`，量程为 `-5..5 V`；舵控主动反馈仍使用下文单独
-说明的参考仿射换算，二者不能混用。
+v4 的 `Ad7606Config` 默认时序依次为：过采样 `0`、时钟周期 `24`、转换低电平 `3`、
+转换完成等待 `35`、复位周期 `5`、采集计数 `3904`。局部 `0x44` 是 32 位通道映射，
+默认 `0x76543210`；从低到高每个 nibble 对应逻辑通道 1 至 8 的实际 AD 通道。
+`configure()` 写入该映射，`read_state()` 回读该映射。采样寄存器低 16 位按 `int16_t`
+解释，读取是立即快照，不等待下一次转换完成。`raw(signed) / 65536 * 10 V` 是寄存器
+换算契约，不构成真机量程验收；舵控主动反馈仍使用下文单独说明的参考仿射换算，二者
+不能混用。
 
 ### 6.5 Ads1258Device
 
 能力：
 
-- 连续写入 21 个基础配置寄存器，并单独读写 v3 新增的 `0x68` DRDY 延时读取计数。
-- 读取完整配置。
-- 读取 32 路原始数据。
-- 读取 9 个 FPGA 维护的错误计数。
+- 连续写入 21 个基础配置寄存器，并读写局部 `0x68` 的 DRDY 延时读取计数。
+- 读取完整配置、32 路原始数据、两片诊断数据与 9 个 FPGA 维护的错误计数。
 - 写 `0xFF` 清错误计数。
 
-`read_snapshot()` 保留原始 32 位数据，不自动改写采样值；Device 另提供适用于全部 32 路
-的无状态换算函数。以下是当前代码使用的临时定标值，后续以实测标定结果为准。先将低
-24 位二补码符号扩展为
-`code = sign_extend_24(Data & 0x00FFFFFF)`，再计算
-`a = code * 4.096 / 0x780000 V`。代码条件为
-`channel > 0 && channel <= 3`：全局通道索引 `1..3` 使用 `V=a*18.6`；索引 `0`
-和 `4..31` 在 `a <= 3` 时使用
-`V=a*(-0.1594*a^2+0.843*a+15.1)`，`a > 3` 时使用 `V=a*16.23`；`a=3`
-严格走多项式分支。
+`read_snapshot()` 保留原始 32 位数据。32 路采样从局部 `0x80 + 4*i` 读取；全局通道
+`0..15` 使用芯片 1 诊断，`16..31` 使用芯片 2 诊断。两片的
+`OFFSET/VCC/TEMP/GAIN/VREF` 分别位于 `0x100..0x110` 与 `0x114..0x124`，每项均为低
+24 位有效且高 8 位必须为 0。当前实现的每片诊断换算为：
 
-HW_TEST 当前启动时还会执行一组临时兼容写入，待板端默认配置固化后删除：ADS1258
-局部 `0x10` 写 `0x82`、`0x38` 写 `0x20`、`0x5C` 写 `0xAAAA`、`0x60` 写
-`0xAAAA`。这四次写入只属于 `HardwareTestProvider::initialize()`，不代表通用
-`Ads1258Device::configure()` 的永久默认值。
+```text
+VREF   = raw_vref / 0xC0000
+VCC    = raw_vcc / 0xC0000
+GAIN   = raw_gain / 0x780000
+OFFSET = sign_extend_24(raw_offset) * VREF / 0x780000
+TEMP   = (raw_temp * VREF / 0x780000 * 1_000_000 - 168_000) / k + 25 °C
+```
 
-电气健康的三个 ADS1258 电压源已经板级确认：`c_volt`=芯片 1 通道 0/局部 `0x80`、
-`b_volt`=芯片 1 通道 2/局部 `0x88`、`v28_5`=芯片 1 通道 3/局部 `0x8C`。当前
-代码中 `c_volt`（raw[0]）走通道 0 的分段公式，`b_volt` 和 `v28_5` 走 `18.6`
-线性分支。三项由板端换算工程电压，按 `0.01 V/LSB` 写入协议 `S16F`。局部
-`0x4C`/`0x50` 仍是 C/B 激活阈值配置读回，不映射为协议响应字段。
+`k` 在自由空气模式为 `394`，在温控板/芯片与 PCB 同温模式为 `563`。VCC 与 TEMP 会随
+每片快照解码并参与诊断有效性检查（当前明确拒绝零 TEMP、非正 VCC 及保留高位非零），
+但 v4 契约没有给出温漂修正项或更窄的允许范围，因此二者不直接进入通道电压公式。
+普通采样先计算：
+
+```text
+sample    = sign_extend_24(raw_sample) * VREF / 0x780000
+corrected = (sample - OFFSET) / GAIN
+```
+
+全局通道 1、2、3（热电池激活、28.5V(B)、28.5V(1)）使用
+`V = (corrected - external_bias) * 19.18`，外部偏置依次为 `0.500 V`、`0.325 V`、
+`0.500 V`。通道 0 与 4..31 在 `0 <= corrected < 3` 使用
+`corrected * (-0.1594*corrected^2 + 0.843*corrected + 15.1)`，在
+`corrected >= 3` 使用 `corrected * 16.23`；负 `corrected` 是当前 v4 拟合域外错误。
+产品路径使用 `calibrated_channel_voltage()`，而非旧的无状态 `channel_voltage()`。
+
+电气健康中 `c_volt=raw[0]` 走普通通道定标，`b_volt=raw[2]` 与 `v28_5=raw[3]` 走上述
+三路特殊定标；结果再按 `0.01 V/LSB` 写入协议 `S16F`。C/B 激活阈值不映射为协议响应。
+HW_TEST 在使能/状态回退保护下设置 Config0=`0x02`、Config1=`0x82`、SYSRED=`0x3D`、
+WORK_COUNT=`0xAA`、SPI divider=`0x20` 和两项阈值，再恢复两片使能；其中 Config0 固定
+内部 OFFSET 语义，WORK_COUNT 固定双芯片模式。两项阈值当前均保持 `0x21EC35`、等待最终
+标定，不能将 generated CSV 中的设计说明值表述为当前已应用或已完成真机标定。
+
+`configure()` 同样先保存两路使能、关闭一路并打开状态回退，完成全部配置后关闭状态回退
+并恢复原使能值；中途失败会尽力关闭状态回退并保持两路失能，避免带着部分配置重新采集。
+v4 表没有明确采样与 OFFSET 的
+S24/U24 文字，当前实现延续既有低 24 位二补码解释，并将校正值用于现有通用通道拟合；
+这是当前实现约定，不扩展为已完成真机标定的保证。
 
 ### 6.6 XadcDevice
 
@@ -425,7 +463,7 @@ XADC，也不读取 offset `0` 做签名检查。产品协议由 `ELEC_HEALTH_ST
 该位图不能一概解释成板级功能“已使能”。特别是 DO3=`24V_EN` 和
 DO4=`DYT_5V_EN` 为物理低使能，因此其命令/回读 bit=0 才表示使能，bit=1 表示失能。
 
-`origin_v3` 已命名的板级通道如下；未列出的 DI/DO 只保留协议通道号：
+`origin_v4` 已命名的板级通道如下；未列出的 DI/DO 只保留协议通道号：
 
 | 通道 | 板级信号 | 局部偏移 | 说明 |
 |---|---|---:|---|
@@ -459,9 +497,9 @@ DO4=`DYT_5V_EN` 为物理低使能，因此其命令/回读 bit=0 才表示使�
 - 读取 48 路反馈和电池状态。
 
 单通道命令按通道范围编码为 `0xBxxx`、`0xCxxx`、`0xDxxx`。
-多通道接口先去重，每批编码四个槽位，然后写 `MultiTrigger=0xAAAA`。`origin_v3`
-允许通道重复；为兼容实板对含 `0xFF` 尾批不响应的行为，末批不足四路时用最后一个
-有效通道重复填满，不引入未选择通道。
+多通道接口先去重，每批编码四个槽位，然后写 `MultiTrigger=0xAAAA`。`origin_v4`
+允许通道重复；为兼容实板对含 `0xFF` 尾批不响应的行为，末批不足四路时仍用本批最后一个
+有效通道重复填满，不填充 `0xFF`，也不引入未选择通道。
 
 该类只做参数和寄存器编码，不包含业务级武器/危险动作授权、双人确认、互锁或状态机。
 应用层必须在调用 `fire`/`fire_multiple` 前实现完整安全控制。工程 Demo 的默认巡检只读
@@ -699,51 +737,23 @@ FPGA 消费 `AA 1A`、1 字节长度和 CRC；软件使用 255 字节接收缓�
 一次 STOP，ACK 异常不触发收尾重发。流活动期间 BUS link 3 返回 `TASK_BUSY (0x0204)`。
 400 Hz 不要求软件保证无损，实际吞吐与丢帧只能由授权真机验收记录。
 
-### 6.10 FlashDevice
+### 6.10 FPGA MMIO Flash IP
 
-Flash 地址表定义局部 32 位 MMIO：
+FPGA MMIO Flash IP 及 `FlashDevice` 已从当前实现删除；它不再拥有 Device API、寄存器定义、单元测试或 smoke 范围。
 
-| 区域/寄存器 | 局部 offset | 说明 |
-|---|---:|---|
-| Read RAM | `0x000` | Flash 读命令完成后的数据 |
-| Write RAM | `0x100` | Program 前写入的数据，地址按 4 递增 |
-| Command | `0x200` | 低 8 位 Flash 命令字 |
-| FlashAddress | `0x204` | 32 位 Flash 字节地址 |
-| ByteCounts | `0x208` | 高 16 位读字节数，低 16 位写字节数 |
-| TriggerStatus | `0x20C` | 写 `0xA5` 触发，读控制器状态 |
-| ClearDone | `0x210` | 写 `1` 清完成标志 |
-| ClockDivider | `0x300` | 低 8 位时钟分频，默认 16 |
+### 6.11 UpdateImageIpVersionDevice 与 FpgaUpdateStateDevice
 
-地址表没有明示 RAM 深度。`FlashDevice` 根据 Read RAM、Write RAM 和命令区的
-`0x100` 间隔，把单次传输保守限制为 256 字节，并只接受 4 字节倍数，按当前
-AArch64/FPGA 小端环境打包。
+`UpdateImageIpVersionDevice` 使用 `0x160000/0x10000` 窗口，只做局部 offset `0` 的通信
+签名检查和版本快照读取：软件类型/状态、型号软件版本/日期，以及 DIDO、DH、AD7606、
+PWM、ADS1258、XADC、COM、FPGA update 的基址/版本/日期。软件类型可能报告
+update/golden image 标记，但这不等同于导出或实现独立的 GOLDEN image 寄存器图。
 
-命令事务沿用已经实现并经既有硬件测试验证的最小握手：
+`FpgaUpdateStateDevice` 使用 `0x170000/0x10000` 窗口，只做通信签名检查和状态快照读取：
+擦除、写入、读取状态，读/写数据 CRC 及 CRC 校验状态。两个 Device 均不公开写入、擦除、
+编程或触发 API，也不写地址表中标为“无”或“暂时不用”的位置；这些读取接口不能表述为
+FPGA 更新能力或真机验收证据。
 
-1. 写当前命令需要的寄存器；WREN、RDSR、ChipErase 不额外写地址或计数。
-2. 写 `TriggerStatus=0xA5`。
-3. 使用 `steady_clock` 在调用方给定的 `Timeout` 内轮询 D16 (`bit16`)；v3 地址表明确
-   D16=`1` 表示完成。
-4. WREN 和 ChipErase 不写 ClearDone，RDSR、Program 和 Read 写 `ClearDone=1`。该差异
-   来自 v2“带操作”表及既有硬件验证；v3 基础表只保留“向 `0x210` 写 1 清完成标志”，
-   未重新定义逐命令例外。
-
-Program 按表中顺序写 Command、FlashAddress、ByteCounts、Write RAM 后再触发；Read
-按 Command、FlashAddress、ByteCounts、触发、完成、清标志、Read RAM 的顺序执行。
-`FlashDevice` 将 WREN、RDSR、ChipErase、Program 和 Read 暴露为独立原语，不自动
-插入 WIP mask 轮询、WRDI、扇区擦除或失败恢复命令，具体编排由应用按已确认流程完成。
-
-原表状态说明同时出现“D7-D8 状态机”和“D8-D14 为 0”，位段存在笔误；经更正，D16
-统一为高电平完成。`FlashControllerStatus` 保留 `raw` 和 `d16_set`，事务函数只在
-`d16_set=true` 时结束等待。
-
-当前板级窗口确认 Flash 全局基址为 `0x160000`；v3 地址表只给出局部寄存器，没有给出
-全局基址、Flash 内部地址、Program 长度、写入数据、容量或页/扇区几何。该
-`FlashDevice` 及其寄存器单测、只读 smoke
-继续保留，用于访问 FPGA Flash IP；完整硬件 Demo 已不再调用其 ChipErase 写流程，
-也不再根据不完整地址表猜测 Program/Read 参数。
-
-### 6.11 CPU SpidevTransport 与 SpiFlashDevice
+### 6.12 CPU SpidevTransport 与 SpiFlashDevice
 
 CPU SPI Flash 使用独立 `/dev/spidev0.0`，不经过 XDMA user BAR。`ISpiTransport`
 与 MMIO `ITransport` 分离，因为 SPI 的关键语义是“命令、地址和数据必须位于同一次
@@ -902,14 +912,14 @@ target_link_libraries(my_application PRIVATE MB_DDF_HW_DDS_Adapter)
 
 - fd/mmap/poll RAII。
 - NullTransport 的打开、关闭、对齐和越界。
-- PWM 写入顺序和范围校验。
-- AD7606/ADS1258 数据解释、ADS1258 当前通道索引分支、`a=3` 分段边界、DH 通道映射，
-  以及 v3 的 `0x68` 配置读写。
+- PWM 的 v4 方向模式、通道映射、写入顺序和范围校验。
+- AD7606 的 v4 默认时序、通道映射和原始数据解释。
+- ADS1258 的两片诊断读取、v4 定标、外部偏置、拟合边界、DH 通道映射和 `0x68` 配置读写。
+- UPDATE image IP version 与 FPGA update state 的通信签名、完整快照和零写入约束。
 - XADC `Data[15:4]` 提取、`value_YX` 定标和只读访问。
 - DIDO 极性转换。
 - DH 命令编码、批量去重和不足四路尾批的重复填充。
 - COM RAM 打包、XDMA event 就绪后不二次读取、旧事件防御等待、超时和缓冲区不足。
-- Flash 寄存器顺序、读写长度编码、统一 D16=1 完成、WREN/RDSR/ChipErase 顺序和超时。
 - CPU SPI Flash 的四字节命令帧、WEL/Flag Status、页/子扇区/容量边界和跨 die 拆分。
 - CPU SPI Flash 完整工作流的明确地址读取、4 KiB 正常恢复、测试写失败恢复，以及
   恢复首轮失败后重试但整体仍判失败。
@@ -931,13 +941,16 @@ target_link_libraries(my_application PRIVATE MB_DDF_HW_DDS_Adapter)
 - 检查 PWM、AD7606、ADS1258、DH、DIDO 通信。
 - 读取各设备状态/快照。
 - 在 `0x150000` 只读 XADC `value_YX`。
+- 在 `0x160000` 验证 UPDATE image IP version 通信签名并读取完整版本快照。
+- 在 `0x170000` 验证 FPGA update state 通信签名并读取状态与 CRC 快照。
 - 打开 COM1-COM4，读取配置和错误状态。
-- 在固定基址 `0x160000` 打开 Flash，并只读取控制器状态和时钟分频。
 
 该 smoke 不向 COM4 注入 59 字节惯测 payload，也不验证 `09/01`、921600 时序、400 Hz
-吞吐或 STOP 收尾；这些能力必须在授权隔离台架另行验收。
+吞吐或 STOP 收尾；也不写入或触发任何 FPGA 更新操作。这些能力必须在授权隔离台架
+另行验收。
 
-默认 `--read-only` 行为不修改设备。
+默认 `--read-only` 行为不修改设备。当前 smoke 的读取范围与交叉构建均不构成目标板
+验收证据。
 
 显式指定 `--com-loopback` 时：
 
@@ -993,9 +1006,8 @@ Device 构造函数接受 `ITransport&`，把寄存器时序翻译成
 - COM 接收依赖 XDMA event 节点；未配置 event 时返回 `Unsupported`。
 - 每个 XDMA `_events_N` 只支持一个消费者；同一节点不得由多个进程或线程竞争读取。
 - COM 通信检查当前只验证 Transport 已打开，没有固定签名寄存器。
-- FPGA `FlashDevice` 通信检查同样只验证 Transport；局部 offset `0` 是读 RAM，不是
-  固定签名。其 RAM 256 字节软件上限来自相邻地址区域边界；D16 按 `bit16` 解码并
-  统一以 `1` 为完成，内部器件几何仍需其他板级资料确认。
+- UPDATE image IP version 与 FPGA update state 当前只支持通信签名和快照读取；没有写入、
+  擦除、编程、校验触发或更新编排，因此不能作为 FPGA 更新成功或真机功能验收证据。
 - CPU `SpiFlashDevice` 按 N25Q512A 手册实现命令集；完整 Demo 用 `20 BA 20` ID
   校验器件身份，数据路径使用明确四字节地址，并仅通过 `/dev/spidev0.0` 访问。
 - `NullTransport` 不模拟真实异步事件和 DMA。

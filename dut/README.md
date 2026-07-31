@@ -1,7 +1,7 @@
 # MB_DDF_v2
 
 > 项目版本：`1.0.0`
-> 文档最后更新：`2026-07-30`
+> 文档最后更新：`2026-07-31`
 
 MB_DDF_v2 是面向 AArch64 Linux 的 C++20 工程，包含共享内存 DDS、XDMA 硬件抽象层、
 产品硬件测试服务、只读硬件 Demo，以及配套的 Windows PyQt5 串口工具。Windows 主机
@@ -10,7 +10,8 @@ MB_DDF_v2 是面向 AArch64 Linux 的 C++20 工程，包含共享内存 DDS、XD
 ## 主要功能
 
 - 共享内存发布/订阅、Topic 注册和跨域网关。
-- XDMA Transport、PWM、AD7606、ADS1258、XADC、DIDO、DH、COM 和 Flash Device。
+- XDMA Transport、PWM、AD7606、ADS1258、XADC、DIDO、DH、COM，以及只读的 UPDATE image IP version / FPGA update state Device。
+- CPU `/dev/spidev0.0` 上的 `SpiFlashDevice` 与独立 `SPI_FLASH_TEST`。
 - 相互隔离的 COM3 回显、产品硬件测试和 DDS/硬件 Demo 三种应用画像；HW_TEST 另构建用户独立启停的 `MB_DDF_v2_HelmControl`。
 - CSV 驱动的产品协议描述、板端编解码和 PC 端异步串口收发，含舵控板级 AD/PWM/方向测试与 DDS 舵机连续实测桥接。
 - ADS1258 分段定标、XADC 原始码上报、电气健康采样和 23 路 DH 电压遥测。
@@ -87,7 +88,8 @@ build\aarch64\hw_test\Release\MB_DDF_v2_HelmControl
 .\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Smoke
 ```
 
-`MB_DDF_HW_Smoke` 默认只读，不启用 COM 回环、产品硬件测试服务或 DH 点火。
+`MB_DDF_HW_Smoke` 默认只读，不启用 COM 回环、产品硬件测试服务或 DH 点火；它对
+UPDATE image IP version 与 FPGA update state 只做通信检查和快照读取，不写入或触发更新。
 
 ## PC 串口工具
 
@@ -123,6 +125,9 @@ python -m pytest -q .\test_pyqt\tests
 - 产品端软件行为以当前 [`src/`](src) 实现为唯一事实；字段布局以
   [`docs/design/product_protocol_csv`](docs/design/product_protocol_csv) 中的 CSV 为准。
   命令、错误码、定标和硬件边界的完整定义见[产品协议设计](docs/design/product_protocol_csv/codedesign.md)。
+- 原始寄存器事实源为 [`docs/design/xxm_ip_addr/origin_v4`](docs/design/xxm_ip_addr/origin_v4)；
+  `GOLDEN_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx` 暂不进入导出或实现。
+  已实现 Device、只读 smoke 边界和 CPU SPI 路径以[硬件层详细设计](docs/design/hardware-layer-architecture.md)为准。
 - 主机侧职责、运行模式和协议事务边界只在[设备通信协议契约](../docs/design/contracts/device-communication-protocol.md)定义；BUS、设备流和板级事务的产品端细节只在产品协议设计定义。
 - `MB_DDF_v2_HelmControl` 与产品测试服务独立启停；`HELM_BOARD_TEST` 与连续舵机实测
   不互斥，也不共享生命周期。舵机、DH、DI/DO 和寄存器映射的当前软件行为以

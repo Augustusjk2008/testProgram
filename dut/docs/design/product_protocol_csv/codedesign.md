@@ -359,12 +359,13 @@ BUS 不再包含网口或 SPI Flash 路径。SPI Flash 仅由独立 `SPI_FLASH_T
   位于 `ELEC_HEALTH_STATUS` B31-B32，CSV LSB=`10.09/4096 V/code`；四路
   `helm_AD_value[0..3]` 位于 `HELM_BOARD_TEST`，为 AD7606 通道 0..3 的有符号 16 位 raw，
   CSV LSB=`10/65536 V/code`。PC 解码时乘 LSB 得到伏特值。
-- ADS1258 的电压换算是当前代码使用的临时定标值，后续以实测标定结果为准。先将低
-  24 位二补码符号扩展为 `code=sign_extend_24(Data&0x00FFFFFF)`，再计算
-  `a=code*4.096/0x780000 V`。代码中全局通道索引 `1..3` 使用
-  `V=a*18.6`；索引 `0` 和 `4..31` 在 `a<=3` 时使用
-  `V=a*(-0.1594*a^2+0.843*a+15.1)`，在 `a>3` 时使用 `V=a*16.23`。
-  条件为 `channel > 0 && channel <= 3`，所以 `raw[0]` 不属于线性分支。
+- ADS1258 使用 v4 的两芯片诊断定标：每次快照必须读取并解码所属芯片的
+  `OFFSET/VCC/TEMP/GAIN/VREF`，VCC/TEMP 参与诊断有效性检查，样本再按
+  OFFSET/GAIN/VREF 修正；全局通道 1/2/3 另应用外部偏置和 `19.18` 增益，其余通道按
+  当前分段拟合换算。`HardwareTestProvider` 使用
+  `calibrated_channel_voltage()`，不使用旧的无状态换算。诊断寄存器、完整公式、拟合
+  边界和“仅为当前实现、尚非真机标定”的限制以
+  [硬件层详细设计](../hardware-layer-architecture.md) 为唯一主定义。
 - ELEC_HEALTH 已确认 `c_volt=raw[0]`/`0x80`、`b_volt=raw[2]`/`0x88`、
   `v28_5=raw[3]`/`0x8C`，板端换算后按 `0.01 V/LSB` 编码；同时确认 XADC 的
   `external_vol`、`core_vol`、`assist_vol`、`js_5V=0x240`、`dyt_5V` 和 `power_24V`
@@ -377,8 +378,10 @@ BUS 不再包含网口或 SPI Flash 路径。SPI Flash 仅由独立 `SPI_FLASH_T
 - DH 已确认寄存器为：回线使能 `0x04`（开/关 `0xA000/0x00A0`）、电源使能
   `0x1DC`（开/关 `0xAAAA/0xFFFF`）和脉宽配置使能 `0x1E0`
   （开/关 `0xAAAA/0xFFFF`）。
-- HW_TEST 启动还会临时向 ADS1258 局部 `0x10/0x38/0x5C/0x60` 写入
-  `0x82/0x20/0xAAAA/0xAAAA`；板端默认配置固化后应删除这段兼容写入。
+- HW_TEST 启动经使能/状态回退保护应用 ADS1258 v4 运行时覆盖（Config0、Config1、
+  SYSRED、WORK_COUNT、SPI divider 与 C/B 激活阈值），以建立内部 OFFSET 和双芯片诊断
+  前置状态，随后恢复两片使能；两项阈值保持当前源码值、等待最终标定，不应在产品协议层
+  表述为已完成硬件标定或自动通过判据。
 
 ### 7.4 SPI Flash
 

@@ -23,8 +23,11 @@ WRITE_OFFSET = "\u5199\u504f\u79fb\u5730\u5740"
 READ_OFFSET = "\u8bfb\u504f\u79fb\u5730\u5740"
 ADDRESS_PREFIX = re.compile(r"^\s*(0[xX][0-9A-Fa-f]+|[0-9]+)(?=$|[\s\uff08(])")
 DEFAULT_BASE = Path(__file__).resolve().parent.parent
-DEFAULT_SOURCE = DEFAULT_BASE / "origin_v3"
+DEFAULT_SOURCE = DEFAULT_BASE / "origin_v4"
 DEFAULT_OUTPUT = DEFAULT_BASE / "generated"
+EXCLUDED_WORKBOOK_TITLES = {
+    "GOLDEN_image_IP_VERSION IP核通用型地址分配表（公开） .xlsx",
+}
 
 
 def clean(value: Any) -> str:
@@ -55,7 +58,7 @@ def select_workbooks(workbooks: list[Path]) -> list[Path]:
     """Choose one source per IP core, preferring the operation-annotated variant."""
     grouped: dict[str, list[Path]] = {}
     for workbook in workbooks:
-        if workbook.name.startswith("~$"):
+        if workbook.name.startswith("~$") or workbook.name in EXCLUDED_WORKBOOK_TITLES:
             continue
         grouped.setdefault(core_name(workbook), []).append(workbook)
 
@@ -137,7 +140,7 @@ def parse_workbook(path: Path) -> list[dict[str, Any]]:
 
 def write_csv(path: Path, records: list[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8-sig", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=FIELDS)
+        writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\n")
         writer.writeheader()
         writer.writerows(records)
 
@@ -190,6 +193,12 @@ def safe_name(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z_.-]+", "_", name).strip("_")
 
 
+def clear_per_core_csvs(output: Path) -> None:
+    for path in output.glob("*.csv"):
+        if path.name != "registers.csv":
+            path.unlink()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
@@ -201,12 +210,14 @@ def main() -> None:
     discovered = sorted(
         workbook for workbook in source.glob("*.xlsx")
         if not workbook.name.startswith("~$")
+        and workbook.name not in EXCLUDED_WORKBOOK_TITLES
     )
     if not discovered:
         raise SystemExit(f"No XLSX files found in {source}")
     workbooks = select_workbooks(discovered)
     records = [record for workbook in workbooks for record in parse_workbook(workbook)]
     records.sort(key=lambda item: (item["ip_core"], item["source_sheet"], item["source_row"]))
+    clear_per_core_csvs(output)
     write_csv(output / "registers.csv", records)
     write_json(output / "registers.json", records)
     write_markdown(output / "registers.md", records)

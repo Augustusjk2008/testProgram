@@ -239,9 +239,8 @@ LTO/strip 相关选项。测试 Debug 构建还会加入 coverage 选项。
 [Demo 使用说明的手工部署步骤](demo-usage.md#33-手工部署)运行 DEMO 画像，不设置
 `MB_DDF_HW_FULL_DEMO`。不带 `-FullHardware` 的 `debug.ps1` 选择的是 ECHO，不是 DEMO。
 
-完整硬件 Demo 已停用旧 FPGA Flash IP 的整片擦除流程，改为 CPU `/dev/spidev0.0`
-上的 Micron N25Q512A 可恢复 4 KiB 测试。FPGA Flash IP 当前位于 `0x160000`，只保留
-只读 smoke；`hw_run` 会自动执行 CPU SPI 流程：
+完整硬件 Demo 的存储测试只使用 CPU `/dev/spidev0.0` 上的 Micron N25Q512A 可恢复
+4 KiB 测试；`hw_run` 会自动执行该 CPU SPI 流程：
 先读取并校验 JEDEC ID `20 BA 20`，再用 `13h + 四字节地址` 直接读取并完整备份测试
 子扇区，然后擦除、写入、读回，最后按页恢复并校验原内容。缺省地址为最后一个子扇区
 `0x03FFF000`；板级预留地址不同时可指定：
@@ -251,13 +250,12 @@ LTO/strip 相关选项。测试 Debug 构建还会加入 coverage 选项。
 ```
 
 地址只接受十进制或 `0x` 十六进制，必须 4 KiB 对齐且不大于 `0x03FFF000`。
-`debug.ps1` 会将其转为远端环境变量 `MB_DDF_HW_SPI_FLASH_TEST_ADDRESS`。旧
-`-FlashChipEraseTest/-FlashChipEraseConfirm` 参数为兼容现有调用保留，但已废弃并
-忽略，不再设置旧环境变量，也不会发送 ChipErase/Bulk Erase。
+`debug.ps1` 会将其转为远端环境变量 `MB_DDF_HW_SPI_FLASH_TEST_ADDRESS`。
 
 备份恢复只能防止正常流程破坏原数据；测试期间进程被终止或板卡掉电仍可能留下被擦除
-或部分恢复的 4 KiB。运行前仍应确认日志打印的范围可从外部备份重刷。FPGA Flash IP
-驱动及只读 smoke 保留，但完整 Demo 不再调用其写操作。
+或部分恢复的 4 KiB。运行前仍应确认日志打印的范围可从外部备份重刷。v4 寄存器事实源、
+两个 update 只读 Device 与 smoke 范围见
+[硬件层详细设计](../design/hardware-layer-architecture.md)。
 
 SPI Transport 会持有 advisory `flock`，并在退出前恢复原 mode、位序、字宽和速率；
 显式恢复失败会使 Demo 失败。`flock` 不能约束不合作的进程，运行前仍须停止其他

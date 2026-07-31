@@ -205,11 +205,11 @@ bool probe_ad7606(const std::string& device_path) {
 }
 
 /**
- * @brief 读取 ADS1258 三十二通道原始值和错误计数。
+ * @brief 读取 ADS1258 三十二通道原始值、两片诊断值和错误计数。
  */
 bool probe_ads1258(const std::string& device_path) {
     // ADS1258 IP 位于 XDMA user BAR 偏移 0x20000。
-    LOG_INFO << "[DEMO] [ADS1258只读巡检] 基地址=0x20000，窗口=0x10000；将读取32路原始值和错误计数";
+    LOG_INFO << "[DEMO] [ADS1258只读巡检] 基地址=0x20000，窗口=0x10000；将读取32路原始值、两片OFFSET/VCC/TEMP/GAIN/VREF和错误计数";
     HW::XdmaTransport transport({device_path, 0x20000, 0x10000});
     if (!open_transport(transport, "ADS1258")) {
         return false;
@@ -226,9 +226,9 @@ bool probe_ads1258(const std::string& device_path) {
         transport.close();
         return false;
     }
-    LOG_INFO << "[DEMO] ADS1258通信校验通过，开始读取32通道和9类FPGA错误计数";
+    LOG_INFO << "[DEMO] ADS1258通信校验通过，开始读取32通道、10个诊断值和9类FPGA错误计数";
 
-    // 快照包含 32 路数据和 FPGA 维护的 9 个错误计数。
+    // 快照包含 32 路数据、两片五类诊断量和 FPGA 维护的 9 个错误计数。
     const auto snapshot = device.read_snapshot();
     if (!snapshot) {
         LOG_ERROR << "[DEMO] 读取ADS1258数据快照失败："
@@ -250,6 +250,23 @@ bool probe_ads1258(const std::string& device_path) {
         values << "]";
         LOG_INFO << "[DEMO] ADS1258通道" << base << "~" << (base + 7)
                  << "原始值=" << values.str();
+    }
+
+    for (size_t chip = 0; chip < snapshot.value().diagnostics.size(); ++chip) {
+        const auto calibration = HW::Ads1258Device::decode_diagnostics(
+            snapshot.value().diagnostics[chip]);
+        if (!calibration) {
+            LOG_ERROR << "[DEMO] ADS1258芯片" << (chip + 1)
+                      << "诊断量换算失败：" << format_status(calibration.status());
+            transport.close();
+            return false;
+        }
+        LOG_INFO << "[DEMO] ADS1258芯片" << (chip + 1)
+                 << "诊断：OFFSET=" << calibration.value().offset_voltage
+                 << "V，VCC=" << calibration.value().supply_voltage
+                 << "V，TEMP=" << calibration.value().temperature_celsius
+                 << "°C，GAIN=" << calibration.value().gain
+                 << "，VREF=" << calibration.value().reference_voltage << "V";
     }
 
     // 输出错误计数摘要；本只读示例不会调用 clear_error_counters。

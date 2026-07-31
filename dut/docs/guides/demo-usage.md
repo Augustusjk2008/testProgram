@@ -118,8 +118,7 @@ DEMO Release 画像，并在目标板启动命令中设置 `MB_DDF_HW_FULL_DEMO=
 ```
 
 地址必须位于 `0x00000000..0x03FFF000` 且 4 KiB 对齐，非法值会在发出任何写命令前
-失败。旧 `-FlashChipEraseTest/-FlashChipEraseConfirm` 参数只为脚本兼容保留，现已
-废弃并忽略；新 Demo 永远不会发送 ChipErase/Bulk Erase。
+失败。
 
 `debug.bat hw_run` 和 `-FullHardware` 只选择独立的 DEMO 画像并启用全能力区段，不会
 污染 ECHO 或 HW_TEST 的 CMake 缓存。对已经部署的 DEMO 画像二进制，也可以手工执行：
@@ -260,8 +259,8 @@ DH 控制页完整缓存 23 路点火状态和遥测电压，但曲线只绘制�
 “BC激活好”；bit1..7 固定为 0 且不显示。舵控板级页读取 AD7606 四路舵反馈。板端直接
 发送 XADC 12 位 ADC code 和 AD7606 有符号 16 位 raw，PC 分别按
 `10.09/4096 V/code`、`10/65536 V/code` 换算。
-ADS1258 由板端按当前临时定标值换算，完整公式统一见
-[COM3 产品协议设计](../design/product_protocol_csv/codedesign.md)；电气健康的
+ADS1258 由板端按当前 v4 两芯片诊断定标换算，完整公式统一见
+[硬件层详细设计](../design/hardware-layer-architecture.md)；电气健康的
 `c_volt/b_volt/v28_5` 按 `0.01 V/LSB` 编码。“BC激活好”对应的 `activate_bits.bit0` 来自 DH
 `BatteryStatus` 高字节 `0xAA/0xFF`，其他高字节值返回 `REG_READ_WRITE_FAILED`。
 电气健康页选择“连续”后会在页面指定目录累计每轮完整响应；停止、断连或关闭窗口时一次性
@@ -414,7 +413,8 @@ MB_DDF_XDMA_DEVICE=/dev/xdma1 ./MB_DDF_v2
 | COM4 | `0x100000` | 打开 event 3，读取配置和错误状态 |
 | DIDO | `0x140000` | 通信检查、读取输入和输出位图 |
 | XADC | `0x150000` | 默认 Demo 不映射；HW_TEST/硬件 smoke 只读 `value_YX` |
-| Flash | `0x160000` | 默认 Demo 不映射；硬件 smoke 另行只读检查 |
+| UPDATE image IP version | `0x160000` | 默认 Demo 不映射；硬件 smoke 做通信检查和只读版本快照 |
+| FPGA update state | `0x170000` | 默认 Demo 不映射；硬件 smoke 做通信检查和只读状态/CRC 快照 |
 
 默认区段只读，不调用：
 
@@ -424,7 +424,7 @@ MB_DDF_XDMA_DEVICE=/dev/xdma1 ./MB_DDF_v2
 - DH 点火、脉宽和模式配置。
 - COM 发送、配置、清错或复位。
 - XADC 触发转换、阈值配置或复位。
-- Flash 命令、触发、完成标志清除或数据区读取。
+- UPDATE image IP version 或 FPGA update state 的写入、擦除、编程、校验或更新触发。
 
 DH 示例只调用 `read_feedback()`，不会调用 `fire()` 或
 `fire_multiple()`。
@@ -437,8 +437,8 @@ DH 示例只调用 `read_feedback()`，不会调用 `fire()` 或
 
 | 能力组 | 代表性调用 | 示例结束处理 |
 |---|---|---|
-| PWM | 暂停更新、配置载波、无符号占空比模式、归一化四路输出、恢复更新 | 恢复载波配置、原始输出和更新状态 |
-| AD7606 | 保存组合状态、切换滤波配置、复位采集、读取组合状态 | 恢复完整配置 |
+| PWM | 暂停更新、配置载波、无符号占空比模式、归一化四路输出、恢复更新 | 恢复载波、峰值、波形、方向模式、通道映射、原始输出和更新状态 |
+| AD7606 | 保存组合状态、切换滤波配置、复位采集、读取组合状态 | 恢复包含通道映射的完整配置 |
 | ADS1258 | 读取/写回完整配置、清除错误计数、读取数据快照 | 恢复配置；错误计数无法恢复 |
 | DIDO | 翻转 DO0、读取输入输出快照 | 恢复全部 16 路输出 |
 | DH | 配置时基、保持 CH2 脉宽、执行主发动机2五步使能与点火、读取反馈 | 反向关闭使能链并恢复时基、模式和 CH2 脉宽；点火结果无法恢复 |
@@ -593,16 +593,19 @@ ADS1258 清错和 DH 点火也是不可逆动作。启用全能力模式即表�
 会在调用方给定的总超时内继续等待当前帧。每个 `_events_N` 必须保持单消费者，不得同时
 运行两个占用同一 COM event 节点的进程。
 
-XADC 没有 `0xAAAABBBB` 通信签名；smoke 在 `0x150000` 只读 `value_YX`。Flash 使用本次
-确认的固定基址 `0x160000`，默认只读取控制器状态和时钟分频，无需额外参数：
+XADC 没有 `0xAAAABBBB` 通信签名；smoke 在 `0x150000` 只读 `value_YX`。它还在
+`0x160000` 打开 UPDATE image IP version、在 `0x170000` 打开 FPGA update state；两者均
+校验通信签名并读取完整快照，无需额外参数：
 
 ```powershell
 .\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Smoke
 ```
 
-该 smoke 不触发 FPGA Flash IP 的 Read/Program/Erase。完整 Demo 不再调用该 IP 的
-ChipErase 流程；它改为通过 CPU `/dev/spidev0.0` 测试独立的 N25Q512A，并执行上述
-4 KiB 备份和恢复。
+该 smoke 不写入、不擦除、不编程，也不触发任何更新或校验操作。完整 Demo 的可写 SPI
+流程只通过 CPU `/dev/spidev0.0` 测试独立的 N25Q512A，并执行上述 4 KiB 备份和恢复；
+两类只读 update 检查与 CPU SPI 测试的详细边界见
+[硬件层详细设计](../design/hardware-layer-architecture.md)。交叉构建或 smoke 读取不能
+替代授权目标板验收。
 
 ## 9. 常见问题
 
@@ -615,7 +618,7 @@ ChipErase 流程；它改为通过 CPU `/dev/spidev0.0` 测试独立的 N25Q512A
 ```
 
 再按[手工部署](#33-手工部署)运行且不要设置 `MB_DDF_HW_FULL_DEMO`。只有在明确允许点火、
-清错和写 Flash 等危险动作时才使用 `.\debug.bat hw_run`。
+清错和写 CPU SPI Flash 等危险动作时才使用 `.\debug.bat hw_run`。
 
 ### DDS 示例读取到历史消息
 
@@ -636,7 +639,7 @@ PWM、AD7606、ADS1258、DH、DIDO 的局部 offset 0 应返回
 - `user_offset` 配置错误。
 - 设备节点对应的 FPGA 实例错误。
 
-COM 和 FPGA `FlashDevice` 当前没有固定签名检查，只验证 Transport 已打开；FPGA
-Flash 局部 offset `0` 是读 RAM，不能按其他五类设备解释为签名寄存器。CPU
-`SpiFlashDevice::read_jedec_id()` 用于完整 Demo 的器件身份准入；通过 `20 BA 20`
+COM 当前没有固定签名检查，只验证 Transport 已打开。UPDATE image IP version 与 FPGA
+update state 的局部 offset `0` 均应返回 `0xAAAABBBB`；二者只允许通信检查和只读快照。
+CPU `SpiFlashDevice::read_jedec_id()` 用于完整 Demo 的器件身份准入；通过 `20 BA 20`
 校验后，数据读取仍使用明确的四字节 Flash 地址，不把 `9Fh` 响应解释为地址数据。

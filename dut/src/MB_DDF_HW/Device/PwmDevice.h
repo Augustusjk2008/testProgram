@@ -2,6 +2,7 @@
 
 #include "MB_DDF_HW/Device/DeviceCommon.h"
 #include <array>
+#include <cstdint>
 
 namespace MB_DDF::HW {
 
@@ -9,6 +10,17 @@ namespace MB_DDF::HW {
 enum class PwmWaveform {
     Sawtooth,
     Triangle
+};
+
+/// 有符号占空比下，正负占空比对应方向输出的模式。
+enum class PwmDirectionMode : uint16_t {
+    PositiveToZero = 0xAAAA,
+    PositiveToOne = 0xBBBB,
+};
+
+/// 四个逻辑舵机通道到实际 PWM/方向通道的 4-bit 编码。
+struct PwmChannelMapping {
+    uint16_t encoded{0x3210};
 };
 
 /// 直接对应硬件寄存器的 PWM 输出值。
@@ -29,6 +41,8 @@ struct PwmConfig {
     uint32_t carrier_frequency_value{0};
     uint32_t peak_value{0};
     PwmWaveform waveform{PwmWaveform::Sawtooth};
+    PwmDirectionMode direction_mode{PwmDirectionMode::PositiveToZero};
+    PwmChannelMapping channel_mapping{};
 };
 
 /// PWM 配置和当前输出状态快照。
