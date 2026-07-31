@@ -14,6 +14,7 @@
 
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <limits>
 
 namespace hwtest::app {
@@ -48,6 +49,25 @@ QString metadataText(QString text)
 
 QString floatText(float value)
 {
+#if defined(_GLIBCXX_RELEASE) && _GLIBCXX_RELEASE < 11
+    const QLocale locale = QLocale::c();
+    for (int precision = 1;
+         precision <= std::numeric_limits<float>::max_digits10;
+         ++precision) {
+        const QString candidate = locale.toString(static_cast<double>(value),
+                                                  'g',
+                                                  precision);
+        bool parsedOk = false;
+        const float parsed = locale.toFloat(candidate, &parsedOk);
+        if (parsedOk &&
+            (parsed == value || (std::isnan(parsed) && std::isnan(value)))) {
+            return candidate;
+        }
+    }
+    return locale.toString(static_cast<double>(value),
+                           'g',
+                           std::numeric_limits<float>::max_digits10);
+#else
     char buffer[64];
     const auto converted = std::to_chars(buffer,
                                          buffer + sizeof(buffer),
@@ -61,6 +81,7 @@ QString floatText(float value)
         static_cast<double>(value),
         'g',
         std::numeric_limits<float>::max_digits10);
+#endif
 }
 
 QString scalarText(const QVariant& value)
