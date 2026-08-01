@@ -185,7 +185,19 @@ public:
      * @param subscriber_name 订阅者名称
      * @return 注册成功返回订阅者状态结构体指针，失败返回nullptr
      */
-    SubscriberState* register_subscriber(uint64_t subscriber_id, const std::string& subscriber_name);
+    SubscriberState* register_subscriber(uint64_t subscriber_id,
+                                         const std::string& subscriber_name);
+
+    /**
+     * @brief 按指定起点注册订阅者，同时保留上方两参数接口的二进制兼容符号
+     * @param subscriber_id 订阅者唯一标识符
+     * @param subscriber_name 订阅者名称
+     * @param start_from_latest true 时跳过注册前已经存在的消息，仅观察后续新消息
+     * @return 注册成功返回订阅者状态结构体指针，失败返回nullptr
+     */
+    SubscriberState* register_subscriber(uint64_t subscriber_id,
+                                         const std::string& subscriber_name,
+                                         bool start_from_latest);
     
     /**
      * @brief 注销订阅者（使用信号量保护）

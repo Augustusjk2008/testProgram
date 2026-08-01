@@ -6,9 +6,9 @@
  */
 
 #include "MB_DDF/DDS/Publisher.h"
+#include "MB_DDF/DDS/EntityId.h"
 #include "MB_DDF/Debug/Logger.h"
 #include <cstring>
-#include <random>
 #include <utility>
 
 namespace MB_DDF {
@@ -22,11 +22,9 @@ Publisher::Publisher(TopicMetadata* metadata,
       ring_buffer_(ring_buffer),
       external_io_(std::move(external_io)),
       publisher_name_(publisher_name) {
-    // 构造函数直接绑定metadata，不需要判断topic是否存在
-    // 生成唯一的发布者ID
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    publisher_id_ = gen();
+    // 构造函数直接绑定metadata，不需要判断topic是否存在。
+    // ID 生成不依赖 random_device，兼容缺少非确定性熵源的 SylixOS BSP。
+    publisher_id_ = generate_entity_id();
     
     // 如果没有提供发布者名称，生成默认名称
     if (publisher_name_.empty()) {

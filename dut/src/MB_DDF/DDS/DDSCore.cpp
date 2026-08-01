@@ -15,10 +15,15 @@
 #include <fstream>
 #include <string>
 #include <cstdlib>
+#include <unistd.h>
 #include <utility>
 
 namespace MB_DDF {
 namespace DDS {
+
+#if !defined(MB_DDF_SHARED_MEMORY_NAME)
+#define MB_DDF_SHARED_MEMORY_NAME "/MB_DDF_V2_SHM"
+#endif
 
 // 定义静态成员变量
 const uint32_t DDSCore::VERSION;
@@ -250,7 +255,8 @@ bool DDSCore::initialize(size_t shared_memory_size) {
     
     try {
         // 1. 创建共享内存管理器
-        shm_manager_ = std::make_unique<SharedMemoryManager>("/MB_DDF_V2_SHM", shared_memory_size);
+        shm_manager_ = std::make_unique<SharedMemoryManager>(
+            MB_DDF_SHARED_MEMORY_NAME, shared_memory_size);
         
         // 检查共享内存是否创建成功
         if (!shm_manager_ || !shm_manager_->get_address()) {
@@ -442,12 +448,25 @@ TopicMetadata* DDSCore::find_topic(const std::string& topic_name) {
 
 std::string DDSCore::get_process_name() {
     std::ifstream comm("/proc/self/comm");
-    if (!comm.is_open()) {
-        return "unknown"; // 打开失败（如无proc文件系统）
-    }
     std::string name;
-    std::getline(comm, name);
-    return name;
+    if (comm.is_open()) {
+        std::getline(comm, name);
+    }
+
+    // RingBuffer 会按 subscriber_name 复用读游标。只使用可执行文件名会让同一程序的
+    // 多个并发进程（尤其是“业务订阅者 + Gateway observer”）误用同一个状态；而
+    // SylixOS 没有 /proc/self/comm 时，旧实现更会令全部进程都叫 unknown。PID 后缀
+    // 在两个系统上都可用，且不会改变共享内存 ABI。
+    const std::string pid_suffix = "_" + std::to_string(
+        static_cast<unsigned long>(::getpid()));
+    if (name.empty()) {
+        return "process" + pid_suffix;
+    }
+    if (name.size() >= pid_suffix.size() &&
+        name.compare(name.size() - pid_suffix.size(), pid_suffix.size(), pid_suffix) == 0) {
+        return name;
+    }
+    return name + pid_suffix;
 }
 
 } // namespace DDS

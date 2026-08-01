@@ -291,7 +291,15 @@ void RingBuffer::remove_publisher() {
     LOG_INFO << "remove_publisher";
 }
 
-SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id, const std::string& subscriber_name) {
+SubscriberState* RingBuffer::register_subscriber(
+    uint64_t subscriber_id,
+    const std::string& subscriber_name) {
+    return register_subscriber(subscriber_id, subscriber_name, false);
+}
+
+SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id,
+                                                 const std::string& subscriber_name,
+                                                 bool start_from_latest) {
     // 使用RAII守护对象保护订阅者注册
     SemaphoreGuard guard(sem_);
     if (!guard.acquired()) {
@@ -332,12 +340,34 @@ SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id, const s
         return id_match;
     }
 
+    // 普通业务订阅者保持原有“从历史起点读取”的语义；Gateway observer 使用
+    // start_from_latest，以注册瞬间可见的 current_sequence 作为边界，避免网关重启
+    // 后把共享 RingBuffer 中的历史消息再次发送到远端。
+    uint64_t initial_sequence = 0U;
+    size_t initial_read_pos = 0U;
+    if (start_from_latest) {
+        // 发布者在同一把 write_mutex 下依次提交 current_sequence 和 write_pos。
+        // 在这里获取写锁，既等待正在提交的消息完成，也保证两个字段来自同一个
+        // 已完成提交边界；锁释放后产生的消息会作为 observer 的新消息被读取。
+        auto snapshot_lock = acquire_write_lock();
+        if (!snapshot_lock.locked()) {
+            LOG_ERROR << "register_subscriber failed, latest snapshot write lock failed";
+            return nullptr;
+        }
+        initial_sequence = header_->current_sequence.load(std::memory_order_acquire);
+        initial_read_pos = header_->write_pos.load(std::memory_order_acquire);
+    }
+
+    auto initialize_read_state = [&](SubscriberState& state) {
+        state.read_pos.store(initial_read_pos, std::memory_order_release);
+        state.last_read_sequence.store(initial_sequence, std::memory_order_release);
+        state.timestamp.store(0, std::memory_order_release);
+    };
+
     if (name_match) {
         LOG_DEBUG << "register_subscriber " << subscriber_id << " " << subscriber_name << " (name unchanged)";
         name_match->subscriber_id = subscriber_id;
-        name_match->read_pos.store(0, std::memory_order_release);
-        name_match->last_read_sequence.store(0, std::memory_order_release);
-        name_match->timestamp.store(0, std::memory_order_release);
+        initialize_read_state(*name_match);
         return name_match;
     }
 
@@ -353,9 +383,7 @@ SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id, const s
     std::strncpy(new_sub.subscriber_name, subscriber_name.c_str(), name_len);
     new_sub.subscriber_name[name_len] = '\0';
 
-    new_sub.read_pos.store(0, std::memory_order_release);
-    new_sub.last_read_sequence.store(0, std::memory_order_release);
-    new_sub.timestamp.store(0, std::memory_order_release);
+    initialize_read_state(new_sub);
 
     uint32_t active = 0;
     for (uint32_t i = 0; i < SubscriberRegistry::MAX_SUBSCRIBERS; ++i) {
@@ -363,7 +391,8 @@ SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id, const s
     }
     registry_->count.store(active, std::memory_order_release);
 
-    LOG_DEBUG << "register_subscriber " << subscriber_id << " " << subscriber_name;
+    LOG_DEBUG << "register_subscriber " << subscriber_id << " " << subscriber_name
+              << " start_sequence=" << initial_sequence;
     return &registry_->subscribers[free_index];
 }
 
@@ -380,21 +409,31 @@ void RingBuffer::unregister_subscriber(SubscriberState* subscriber) {
         return;
     }
 
+    // subscriber 直接指向共享注册槽。清零槽位也会同步改变
+    // subscriber->subscriber_id，因此必须先保存 ID；ID=0 不能用于查找，否则会把
+    // 第一个空槽误判为当前订阅者。
+    const uint64_t subscriber_id = subscriber->subscriber_id;
+    if (subscriber_id == 0) {
+        LOG_WARN << "unregister_subscriber ignored zero subscriber_id";
+        return;
+    }
+
     bool removed = false;
     for (uint32_t i = 0; i < SubscriberRegistry::MAX_SUBSCRIBERS; ++i) {
-        if (registry_->subscribers[i].subscriber_id == subscriber->subscriber_id) {
+        if (registry_->subscribers[i].subscriber_id == subscriber_id) {
             registry_->subscribers[i].subscriber_id = 0;
             registry_->subscribers[i].read_pos.store(0, std::memory_order_release);
             registry_->subscribers[i].last_read_sequence.store(0, std::memory_order_release);
             registry_->subscribers[i].timestamp.store(0, std::memory_order_release);
-            LOG_INFO << "unregister_subscriber " << subscriber->subscriber_id << " " << registry_->subscribers[i].subscriber_name;
+            LOG_INFO << "unregister_subscriber " << subscriber_id << " "
+                     << registry_->subscribers[i].subscriber_name;
             removed = true;
             break;
         }
     }
 
     if (!removed) {
-        LOG_WARN << "unregister_subscriber subscriber_id not found: " << subscriber->subscriber_id;
+        LOG_WARN << "unregister_subscriber subscriber_id not found: " << subscriber_id;
     }
 
     uint32_t active = 0;

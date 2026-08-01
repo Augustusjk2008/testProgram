@@ -1,32 +1,15 @@
 #include "MB_DDF/DDS/Gateway/DomainGateway.h"
 
+#include "MB_DDF/DDS/EntityId.h"
 #include "MB_DDF/Debug/Logger.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstring>
-#include <random>
 #include <utility>
 
 namespace MB_DDF {
 namespace DDS {
-
-namespace {
-
-/**
- * @brief 生成非零网关ID。
- *
- * 配置中gateway_id为0时使用该函数自动生成。0保留为“未配置”状态，
- * 因此随机结果碰到0时修正为1。
- */
-uint64_t generate_gateway_id() {
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    uint64_t id = gen();
-    return id == 0 ? 1 : id;
-}
-
-} // namespace
 
 DomainGateway::DomainGateway(DomainGatewayConfig config,
                              std::shared_ptr<GatewayLocalBus> local_bus)
@@ -73,7 +56,9 @@ bool DomainGateway::start() {
     }
 
     if (config_.gateway_id == 0) {
-        config_.gateway_id = generate_gateway_id();
+        // SylixOS 的 random_device 可能跨进程返回相同序列。网关重启后 message_id
+        // 会重新从 1 计数，因此 gateway_id 必须包含 PID/时间，避免对端误判为旧包。
+        config_.gateway_id = generate_entity_id();
     }
 
     activate_local_callbacks();

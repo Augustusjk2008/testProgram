@@ -7,12 +7,12 @@
  * 实现消息订阅功能，包括异步消息接收、回调处理和线程管理。
  */
 #include "MB_DDF/DDS/Subscriber.h"
+#include "MB_DDF/DDS/EntityId.h"
 #include "MB_DDF/DDS/RingBuffer.h"
 #include "MB_DDF/DDS/Message.h"
 #include "MB_DDF/Debug/Logger.h"
 #include <chrono>
 #include <cstring>
-#include <random>
 #include <pthread.h>
 #include <sched.h>
 #include <unistd.h>
@@ -30,10 +30,8 @@ Subscriber::Subscriber(TopicMetadata* metadata,
       subscribed_(false), running_(false), worker_thread_(),
       external_io_(std::move(external_io)),
       subscriber_name_(subscriber_name) {
-    // 生成唯一的订阅者ID
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    subscriber_id_ = gen();
+    // ID 必须跨进程唯一；SylixOS 的 random_device 可能在每个进程返回相同序列。
+    subscriber_id_ = generate_entity_id();
     
     // 如果没有提供订阅者名称，生成默认名称
     if (subscriber_name_.empty()) {
@@ -102,7 +100,10 @@ bool Subscriber::subscribe_observer(LocalMessageCallback callback) {
         return false;
     }
 
-    subscriber_state_ = ring_buffer_->register_subscriber(subscriber_id_, subscriber_name_);
+    // Gateway observer 只桥接订阅建立后的新消息。若从 sequence=0 开始，Gateway
+    // 正常重启会把 RingBuffer 中的历史消息再次发往远端。
+    subscriber_state_ = ring_buffer_->register_subscriber(
+        subscriber_id_, subscriber_name_, true);
     if (!subscriber_state_) {
         LOG_DEBUG << "Failed to register observer subscriber " << subscriber_id_ << " "
                   << subscriber_name_;

@@ -35,7 +35,7 @@ namespace DDS {
 struct DomainGatewayConfig {
     uint32_t domain_id{0};                         ///< 本地域ID，跨域转发时用于判断消息是否回到源域。
     uint64_t gateway_id{0};                        ///< 本网关ID；为0时start()会自动生成非零随机ID。
-    uint32_t topic_scan_period_ms{1000};           ///< 后台扫描新增Topic的周期，单位毫秒。
+    uint32_t topic_scan_period_ms{100};            ///< 后台扫描新增Topic的周期，单位毫秒。
     uint8_t default_ttl{16};                       ///< 本地新消息封装后的默认TTL，0表示不向外发送。
     std::string internal_topic_prefix{"gateway://"}; ///< 内部控制Topic前缀，匹配后不会跨域转发。
 };

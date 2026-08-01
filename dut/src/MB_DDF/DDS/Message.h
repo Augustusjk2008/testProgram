@@ -10,9 +10,9 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <chrono>
-#include <mutex>
 
 namespace MB_DDF {
 namespace DDS {
@@ -26,10 +26,43 @@ enum class CRC32Mode {
     NORMAL = 1      ///< 正向算法（MSB-first）
 };
 
-// 初始化CRC32表
-inline uint32_t crc32_table_reflected[256];  // 反向表
-inline uint32_t crc32_table_normal[256];     // 正向表
-inline std::once_flag crc32_tables_once;
+/**
+ * @brief 在编译期生成反向 CRC32 查找表。
+ *
+ * 早期实现通过 std::call_once 在运行期初始化查找表。部分 SylixOS 镜像所带的
+ * libstdc++ 比交叉工具链版本旧，缺少 GCC 10 的 call_once 辅助符号，导致应用在
+ * main() 之前就无法装载。查找表内容是常量，直接在编译期生成既消除了运行库 ABI
+ * 依赖，也避免了首次收发消息时的初始化锁开销。
+ */
+constexpr std::array<uint32_t, 256> make_crc32_table_reflected() {
+    std::array<uint32_t, 256> table{};
+    for (uint32_t i = 0; i < table.size(); ++i) {
+        uint32_t crc = i;
+        for (int bit = 0; bit < 8; ++bit) {
+            crc = (crc & 1U) ? ((crc >> 1U) ^ 0xEDB88320U) : (crc >> 1U);
+        }
+        table[i] = crc;
+    }
+    return table;
+}
+
+/// 在编译期生成正向 CRC32 查找表。
+constexpr std::array<uint32_t, 256> make_crc32_table_normal() {
+    std::array<uint32_t, 256> table{};
+    constexpr uint32_t polynomial = 0x04C11DB7U;
+    for (uint32_t i = 0; i < table.size(); ++i) {
+        uint32_t crc = i << 24U;
+        for (int bit = 0; bit < 8; ++bit) {
+            crc = (crc & 0x80000000U) ? ((crc << 1U) ^ polynomial)
+                                      : (crc << 1U);
+        }
+        table[i] = crc;
+    }
+    return table;
+}
+
+inline constexpr auto crc32_table_reflected = make_crc32_table_reflected();
+inline constexpr auto crc32_table_normal = make_crc32_table_normal();
 
 /**
  * @struct MessageHeader
@@ -73,29 +106,10 @@ struct alignas(8) MessageHeader {
     
     /**
      * @brief 初始化CRC32表（同时初始化正向和反向）
+     *
+     * 查找表现在由编译器生成；保留该函数是为了兼容已有调用点。
      */
-    static void initialize_crc32_tables() {
-        std::call_once(crc32_tables_once, []() {
-            // 1. 初始化反向表（原算法）
-            for (uint32_t i = 0; i < 256; ++i) {
-                uint32_t crc = i;
-                for (int j = 0; j < 8; ++j) {
-                    crc = (crc & 1) ? ((crc >> 1) ^ 0xEDB88320) : (crc >> 1);
-                }
-                crc32_table_reflected[i] = crc;
-            }
-
-            // 2. 初始化正向表
-            const uint32_t polynomial = 0x04C11DB7;  // 正向多项式
-            for (uint32_t i = 0; i < 256; ++i) {
-                uint32_t crc = i << 24;
-                for (int j = 0; j < 8; ++j) {
-                    crc = (crc & 0x80000000) ? ((crc << 1) ^ polynomial) : (crc << 1);
-                }
-                crc32_table_normal[i] = crc;
-            }
-        });
-    }
+    static constexpr void initialize_crc32_tables() noexcept {}
     
     /**
      * @brief 计算反向CRC32（标准算法）

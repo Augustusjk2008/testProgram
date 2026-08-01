@@ -9,12 +9,15 @@
 
 #include <memory>
 #include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace MB_DDF {
 namespace DDS {
 
 class Subscriber;
+class Publisher;
 
 /**
  * @brief GatewayLocalBus的DDSCore实现。
@@ -40,6 +43,14 @@ public:
         const LocalSequenceAssignedCallback& before_visible = {}) override;
 
 private:
+    /**
+     * Gateway 回灌远端消息时，每个 Topic 只创建一个 Publisher。Publisher 内只保存
+     * DDSCore 管理的 RingBuffer/TopicMetadata 非拥有指针，所以本对象必须先于
+     * DDSCore::shutdown() 析构；DomainGateway 的演示生命周期遵守这一顺序。
+     */
+    std::mutex publishers_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<Publisher>> publishers_;
+
     std::mutex observers_mutex_;                         ///< 保护observers_，允许扫描线程安全追加订阅者。
     std::vector<std::shared_ptr<Subscriber>> observers_; ///< 持有观察订阅者，防止回调订阅提前析构。
 };

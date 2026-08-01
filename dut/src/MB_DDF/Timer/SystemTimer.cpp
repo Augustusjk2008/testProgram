@@ -154,7 +154,11 @@ void SystemTimer::stop() {
 
     if (stop_event_fd_ >= 0) {
         uint64_t one = 1;
-        ::write(stop_event_fd_, &one, sizeof(one));
+        // 这里只用于尽力唤醒停止事件；线程还会收到下方的 pthread_kill，因此即使
+        // eventfd 已关闭或写入被中断，也不应让 stop() 失败。显式接收返回值，避免
+        // _FORTIFY_SOURCE 把有意忽略误报为编译警告。
+        const ssize_t wake_result = ::write(stop_event_fd_, &one, sizeof(one));
+        (void)wake_result;
     }
     if (worker_handle_valid_) {
         pthread_kill(worker_handle_, signal_no_);
