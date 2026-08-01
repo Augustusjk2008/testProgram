@@ -16,6 +16,13 @@ describe('initial test configuration selection', () => {
     expect(selectInitialTestConfig({ selectedConfigId: 'missing', configs })).toEqual(configs[0])
   })
 
+  it('does not auto-load a configuration that the richer catalog marks disabled', () => {
+    expect(selectInitialTestConfig(
+      { selectedConfigId: 'elec-health', configs },
+      new Set(['elec-health']),
+    )).toEqual(configs[0])
+  })
+
   it('returns null for an empty catalog', () => {
     expect(selectInitialTestConfig({ selectedConfigId: '', configs: [] })).toBeNull()
   })

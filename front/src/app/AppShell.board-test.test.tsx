@@ -63,6 +63,10 @@ beforeEach(() => {
 })
 
 describe('board-test navigation', () => {
+  it('always exposes the configuration page', () => {
+    expect(renderShell('mbddf.unrelated')).toContain('<strong>配置</strong>')
+  })
+
   it.each(['mbddf.do_write', 'mbddf.helm_board_test'])(
     'shows the board-test page only for %s',
     (algorithmId) => {

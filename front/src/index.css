@@ -127,7 +127,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -138,6 +139,7 @@ button {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 summary:focus-visible {
   outline: 2px solid var(--lime);
   outline-offset: 2px;
@@ -957,6 +959,281 @@ code,
   display: grid;
   gap: 8px;
   padding: 12px;
+}
+
+.config-page {
+  display: grid;
+  min-height: 100%;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+}
+
+.config-page__catalog,
+.config-page__editor {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.config-page__catalog {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.config-page .panel__header > div {
+  min-width: 0;
+}
+
+.config-page .panel__header small {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--muted);
+  font: 10px "Geist Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-page__catalog-error,
+.config-editor__lock,
+.config-editor__error,
+.config-editor__hint {
+  margin: 0;
+  padding: 9px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.config-page__catalog-error,
+.config-editor__error {
+  border-bottom: 1px solid var(--alert-line);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  color: var(--red);
+}
+
+.config-editor__error strong {
+  display: block;
+  margin-bottom: 3px;
+  font: 10px "Geist Mono", monospace;
+}
+
+.config-editor__error {
+  overflow-wrap: anywhere;
+}
+
+.config-editor__error .button {
+  margin-top: 7px;
+}
+
+.config-editor__lock {
+  border-bottom: 1px solid var(--warning-line);
+  color: var(--amber);
+}
+
+.config-page__document-list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.config-page__document {
+  display: grid;
+  width: 100%;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-soft);
+  text-align: left;
+  cursor: pointer;
+}
+
+.config-page__document:hover {
+  background: var(--surface-hover);
+}
+
+.config-page__document:disabled {
+  cursor: not-allowed;
+  opacity: .58;
+}
+
+.config-page__document.is-active {
+  box-shadow: inset 2px 0 var(--lime);
+  background: var(--surface-selected);
+}
+
+.config-page__document strong,
+.config-page__document span,
+.config-page__document small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-page__document strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.config-page__document span,
+.config-page__document small {
+  color: var(--muted);
+  font: 10px "Geist Mono", monospace;
+}
+
+.config-page__editor {
+  align-self: start;
+}
+
+.config-page__actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.config-editor__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.config-editor__fields > .config-editor__hint {
+  grid-column: 1 / -1;
+  padding: 0;
+}
+
+.config-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.config-field--wide,
+.config-field--json {
+  grid-column: 1 / -1;
+}
+
+.config-field > span {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.config-field input,
+.config-field textarea {
+  width: 100%;
+  border: 1px solid var(--line-bright);
+  border-radius: 2px;
+  background: var(--input);
+  color: var(--text);
+}
+
+.config-field input {
+  height: 32px;
+  padding: 0 8px;
+}
+
+.config-field textarea {
+  min-height: 76px;
+  resize: vertical;
+  padding: 8px;
+  font: 11px/1.5 "Geist Mono", monospace;
+}
+
+.config-field--json textarea {
+  min-height: 180px;
+}
+
+.config-catalog-editor__items {
+  display: grid;
+  border-top: 1px solid var(--line);
+  background: var(--line);
+}
+
+.config-catalog-editor__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--surface-muted);
+}
+
+.config-catalog-editor__item > label {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+.config-catalog-editor__item input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--lime);
+}
+
+.config-catalog-editor__item strong,
+.config-catalog-editor__item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-catalog-editor__item strong {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.config-catalog-editor__item small,
+.config-catalog-editor__order {
+  color: var(--muted);
+  font: 10px "Geist Mono", monospace;
+}
+
+.config-catalog-editor__move {
+  display: flex;
+  gap: 4px;
+}
+
+.config-catalog-editor__move button {
+  display: inline-grid;
+  place-items: center;
+  min-height: 25px;
+  min-width: 25px;
+  padding: 0 6px;
+  border: 1px solid var(--line-bright);
+  background: var(--input);
+  color: var(--text-soft);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.config-catalog-editor__move button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+.config-editor__advanced {
+  margin: 10px;
+  border: 1px solid var(--line);
+}
+
+.config-editor__advanced summary {
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.config-editor__advanced .config-field {
+  padding: 0 10px 10px;
 }
 
 .panel {

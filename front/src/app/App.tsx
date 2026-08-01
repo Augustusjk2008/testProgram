@@ -6,6 +6,7 @@ import { DiagnosticsPage } from '../pages/DiagnosticsPage'
 import { OverviewPage } from '../pages/OverviewPage'
 import { PerformancePage } from '../pages/PerformancePage'
 import { BoardTestPage } from '../pages/BoardTestPage'
+import { ConfigPage } from '../pages/ConfigPage'
 import { isBoardTestAlgorithm } from '../features/board-test/board-test-navigation'
 import { useSession } from '../features/session/SessionProvider'
 import { isPerformanceCapabilityEnabled } from '../features/performance/performance-navigation'
@@ -38,6 +39,7 @@ export function App() {
       {page === 'diagnostics' && <DiagnosticsPage />}
       {page === 'performance' && <PerformancePage />}
       {page === 'board-test' && boardTestAvailable && <BoardTestPage />}
+      {page === 'config' && <ConfigPage />}
     </AppShell>
   )
 }

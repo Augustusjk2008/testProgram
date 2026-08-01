@@ -1,10 +1,12 @@
 set(APP_CORE_PUBLIC_HEADERS
+    include/app/configuration_types.h
     include/app/test_application_controller.h
     include/app/frontend_launch_options.h
 )
 
 set(APP_CORE_SOURCES
     src/analysis_result_store.cpp
+    src/configuration_service.cpp
     src/continuous_data_recorder.cpp
     src/hal_board_test_fixture.cpp
     src/post_run_analysis_config.cpp
@@ -18,6 +20,7 @@ set(APP_CORE_SOURCES
 add_library(hwtest_app_core STATIC
     ${APP_CORE_PUBLIC_HEADERS}
     src/analysis_result_store.h
+    src/configuration_service.h
     src/continuous_data_recorder.h
     src/hal_board_test_fixture.h
     src/post_run_analysis_config.h

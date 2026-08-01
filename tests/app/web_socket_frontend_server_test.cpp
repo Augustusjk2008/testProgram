@@ -7,9 +7,11 @@
 #include <QHostAddress>
 #include <QDir>
 #include <QEventLoop>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTemporaryDir>
 #include <QTimer>
 
 namespace hwtest::app::web {
@@ -38,6 +40,74 @@ QJsonObject request(const QString& id,
 QString compact(const QJsonObject& object)
 {
     return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact));
+}
+
+struct DynamicCatalogFixture {
+    QTemporaryDir directory;
+    FrontendLaunchOptions launchOptions;
+    QString error;
+
+    bool initialize()
+    {
+        if (!directory.isValid()) {
+            error = QStringLiteral("Cannot create temporary configuration directory");
+            return false;
+        }
+
+        const QDir sourceDirectory(
+            QDir(QStringLiteral(HWTEST_PROJECT_SOURCE_DIR)).filePath(QStringLiteral("configs")));
+        const QStringList files{
+            QStringLiteral("mbddf_system_status.testcfg.json"),
+            QStringLiteral("mbddf_elec_health.testcfg.json"),
+            QStringLiteral("mbddf_pc_hal.json"),
+        };
+        for (const QString& file : files) {
+            if (!QFile::copy(sourceDirectory.filePath(file), directory.filePath(file))) {
+                error = QStringLiteral("Cannot copy fixture '%1'").arg(file);
+                return false;
+            }
+        }
+
+        QFile catalogFile(directory.filePath(QStringLiteral("test-config-catalog.json")));
+        if (!catalogFile.open(QIODevice::WriteOnly)) {
+            error = catalogFile.errorString();
+            return false;
+        }
+        const QByteArray catalog = QJsonDocument(QJsonObject{
+            {QStringLiteral("schemaVersion"), QStringLiteral("1")},
+            {QStringLiteral("entries"),
+             QJsonArray{
+                 QJsonObject{{QStringLiteral("documentId"),
+                              QStringLiteral("mbddf_system_status.testcfg.json")},
+                             {QStringLiteral("enabled"), true},
+                             {QStringLiteral("order"), 0}},
+                 QJsonObject{{QStringLiteral("documentId"),
+                              QStringLiteral("mbddf_elec_health.testcfg.json")},
+                             {QStringLiteral("enabled"), true},
+                             {QStringLiteral("order"), 1}},
+             }},
+        }).toJson(QJsonDocument::Indented);
+        if (catalogFile.write(catalog) != catalog.size()) {
+            error = catalogFile.errorString();
+            return false;
+        }
+
+        launchOptions.testConfigPath = directory.filePath(
+            QStringLiteral("mbddf_system_status.testcfg.json"));
+        launchOptions.halConfigPath = directory.filePath(QStringLiteral("mbddf_pc_hal.json"));
+        launchOptions.configurationDirectory = directory.path();
+        return true;
+    }
+};
+
+bool sendAndWait(test::WebSocketTestClient* client,
+                 const QString& id,
+                 const QString& action,
+                 const QJsonObject& params,
+                 QJsonObject* reply)
+{
+    return client->sendText(compact(request(id, action, params))) > 0 &&
+        client->waitForReply(id, reply);
 }
 
 TEST(WebSocketFrontendServerTest, ListensOnlyOnLoopbackAndSendsHelloThenSnapshot)
@@ -507,6 +577,183 @@ TEST(WebSocketFrontendServerTest, ListsAndSelectsAllowlistedTestConfigurations)
                   .toObject()
                   .value(QStringLiteral("selectedConfigId"))
                   .toString(),
+              QStringLiteral("mbddf-elec-health"));
+
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("select-pipelined"),
+                  QStringLiteral("selectTest"),
+                  QJsonObject{{QStringLiteral("configId"),
+                               QStringLiteral("mbddf-system-status")}}))),
+              0);
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("load-pipelined"), QStringLiteral("load")))),
+              0);
+    QJsonObject pipelinedSelectReply;
+    QJsonObject pipelinedLoadReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("select-pipelined"),
+                                    &pipelinedSelectReply));
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("load-pipelined"),
+                                    &pipelinedLoadReply));
+    ASSERT_TRUE(pipelinedSelectReply.value(QStringLiteral("ok")).toBool());
+    ASSERT_TRUE(pipelinedLoadReply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(controller.snapshot().descriptor.configId,
+              QStringLiteral("mbddf-system-status"));
+}
+
+TEST(WebSocketFrontendServerTest, DynamicLoadKeepsTheCurrentCatalogSelection)
+{
+    const QDir configDirectory(
+        QDir(QStringLiteral(HWTEST_PROJECT_SOURCE_DIR)).filePath(
+            QStringLiteral("configs")));
+    FrontendLaunchOptions launchOptions;
+    launchOptions.testConfigPath = configDirectory.filePath(
+        QStringLiteral("mbddf_system_status.testcfg.json"));
+    launchOptions.halConfigPath = configDirectory.filePath(
+        QStringLiteral("mbddf_pc_hal.json"));
+    launchOptions.configurationDirectory = configDirectory.absolutePath();
+
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, launchOptions, testOptions());
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("select"),
+                  QStringLiteral("selectTest"),
+                  QJsonObject{{QStringLiteral("configId"),
+                               QStringLiteral("mbddf-elec-health")}}))),
+              0);
+    QJsonObject selectReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("select"), &selectReply));
+    ASSERT_TRUE(selectReply.value(QStringLiteral("ok")).toBool())
+        << selectReply.value(QStringLiteral("message")).toString().toStdString();
+    ASSERT_EQ(controller.snapshot().descriptor.configId,
+              QStringLiteral("mbddf-elec-health"));
+
+    ASSERT_GT(client.sendText(compact(request(QStringLiteral("reload"),
+                                              QStringLiteral("load")))),
+              0);
+    QJsonObject loadReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("reload"), &loadReply));
+    ASSERT_TRUE(loadReply.value(QStringLiteral("ok")).toBool())
+        << loadReply.value(QStringLiteral("message")).toString().toStdString();
+    EXPECT_EQ(controller.snapshot().descriptor.configId,
+              QStringLiteral("mbddf-elec-health"));
+}
+
+TEST(WebSocketFrontendServerTest,
+     DynamicLoadDoesNotReviveDisabledLaunchSelectionAfterCatalogSave)
+{
+    DynamicCatalogFixture fixture;
+    ASSERT_TRUE(fixture.initialize()) << fixture.error.toStdString();
+
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, fixture.launchOptions, testOptions());
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    QJsonObject initialLoadReply;
+    ASSERT_TRUE(sendAndWait(&client, QStringLiteral("initial-load"), QStringLiteral("load"),
+                            {}, &initialLoadReply));
+    ASSERT_TRUE(initialLoadReply.value(QStringLiteral("ok")).toBool())
+        << initialLoadReply.value(QStringLiteral("message")).toString().toStdString();
+    ASSERT_EQ(controller.snapshot().descriptor.configId,
+              QStringLiteral("mbddf-system-status"));
+
+    QJsonObject catalogDocumentReply;
+    ASSERT_TRUE(sendAndWait(
+        &client, QStringLiteral("catalog-document"), QStringLiteral("configDocument"),
+        QJsonObject{{QStringLiteral("documentId"), QStringLiteral("test-config-catalog")}},
+        &catalogDocumentReply));
+    ASSERT_TRUE(catalogDocumentReply.value(QStringLiteral("ok")).toBool())
+        << catalogDocumentReply.value(QStringLiteral("message")).toString().toStdString();
+    const QJsonObject catalogDocument = catalogDocumentReply.value(QStringLiteral("data")).toObject();
+    const QString revision = catalogDocument.value(QStringLiteral("revision")).toString();
+    QJsonObject catalog = catalogDocument.value(QStringLiteral("value")).toObject();
+    QJsonArray entries = catalog.value(QStringLiteral("entries")).toArray();
+    ASSERT_FALSE(revision.isEmpty());
+
+    bool disabledLaunchSelection = false;
+    bool keptReplacementEnabled = false;
+    for (int index = 0; index < entries.size(); ++index) {
+        QJsonObject entry = entries.at(index).toObject();
+        const QString documentId = entry.value(QStringLiteral("documentId")).toString();
+        if (documentId == QStringLiteral("mbddf_system_status.testcfg.json")) {
+            entry.insert(QStringLiteral("enabled"), false);
+            disabledLaunchSelection = true;
+        } else if (documentId == QStringLiteral("mbddf_elec_health.testcfg.json")) {
+            entry.insert(QStringLiteral("enabled"), true);
+            keptReplacementEnabled = true;
+        }
+        entries.replace(index, entry);
+    }
+    ASSERT_TRUE(disabledLaunchSelection);
+    ASSERT_TRUE(keptReplacementEnabled);
+    catalog.insert(QStringLiteral("entries"), entries);
+
+    QJsonObject saveReply;
+    ASSERT_TRUE(sendAndWait(
+        &client, QStringLiteral("disable-launch-selection"), QStringLiteral("saveConfig"),
+        QJsonObject{{QStringLiteral("documentId"), QStringLiteral("test-config-catalog")},
+                    {QStringLiteral("expectedRevision"), revision},
+                    {QStringLiteral("value"), catalog}},
+        &saveReply));
+    ASSERT_TRUE(saveReply.value(QStringLiteral("ok")).toBool())
+        << saveReply.value(QStringLiteral("message")).toString().toStdString();
+    ASSERT_EQ(controller.snapshot().descriptor.configId,
+              QStringLiteral("mbddf-elec-health"));
+
+    QJsonObject loadReply;
+    ASSERT_TRUE(sendAndWait(&client, QStringLiteral("reload-after-catalog-save"),
+                            QStringLiteral("load"), {}, &loadReply));
+    ASSERT_TRUE(loadReply.value(QStringLiteral("ok")).toBool())
+        << loadReply.value(QStringLiteral("message")).toString().toStdString();
+    EXPECT_EQ(controller.snapshot().descriptor.configId,
+              QStringLiteral("mbddf-elec-health"));
+}
+
+TEST(WebSocketFrontendServerTest, QueuedSelectThenLoadKeepsSelectedCatalogConfiguration)
+{
+    DynamicCatalogFixture fixture;
+    ASSERT_TRUE(fixture.initialize()) << fixture.error.toStdString();
+
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, fixture.launchOptions, testOptions());
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    QJsonObject initialLoadReply;
+    ASSERT_TRUE(sendAndWait(&client, QStringLiteral("initial-load"), QStringLiteral("load"),
+                            {}, &initialLoadReply));
+    ASSERT_TRUE(initialLoadReply.value(QStringLiteral("ok")).toBool())
+        << initialLoadReply.value(QStringLiteral("message")).toString().toStdString();
+    ASSERT_EQ(controller.snapshot().descriptor.configId,
+              QStringLiteral("mbddf-system-status"));
+
+    ASSERT_GT(client.sendText(compact(request(
+                  QStringLiteral("select-replacement"), QStringLiteral("selectTest"),
+                  QJsonObject{{QStringLiteral("configId"),
+                               QStringLiteral("mbddf-elec-health")}}))),
+              0);
+    ASSERT_GT(client.sendText(compact(request(QStringLiteral("load-after-select"),
+                                              QStringLiteral("load")))),
+              0);
+
+    QJsonObject selectReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("select-replacement"), &selectReply));
+    ASSERT_TRUE(selectReply.value(QStringLiteral("ok")).toBool())
+        << selectReply.value(QStringLiteral("message")).toString().toStdString();
+    QJsonObject loadReply;
+    ASSERT_TRUE(client.waitForReply(QStringLiteral("load-after-select"), &loadReply));
+    ASSERT_TRUE(loadReply.value(QStringLiteral("ok")).toBool())
+        << loadReply.value(QStringLiteral("message")).toString().toStdString();
+    EXPECT_EQ(controller.snapshot().descriptor.configId,
               QStringLiteral("mbddf-elec-health"));
 }
 

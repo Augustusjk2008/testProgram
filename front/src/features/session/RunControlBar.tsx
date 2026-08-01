@@ -97,6 +97,7 @@ export function RunControlBar() {
   const {
     actionError,
     busyAction,
+    configCatalog,
     connectionState,
     connect,
     invoke,
@@ -111,10 +112,24 @@ export function RunControlBar() {
 
   const active = ['running', 'paused', 'stopping'].includes(snapshot.phase)
   const analysisBlockingWrites = isAnalysisBlockingWrites(snapshot.analysis)
-  const testChangeBlocked = ['running', 'paused', 'stopping', 'preparing'].includes(snapshot.phase) || analysisBlockingWrites
+  const testChangeBlocked = ['ready', 'running', 'paused', 'stopping', 'preparing'].includes(snapshot.phase) || analysisBlockingWrites
   const canStart = ['ready', 'finished', 'stopped'].includes(snapshot.phase) && !analysisBlockingWrites
   const testTitle = snapshot.descriptor.title || snapshot.descriptor.productName || '当前测试'
   const selectedTestId = snapshot.descriptor.configId || selectedConfigId
+  const catalogItemsByConfigId = new Map((configCatalog?.items ?? [])
+    .map((item) => [item.configId, item] as const))
+  const isCatalogDisabled = (configId: string) => catalogItemsByConfigId.get(configId)?.enabled === false
+  const withCatalogTitle = (test: typeof testConfigs[number]) => {
+    const title = catalogItemsByConfigId.get(test.configId)?.title
+    return title ? { ...test, title } : test
+  }
+  const enabledTestConfigs = testConfigs.filter((test) => !isCatalogDisabled(test.configId))
+  const selectedDisabledTest = testConfigs.find((test) => (
+    test.configId === selectedTestId && isCatalogDisabled(test.configId)
+  ))
+  const displayedTestConfigs = (selectedDisabledTest
+    ? [selectedDisabledTest, ...enabledTestConfigs]
+    : enabledTestConfigs).map(withCatalogTitle)
   const hasRunModeCapabilities = snapshot.descriptor.supportedRunModes.length > 0
   const supportedModes: RunMode[] = hasRunModeCapabilities
     ? snapshot.descriptor.supportedRunModes
@@ -236,17 +251,21 @@ export function RunControlBar() {
       <div className="run-console__test-picker">
         <select
           aria-label="测试项目"
-          disabled={testChangeBlocked || busyAction !== null || !testConfigsReady || testConfigs.length === 0}
+          disabled={testChangeBlocked || busyAction !== null || !testConfigsReady || displayedTestConfigs.length === 0}
           id="test-config-select"
           onChange={(event) => {
-            if (event.target.value) execute('selectTest', { configId: event.target.value })
+            if (event.target.value && !isCatalogDisabled(event.target.value)) {
+              execute('selectTest', { configId: event.target.value })
+            }
           }}
           value={selectedTestId}
         >
-          {testConfigs.length === 0 ? (
+          {displayedTestConfigs.length === 0 ? (
             <option value={selectedTestId}>{selectedTestId ? '当前配置' : '等待配置'}</option>
-          ) : testConfigs.map((test) => (
-            <option key={test.configId} value={test.configId}>{test.title}</option>
+          ) : displayedTestConfigs.map((test) => (
+            <option disabled={isCatalogDisabled(test.configId)} key={test.configId} value={test.configId}>
+              {test.title}{isCatalogDisabled(test.configId) ? '（已禁用）' : ''}
+            </option>
           ))}
         </select>
       </div>

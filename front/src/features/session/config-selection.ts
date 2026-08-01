@@ -2,8 +2,10 @@ import type { TestConfigCatalog, TestConfigOption } from '../../shared/protocol'
 
 export function selectInitialTestConfig(
   catalog: TestConfigCatalog,
+  disabledConfigIds: ReadonlySet<string> = new Set(),
 ): TestConfigOption | null {
-  return catalog.configs.find(({ configId }) => configId === catalog.selectedConfigId)
-    ?? catalog.configs[0]
+  const enabledConfigs = catalog.configs.filter(({ configId }) => !disabledConfigIds.has(configId))
+  return enabledConfigs.find(({ configId }) => configId === catalog.selectedConfigId)
+    ?? enabledConfigs[0]
     ?? null
 }

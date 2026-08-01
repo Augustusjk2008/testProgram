@@ -10,12 +10,17 @@ import type {
   BodeProjection,
   ApplicationSample,
   ApplicationSnapshot,
+  ConfigCatalog,
+  ConfigCatalogItem,
+  ConfigDocument,
+  ConfigRevision,
   DigitalStimulusSnapshot,
   DigitalSwitchDescriptor,
   HelloMessage,
   ReplyData,
   ReplyMessage,
   RunMode,
+  SaveConfigRequest,
   SampleBatchMessage,
   ServerMessage,
   TestConfigCatalog,
@@ -92,6 +97,12 @@ function requiredNonEmptyString(parent: JsonObject, key: string): string {
     throw new Error(`Invalid protocol field: ${key}`)
   }
   return value
+}
+
+function requiredConfigRevision(parent: JsonObject, key: string): ConfigRevision {
+  const value = parent[key]
+  if (typeof value === 'string' && value.trim()) return value
+  throw new Error(`Invalid protocol field: ${key}`)
 }
 
 function requiredArray(parent: JsonObject, key: string): unknown[] {
@@ -410,6 +421,53 @@ export function parseTestConfigCatalog(value: JsonObject): TestConfigCatalog {
   }
 }
 
+export function parseConfigCatalog(value: JsonObject): ConfigCatalog {
+  try {
+    const itemValues = requiredArray(value, 'items')
+    const documentIds = new Set<string>()
+    const items: ConfigCatalogItem[] = itemValues.map((item) => {
+      if (!isObject(item)) throw new Error('item')
+      const documentId = requiredNonEmptyString(item, 'documentId')
+      if (documentIds.has(documentId)) throw new Error('duplicate documentId')
+      documentIds.add(documentId)
+      return {
+        documentId,
+        configId: requiredString(item, 'configId'),
+        title: requiredString(item, 'title'),
+        enabled: requiredBoolean(item, 'enabled'),
+        order: requiredSafeInteger(item, 'order'),
+        valid: requiredBoolean(item, 'valid'),
+        message: requiredString(item, 'message'),
+      }
+    })
+    return {
+      revision: requiredConfigRevision(value, 'revision'),
+      items,
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid protocol configCatalog: ${detail}`)
+  }
+}
+
+export function parseConfigDocument(value: JsonObject): ConfigDocument {
+  try {
+    const schema = Object.prototype.hasOwnProperty.call(value, 'schema')
+      ? requiredObject(value, 'schema')
+      : undefined
+    return {
+      documentId: requiredNonEmptyString(value, 'documentId'),
+      kind: requiredNonEmptyString(value, 'kind'),
+      revision: requiredConfigRevision(value, 'revision'),
+      value: requiredObject(value, 'value'),
+      ...(schema === undefined ? {} : { schema }),
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid protocol configDocument: ${detail}`)
+  }
+}
+
 function emptyDigitalStimulus(): DigitalStimulusSnapshot {
   return { ...EMPTY_DIGITAL_STIMULUS, switches: [] }
 }
@@ -457,7 +515,17 @@ function parseDigitalStimulus(value: JsonObject): DigitalStimulusSnapshot {
 function parseReplyData(value: JsonObject): ReplyData {
   const data: ReplyData = {}
   for (const [key, item] of Object.entries(value)) {
-    if (key !== 'digitalStimulus' && key !== 'analysisResult') data[key] = item
+    if (key !== 'configCatalog' && key !== 'configDocument' && key !== 'saveConfig' &&
+        key !== 'digitalStimulus' && key !== 'analysisResult') data[key] = item
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'configCatalog')) {
+    data.configCatalog = parseConfigCatalog(requiredObject(value, 'configCatalog'))
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'configDocument')) {
+    data.configDocument = parseConfigDocument(requiredObject(value, 'configDocument'))
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'saveConfig')) {
+    data.saveConfig = parseConfigDocument(requiredObject(value, 'saveConfig'))
   }
   if (Object.prototype.hasOwnProperty.call(value, 'digitalStimulus')) {
     data.digitalStimulus = parseDigitalStimulus(requiredObject(value, 'digitalStimulus'))
@@ -647,6 +715,19 @@ export type ConnectionState =
   | 'reconnecting'
   | 'error'
 
+/** A rejected configuration action retains its server code for UI conflict handling. */
+export class ConfigRequestError extends Error {
+  constructor(
+    readonly action: 'configCatalog' | 'configDocument' | 'saveConfig',
+    readonly code: string,
+    message: string,
+    readonly data: ReplyData,
+  ) {
+    super(message || code || `${action} was rejected`)
+    this.name = 'ConfigRequestError'
+  }
+}
+
 export type ClientEvent =
   | { type: 'connection'; state: ConnectionState; detail?: string }
   | { type: 'message'; message: Exclude<ServerMessage, { type: 'sample' } | { type: 'sampleBatch' }> }
@@ -730,6 +811,24 @@ export class HwtestClient {
       this.pending.set(id, { resolve, reject })
       this.socket?.send(makeRequest(id, action, params))
     })
+  }
+
+  async getConfigCatalog(): Promise<ConfigCatalog> {
+    const reply = await this.request('configCatalog')
+    if (!reply.ok) throw new ConfigRequestError('configCatalog', reply.code, reply.message, reply.data)
+    return reply.data.configCatalog ?? parseConfigCatalog(reply.data)
+  }
+
+  async getConfigDocument(documentId: string): Promise<ConfigDocument> {
+    const reply = await this.request('configDocument', { documentId })
+    if (!reply.ok) throw new ConfigRequestError('configDocument', reply.code, reply.message, reply.data)
+    return reply.data.configDocument ?? parseConfigDocument(reply.data)
+  }
+
+  async saveConfig(request: SaveConfigRequest): Promise<ConfigDocument> {
+    const reply = await this.request('saveConfig', { ...request })
+    if (!reply.ok) throw new ConfigRequestError('saveConfig', reply.code, reply.message, reply.data)
+    return reply.data.saveConfig ?? reply.data.configDocument ?? parseConfigDocument(reply.data)
   }
 
   close(): void {

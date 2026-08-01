@@ -32,6 +32,7 @@ add_executable(hwtest_app_tests
     analysis_result_store_test.cpp
     board_test_configuration_test.cpp
     bus_configuration_test.cpp
+    configuration_service_test.cpp
     device_stream_configuration_test.cpp
     frontend_launch_options_test.cpp
     hal_board_test_fixture_test.cpp

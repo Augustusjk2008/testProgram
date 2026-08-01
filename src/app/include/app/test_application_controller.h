@@ -1,5 +1,7 @@
 #pragma once
 
+#include <app/configuration_types.h>
+
 #include <QObject>
 #include <QString>
 #include <QVariantMap>
@@ -231,6 +233,17 @@ public:
 
     ActionResult loadConfigurations(const QString& testConfigPath,
                                     const QString& halConfigPath);
+    ActionResult configureConfigurationStorage(
+        const QString& configurationDirectory,
+        const QString& baseHalConfigPath);
+    ActionResult configurationCatalog(ConfigurationCatalog* output) const;
+    ActionResult configurationDocument(const QString& documentId,
+                                       ConfigurationDocument* output) const;
+    ActionResult saveConfiguration(const QString& documentId,
+                                   const QString& expectedRevision,
+                                   const QVariantMap& value,
+                                   ConfigurationDocument* output = nullptr);
+    ActionResult selectTestConfiguration(const QString& configId);
     QVector<ControlResource> availableControls() const;
     QVector<SerialPortInfo> availableSerialPorts() const;
     ActionResult selectControl(const QString& resourceId);

@@ -13,6 +13,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QThread>
@@ -107,6 +108,155 @@ TEST(WebSocketControllerIntegrationTest, QueuesLoadAndReturnsCachedSnapshot)
                   .value(QStringLiteral("phase"))
                   .toString(),
               QStringLiteral("configured"));
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     ConfigCatalogListsDocumentsAndConfigDocumentUsesOnlyDocumentId)
+{
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    WebSocketFrontendServer server(&controller, launchOptions(), options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+
+    const QJsonObject catalogReply = sendAndWait(
+        &client, QStringLiteral("config-catalog"), QStringLiteral("configCatalog"));
+    ASSERT_TRUE(catalogReply.value(QStringLiteral("ok")).toBool())
+        << catalogReply.value(QStringLiteral("message")).toString().toStdString();
+    const QJsonObject catalog = catalogReply.value(QStringLiteral("data")).toObject();
+    const QJsonArray items = catalog.value(QStringLiteral("items")).toArray();
+    ASSERT_FALSE(items.isEmpty());
+    EXPECT_FALSE(catalog.value(QStringLiteral("revision")).toString().isEmpty());
+    const QString documentId = QStringLiteral("test-config-catalog");
+
+    const QJsonObject pathReply = sendAndWait(
+        &client,
+        QStringLiteral("config-document-path"),
+        QStringLiteral("configDocument"),
+        QJsonObject{{QStringLiteral("path"), documentId}});
+    EXPECT_FALSE(pathReply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(pathReply.value(QStringLiteral("code")).toString(),
+              QStringLiteral("missing_field"));
+
+    const QJsonObject documentReply = sendAndWait(
+        &client,
+        QStringLiteral("config-document"),
+        QStringLiteral("configDocument"),
+        QJsonObject{{QStringLiteral("documentId"), documentId}});
+    ASSERT_TRUE(documentReply.value(QStringLiteral("ok")).toBool())
+        << documentReply.value(QStringLiteral("message")).toString().toStdString();
+    const QJsonObject document = documentReply.value(QStringLiteral("data")).toObject();
+    EXPECT_EQ(document.value(QStringLiteral("documentId")).toString(), documentId);
+    EXPECT_FALSE(document.value(QStringLiteral("revision")).toString().isEmpty());
+    EXPECT_TRUE(document.value(QStringLiteral("value")).isObject());
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     SaveConfigForwardsExpectedRevisionAndValue)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString testName = QStringLiteral("current.testcfg.json");
+    const QString testPath = directory.filePath(testName);
+    const QString halPath = directory.filePath(QStringLiteral("mbddf_pc_hal.json"));
+    ASSERT_TRUE(QFile::copy(QStringLiteral(HWTEST_APP_TEST_CONFIG), testPath));
+    ASSERT_TRUE(QFile::copy(QStringLiteral(HWTEST_APP_HAL_CONFIG), halPath));
+    QFile catalogFile(directory.filePath(QStringLiteral("test-config-catalog.json")));
+    ASSERT_TRUE(catalogFile.open(QIODevice::WriteOnly));
+    const QByteArray catalogBytes = QJsonDocument(QJsonObject{
+        {QStringLiteral("schemaVersion"), QStringLiteral("1")},
+        {QStringLiteral("entries"),
+         QJsonArray{QJsonObject{{QStringLiteral("documentId"), testName},
+                                {QStringLiteral("enabled"), true},
+                                {QStringLiteral("order"), 0}}}},
+    }).toJson(QJsonDocument::Indented);
+    ASSERT_EQ(catalogFile.write(catalogBytes), catalogBytes.size());
+    catalogFile.close();
+
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    FrontendLaunchOptions isolatedOptions{
+        testPath, halPath, {}, {}, {}, directory.path()};
+    WebSocketFrontendServer server(&controller, isolatedOptions, options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+
+    const QString documentId = QStringLiteral("test-config-catalog");
+
+    const QJsonObject documentReply = sendAndWait(
+        &client,
+        QStringLiteral("config-document"),
+        QStringLiteral("configDocument"),
+        QJsonObject{{QStringLiteral("documentId"), documentId}});
+    ASSERT_TRUE(documentReply.value(QStringLiteral("ok")).toBool())
+        << documentReply.value(QStringLiteral("message")).toString().toStdString();
+    const QJsonObject document = documentReply.value(QStringLiteral("data")).toObject();
+    const QJsonValue revision = document.value(QStringLiteral("revision"));
+    const QJsonValue value = document.value(QStringLiteral("value"));
+    ASSERT_FALSE(revision.toString().isEmpty());
+    ASSERT_TRUE(value.isObject());
+
+    const QJsonObject saveReply = sendAndWait(
+        &client,
+        QStringLiteral("config-save"),
+        QStringLiteral("saveConfig"),
+        QJsonObject{{QStringLiteral("documentId"), documentId},
+                    {QStringLiteral("expectedRevision"), revision},
+                    {QStringLiteral("value"), value}});
+    ASSERT_TRUE(saveReply.value(QStringLiteral("ok")).toBool())
+        << saveReply.value(QStringLiteral("message")).toString().toStdString();
+    const QJsonObject saved = saveReply.value(QStringLiteral("data")).toObject();
+    EXPECT_EQ(saved.value(QStringLiteral("documentId")).toString(), documentId);
+    EXPECT_EQ(saved.value(QStringLiteral("value")), value);
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     RejectsSaveConfigAfterPreparation)
+{
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    WebSocketFrontendServer server(&controller, launchOptions(), options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+
+    const QString documentId = QStringLiteral("test-config-catalog");
+    const QJsonObject documentReply = sendAndWait(
+        &client,
+        QStringLiteral("config-document"),
+        QStringLiteral("configDocument"),
+        QJsonObject{{QStringLiteral("documentId"), documentId}});
+    ASSERT_TRUE(documentReply.value(QStringLiteral("ok")).toBool())
+        << documentReply.value(QStringLiteral("message")).toString().toStdString();
+    const QJsonObject document = documentReply.value(QStringLiteral("data")).toObject();
+    const QJsonValue revision = document.value(QStringLiteral("revision"));
+    const QJsonValue value = document.value(QStringLiteral("value"));
+    ASSERT_FALSE(revision.toString().isEmpty());
+    ASSERT_TRUE(value.isObject());
+
+    ASSERT_TRUE(sendAndWait(&client, QStringLiteral("load"), QStringLiteral("load"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    ASSERT_TRUE(sendAndWait(&client, QStringLiteral("prepare"), QStringLiteral("prepare"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+
+    const QJsonObject rejected = sendAndWait(
+        &client,
+        QStringLiteral("config-save-prepared"),
+        QStringLiteral("saveConfig"),
+        QJsonObject{{QStringLiteral("documentId"), documentId},
+                    {QStringLiteral("expectedRevision"), revision},
+                    {QStringLiteral("value"), value}});
+    EXPECT_FALSE(rejected.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(rejected.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_state"));
 }
 
 TEST(WebSocketControllerIntegrationTest, MapsControlsPortsAndSelections)
@@ -849,6 +999,37 @@ protected:
     std::unique_ptr<WebSocketFrontendServer> server;
     std::unique_ptr<test::WebSocketTestClient> client;
 };
+
+TEST_F(WebSocketUdpIntegrationTest, RejectsSaveConfigWhileRunning)
+{
+    ASSERT_EQ(controller.snapshot().phase, QStringLiteral("running"));
+
+    const QString documentId = QStringLiteral("test-config-catalog");
+    const QJsonObject documentReply = sendAndWait(
+        client.get(),
+        QStringLiteral("config-document-running"),
+        QStringLiteral("configDocument"),
+        QJsonObject{{QStringLiteral("documentId"), documentId}});
+    ASSERT_TRUE(documentReply.value(QStringLiteral("ok")).toBool())
+        << documentReply.value(QStringLiteral("message")).toString().toStdString();
+    const QJsonObject document = documentReply.value(QStringLiteral("data")).toObject();
+    const QJsonValue revision = document.value(QStringLiteral("revision"));
+    const QJsonValue value = document.value(QStringLiteral("value"));
+    ASSERT_FALSE(revision.toString().isEmpty());
+    ASSERT_TRUE(value.isObject());
+
+    const QJsonObject rejected = sendAndWait(
+        client.get(),
+        QStringLiteral("config-save-running"),
+        QStringLiteral("saveConfig"),
+        QJsonObject{{QStringLiteral("documentId"), documentId},
+                    {QStringLiteral("expectedRevision"), revision},
+                    {QStringLiteral("value"), value}});
+    EXPECT_FALSE(rejected.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(rejected.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_state"));
+    disconnectIfNeeded();
+}
 
 TEST(WebSocketContinuousIntegrationTest, PcPeriodicStreamsSamplesFromTwoCommandResponseCycles)
 {

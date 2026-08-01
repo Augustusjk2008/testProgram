@@ -169,6 +169,8 @@ ResourceId
 
 HAL 部署配置与 BIZ 的产品测试配置是不同边界：BIZ 新配置使用 `executionConfig` 向算法透传产品执行参数，不得把 Provider、SDK、物理端点或扫描结果塞入 `ProtocolProfile`、`ExchangeAction` 或协议 CSV。
 
+`[当前实现]` Web 工位配置持久化在 `configs/mbddf_station.json`，由应用层在读取基础 `mbddf_pc_hal.json` 后投影到内存中的最终 HAL map；基础文件不被改写。覆盖只匹配基础配置中已经存在的控制资源、PXI-6259/PXI-6733 设备 alias 和资源 ID：可选择既有主控制资源，可设置串口属性、两张 NI 卡的物理设备名/序列号、6259 数字端口/线号，以及 6259 AI、6733 AO 的资源 `physicalIndex`。未知设备/资源或试图修改 Adapter、Provider、module、direction、设备型号、connector、量程或根 `safeState` 会在进入 HAL 前拒绝。模拟通道路由以资源顶层 `physicalIndex` 为准；`properties.channel` 只是基础配置中的说明字段，不是工位覆盖入口。
+
 ---
 
 ## 5. 资源、参数和安全

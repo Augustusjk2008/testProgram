@@ -43,6 +43,7 @@ BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作�
 配置规则：
 
 - `TestConfigManager` 严格拒绝已建模对象中的未知字段，校验身份、步骤标识、超时、重试、依赖和枚举范围，并无损读写已建模字段。
+- `TestConfigManager::parse()` 对内存中的 JSON 字节执行与 `load()` 相同的解析和验证，供应用层在原文件被替换前校验编辑草稿；它不自行写文件。
 - `executionConfig` 是传给 `IAlgorithmExecutor::prepare()` 的不透明 `QVariantMap`。BIZ 不验证其协议、设备、通讯或安全内部字段。
 - `RunOptions::parameters` 是一次启动的运行参数覆盖；BIZ 原样复制到 `TestContext::runParameters`，不定义字段、不合并配置默认值，也不解释或限制其产品语义。Schema、默认值合并与校验属于算法层及应用组合边界。
 - 新写出的根配置只能使用 `executionConfig`。旧根字段 `halConfig` 只能在读取迁移时映射为 `executionConfig`；新配置不得再写出 `halConfig`。
@@ -55,6 +56,8 @@ BIZ 不解释产品协议字段，不执行单步判定，也不持有或操作�
 class TestConfigManager {
 public:
     Result<TestConfig> load(const ConfigPath& filePath) const;
+    Result<TestConfig> parse(const QByteArray& contents,
+                             const QString& sourceName = {}) const;
     Status save(const ConfigPath& filePath, const TestConfig& config) const;
     Result<QVector<QString>> validate(const TestConfig& config) const;
 };

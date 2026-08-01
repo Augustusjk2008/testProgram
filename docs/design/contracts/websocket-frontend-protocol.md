@@ -229,6 +229,10 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `telemetry_backpressure` | 活跃客户端的出站 FIFO 加 Qt socket 待写字节超过 `maxQueuedOutputBytes` 硬上限 | 否；记录诊断并以 `1011` 关闭。普通任务执行现有安全停止/收尾；不可停止有限流只分离连接，任务继续自然运行，绝不把背压解释为 STOP |
 | `command_in_progress` | `[当前实现]` 正在异步停止、安全收尾，或分析处于 `queued` 到终态之间时又收到新会话写动作 | 是 |
 | `test_config_not_found` | `selectTest.configId` 不在后端启动时发现的配置白名单中 | 是 |
+| `config_not_found` / `config_invalid` | 配置文档 ID 不存在，或草稿不能通过对应结构/业务校验 | 是 |
+| `config_conflict` | `saveConfig.expectedRevision` 与当前文件 SHA-256 revision 不一致，未写入 | 是 |
+| `config_reload_failed` | 候选内容提交后无法重载，服务端已恢复保存前文件并保留先前有效配置；不返回候选 revision | 是 |
+| `config_save_failed` | 原子写入无法提交，或重载失败后的条件回滚也无法完成；后一种情况的消息会明确磁盘状态可能已变化 | 是 |
 | `invalid_run_mode` | `start.mode` 不是固定三种模式之一 | 是 |
 | `CapabilityUnsupported` | `start.mode` 未在当前配置的 `supportedRunModes` 中声明，或刺激快照超出 WebSocket v1 的 16 位投影 | 是 |
 | `capability_unsupported` | `setDigitalStimulus`/`resetDigitalStimulus` 面对超出 v1 范围的刺激配置 | 是 |
@@ -240,15 +244,18 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 
 能够安全读取请求 `id` 时，协议错误 reply 使用该 id；否则使用空字符串。错误输入不得触发控制器动作。
 
-数字刺激参数的类型、缺失或未知字段都属于 `invalid_envelope`，不会进入控制器。通过协议校验后，DI 未准备时的 `invalid_state`、未知配置开关的 `NotFound`、陈旧 revision 的 `DataMismatch` 等是控制器/HAL 归一化 `ActionResult`，不是新增的 WebSocket 协议错误码；协议中没有 `revision_conflict` 码。
+数字刺激参数的类型、缺失或未知字段都属于 `invalid_envelope`，不会进入控制器。通过协议校验后，DI 未准备时的 `invalid_state`、未知配置开关的 `NotFound`、陈旧刺激 revision 的 `DataMismatch` 等是控制器/HAL 归一化 `ActionResult`；配置文档的乐观锁则使用上表固定的 `config_conflict`，协议中没有 `revision_conflict` 码。配置 revision 是内容 SHA-256 的陈旧写检测 token；保存前会再次比较以缩小竞争窗口，`QSaveFile` 只保证单次替换原子性，不构成跨进程文件锁或强 compare-and-swap。
 
 ## 6. 动作
 
 | `action` | `params` | 行为及 reply `data` |
 | --- | --- | --- |
-| `load` | `{}` | 使用进程启动时解析好的 `FrontendLaunchOptions` 调用 `configureController`；客户端不能提供或覆盖文件路径 |
-| `testConfigs` | `{}` | 返回后端固定 `configs/` 目录中已验证的测试配置摘要；`data` 为 `{ "selectedConfigId": "...", "configs": [{"configId":"...","title":"...","description":"...","algorithmId":"..."}] }`，不返回本地路径 |
+| `load` | `{}` | legacy 静态 allowlist 与目录模式都优先按控制器当前 descriptor 重新解析服务端路径；前者映射静态 allowlist，后者映射最新 catalog，只有初次加载才使用启动项。客户端不能提供或覆盖文件路径，已禁用项不会被后续 `load` 复活；目录没有任何可选项时只初始化配置存储并保持 `empty`，以便在配置页启用测试 |
+| `testConfigs` | `{}` | 返回目录中 `enabled=true` 且可加载的测试配置摘要；`data` 为 `{ "selectedConfigId": "...", "configs": [{"configId":"...","title":"...","description":"...","algorithmId":"..."}] }`，不返回本地路径 |
 | `selectTest` | `{"configId":"mbddf-elec-health"}` | 只接受 `testConfigs` 返回的白名单 `configId`；服务器映射到本地路径并重新加载配置，若当前处于可运行终态则先安全关闭当前会话；运行中或停止中拒绝切换 |
+| `configCatalog` | `{}` | 返回 `{revision, items}`；管理项包含服务端 `documentId`、展示信息、`enabled`、`order`、`valid` 和校验消息，既包括停用项也包括当前无法加载的 testcfg |
+| `configDocument` | `{"documentId":"mbddf_system_status.testcfg.json"}` | 只接受服务端文档 ID；返回 `{documentId,kind,revision,value,schema}`。保留 ID 为 `test-config-catalog`、`mbddf-station`，其余仅为当前目录中的 `*.testcfg.json` 文件名 |
+| `saveConfig` | `{"documentId":"...","expectedRevision":"sha256-hex","value":{}}` | 先比较 revision，再验证并用 `QSaveFile` 原子提交；当前 testcfg 或工位配置仅在自动重载成功后返回保存后的文档，重载失败则条件回滚并返回 `config_reload_failed`。目录保存后立即应用启停和顺序。只有 `empty`/`configured` 可保存，准备完成、运行、暂停、停止收尾或分析期间拒绝 |
 | `snapshot` | `{}` | 从 Web 层缓存读取；`data` 为 `{ "seq": n, "snapshot": { ... } }`，其中包含当前配置 descriptor |
 | `setTelemetryDelivery` | `{"mode":"single"}` 或 `{"mode":"batch"}` | Web 层本地协商动作，不调用应用控制器、不占用全局硬件 busy；每个新连接默认为 `single`。只能在没有 `preparing`/`running`/`paused`/`stopping` 活动测试、没有待批样本、没有待发输出且不在 cleanup 时切换；成功 `data` 为 `{ "mode": "single" | "batch" }`。缺少 `mode` 为 `missing_field`，非 string、未知 mode 或额外字段为 `invalid_envelope`，状态不满足为 `invalid_state`。 |
 | `analysisResult` | `{"taskId":"...","analysisGeneration":3,"channel":0}` | 只读；参数必须且只能为这三个字段，taskId 非空，generation 为 `1..9007199254740991` 的安全整数，channel 为 `0..3`。只允许读取当前身份且 `completed`/`partial` 的通道；不匹配返回 `stale_analysis_result`，未就绪返回 `analysis_not_ready`。成功 `data` 为 `{ "analysisResult": { "channelSummary": { ... }, "bode": { "frequencyHz": [], "magnitudeDb": [], "phaseDeg": [], "pointStatus": [] } } }` |
@@ -267,7 +274,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `disconnect` | `{}` | 通常必要时先异步停止，再调用 `shutdown`；最后回复并关闭当前连接，服务器继续监听。不可停止有限流活动时回复成功后仅分离连接，不停止、不 shutdown，允许重连 |
 | `quit` | `{}` | 通常执行与 `disconnect` 相同的安全收尾，随后关闭服务器并退出进程。不可停止有限流活动时返回 `invalid_state`，不得关闭连接、监听或进程 |
 
-除 `start`、`selectTest`、`selectControl`、`selectSerialPort`、`selectAuxiliarySerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，不读取客户端路径。`selectSerialPort` 保留既有非空端口名覆盖能力；`selectAuxiliarySerialPort` 则必须命中本次系统枚举，二者都不接受资源 ID、设备 ID、路径或厂家配置。`start` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知顶层字段按 `invalid_envelope` 拒绝；`algorithmParameters` 内的未知字段由应用/算法边界以 `ParameterRangeError` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
+除 `start`、`selectTest`、`configDocument`、`saveConfig`、`selectControl`、`selectSerialPort`、`selectAuxiliarySerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，`configDocument`/`saveConfig` 只读取服务端文档 ID，三者都不读取客户端路径。testcfg 的文件名、`schemaVersion`、`configId` 和 `steps[].algorithmId` 是当前只读标识；“本次运行参数”继续是单次启动覆盖，不因配置页面保存而回写。`selectSerialPort` 保留既有非空端口名覆盖能力；`selectAuxiliarySerialPort` 则必须命中本次系统枚举。`start`、`saveConfig` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知顶层字段按 `invalid_envelope` 拒绝；`algorithmParameters` 内的未知字段由应用/算法边界以 `ParameterRangeError` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
 
 ### 6.1 连续模式数据文件
 

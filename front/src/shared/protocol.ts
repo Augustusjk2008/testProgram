@@ -229,6 +229,44 @@ export interface TestConfigCatalog {
   configs: TestConfigOption[]
 }
 
+/** Editable-document directory exposed by the configuration API. */
+export type ConfigRevision = string
+
+export interface ConfigCatalogItem {
+  documentId: string
+  configId: string
+  title: string
+  enabled: boolean
+  order: number
+  valid: boolean
+  message: string
+}
+
+export interface ConfigCatalog {
+  revision: ConfigRevision
+  items: ConfigCatalogItem[]
+}
+
+export type ConfigCatalogRequest = Record<string, never>
+
+export interface ConfigDocumentRequest {
+  documentId: string
+}
+
+export interface ConfigDocument {
+  documentId: string
+  kind: string
+  revision: ConfigRevision
+  value: Record<string, unknown>
+  schema?: Record<string, unknown>
+}
+
+export interface SaveConfigRequest {
+  documentId: string
+  expectedRevision: ConfigRevision
+  value: Record<string, unknown>
+}
+
 export interface DigitalSwitchDescriptor {
   switchId: string
   dutBit: number
@@ -251,6 +289,9 @@ export interface DigitalStimulusSnapshot {
 export type ActionName =
   | 'load'
   | 'testConfigs'
+  | 'configCatalog'
+  | 'configDocument'
+  | 'saveConfig'
   | 'selectTest'
   | 'snapshot'
   | 'controls'
@@ -357,6 +398,9 @@ export interface SampleBatchMessage {
 }
 
 export type ReplyData = Record<string, unknown> & {
+  configCatalog?: ConfigCatalog
+  configDocument?: ConfigDocument
+  saveConfig?: ConfigDocument
   digitalStimulus?: DigitalStimulusSnapshot
   analysisResult?: AnalysisResult
 }

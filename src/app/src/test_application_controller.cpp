@@ -1,6 +1,7 @@
 #include <app/test_application_controller.h>
 
 #include "continuous_data_recorder.h"
+#include "configuration_service.h"
 #include "hal_board_test_fixture.h"
 #include "mbddf_algorithm_registry.h"
 #include "post_run_analysis_config.h"
@@ -40,6 +41,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <iterator>
 #include <thread>
 #include <utility>
 
@@ -450,6 +452,9 @@ public:
 
     QString testConfigPath;
     QString halConfigPath;
+    QString currentTestDocumentId;
+    ConfigurationSourceRevisions appliedRevisions;
+    ConfigurationService configurationService;
     QString dataStorageDirectory;
     PostRunAnalysisConfig analysisConfig;
     QVariantMap halConfig;
@@ -652,6 +657,50 @@ TestApplicationController::~TestApplicationController()
     shutdown();
 }
 
+ActionResult TestApplicationController::configureConfigurationStorage(
+    const QString& configurationDirectory,
+    const QString& baseHalConfigPath)
+{
+    if (!onAffinityThread(this)) return affinityFailure();
+    if (configurationDirectory.trimmed().isEmpty() ||
+        baseHalConfigPath.trimmed().isEmpty()) {
+        return failure(QStringLiteral("config_invalid"),
+                       QStringLiteral("Configuration directory and base HAL configuration are required"));
+    }
+    const QString absoluteDirectory = QDir(configurationDirectory).absolutePath();
+    const QString absoluteBaseHalPath =
+        QFileInfo(baseHalConfigPath).absoluteFilePath();
+    const bool changesLoadedBinding =
+        !m_impl->testConfigPath.isEmpty() &&
+        (!m_impl->configurationService.configurationDirectory().isEmpty()) &&
+        (m_impl->configurationService.configurationDirectory() != absoluteDirectory ||
+         m_impl->configurationService.baseHalConfigPath() != absoluteBaseHalPath);
+    if (changesLoadedBinding) {
+        return failure(
+            QStringLiteral("invalid_state"),
+            QStringLiteral("Configuration storage cannot change while a configuration is loaded"));
+    }
+    m_impl->configurationService.configure(absoluteDirectory,
+                                           absoluteBaseHalPath);
+    m_impl->halConfigPath = absoluteBaseHalPath;
+    return {};
+}
+
+ActionResult TestApplicationController::configurationCatalog(
+    ConfigurationCatalog* output) const
+{
+    if (!onAffinityThread(this)) return affinityFailure();
+    return m_impl->configurationService.catalog(output);
+}
+
+ActionResult TestApplicationController::configurationDocument(
+    const QString& documentId,
+    ConfigurationDocument* output) const
+{
+    if (!onAffinityThread(this)) return affinityFailure();
+    return m_impl->configurationService.document(documentId, output);
+}
+
 ActionResult TestApplicationController::loadConfigurations(const QString& testConfigPath,
                                                             const QString& halConfigPath)
 {
@@ -669,8 +718,22 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
 
     const QString absoluteTestPath = QFileInfo(testConfigPath).absoluteFilePath();
     const QString absoluteHalPath = QFileInfo(halConfigPath).absoluteFilePath();
+    QString candidateDirectory =
+        m_impl->configurationService.configurationDirectory();
+    if (candidateDirectory.isEmpty() ||
+        m_impl->configurationService.baseHalConfigPath() != absoluteHalPath) {
+        candidateDirectory = QFileInfo(absoluteHalPath).absolutePath();
+    }
+    ConfigurationService candidateConfigurationService(
+        candidateDirectory, absoluteHalPath);
+    ConfigurationLoadSnapshot configurationSnapshot;
+    const ActionResult loadedSnapshot = candidateConfigurationService.loadSnapshot(
+        absoluteTestPath, &configurationSnapshot);
+    if (!loadedSnapshot.ok) return loadedSnapshot;
+
     hwtest::biz::TestConfigManager configManager;
-    const auto testConfig = configManager.load(absoluteTestPath);
+    const auto testConfig = configManager.parse(
+        configurationSnapshot.testConfigBytes, absoluteTestPath);
     if (!testConfig.ok()) {
         return failure(QStringLiteral("test_config"), testConfig.status.error.message);
     }
@@ -726,11 +789,7 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
         runParameterDefaults = normalized.value;
     }
 
-    QVariantMap halConfig;
-    const ActionResult loadedHal = loadJsonMap(absoluteHalPath, &halConfig);
-    if (!loadedHal.ok) {
-        return loadedHal;
-    }
+    const QVariantMap halConfig = configurationSnapshot.mergedHalConfig;
     QString dataStorageDirectory = halConfig.value(QStringLiteral("dataStorage"))
                                        .toMap()
                                        .value(QStringLiteral("directory"))
@@ -789,8 +848,17 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
                        QStringLiteral("Selected control resource is not configured"));
     }
 
+    m_impl->configurationService = std::move(candidateConfigurationService);
     m_impl->testConfigPath = absoluteTestPath;
     m_impl->halConfigPath = absoluteHalPath;
+    m_impl->currentTestDocumentId.clear();
+    const QFileInfo testFileInfo(absoluteTestPath);
+    if (testFileInfo.absolutePath() ==
+            m_impl->configurationService.configurationDirectory() &&
+        testFileInfo.fileName().endsWith(QStringLiteral(".testcfg.json"))) {
+        m_impl->currentTestDocumentId = testFileInfo.fileName();
+    }
+    m_impl->appliedRevisions = configurationSnapshot.revisions;
     m_impl->dataStorageDirectory = dataStorageDirectory;
     m_impl->analysisConfig = analysisConfig;
     m_impl->selectedAlgorithmId = selectedAlgorithmId;
@@ -814,6 +882,152 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     m_impl->snapshot.providerId = selected->providerId;
     m_impl->snapshot.serialPortName = serialPortNameFor(halConfig, selected->resourceId);
     emit snapshotChanged(m_impl->snapshot);
+    return {};
+}
+
+ActionResult TestApplicationController::selectTestConfiguration(
+    const QString& configId)
+{
+    if (!onAffinityThread(this)) return affinityFailure();
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
+    }
+    const QString phase = m_impl->snapshot.phase;
+    if (phase == QStringLiteral("preparing") ||
+        phase == QStringLiteral("ready") ||
+        phase == QStringLiteral("running") ||
+        phase == QStringLiteral("paused") ||
+        phase == QStringLiteral("stopping")) {
+        return failure(QStringLiteral("invalid_state"),
+                       QStringLiteral("Test configuration cannot be changed while hardware is active"));
+    }
+    if (phase != QStringLiteral("empty") &&
+        phase != QStringLiteral("configured")) {
+        const ActionResult disconnected = shutdown();
+        if (!disconnected.ok) return disconnected;
+    }
+
+    ConfigurationCatalog available;
+    const ActionResult listed = m_impl->configurationService.catalog(&available);
+    if (!listed.ok) return listed;
+    const auto selected = std::find_if(
+        available.items.cbegin(), available.items.cend(),
+        [&configId](const ConfigurationCatalogItem& item) {
+            return item.enabled && item.valid && item.configId == configId;
+        });
+    if (selected == available.items.cend()) {
+        return failure(QStringLiteral("test_config_not_found"),
+                       QStringLiteral("Unknown or disabled test configuration '%1'")
+                           .arg(configId));
+    }
+    return loadConfigurations(
+        m_impl->configurationService.testConfigPath(selected->documentId),
+        m_impl->configurationService.baseHalConfigPath());
+}
+
+ActionResult TestApplicationController::saveConfiguration(
+    const QString& documentId,
+    const QString& expectedRevision,
+    const QVariantMap& value,
+    ConfigurationDocument* output)
+{
+    if (!onAffinityThread(this)) return affinityFailure();
+    if (m_impl->analysisCoordinator.blocksWrites()) {
+        return analysisCommandInProgressFailure();
+    }
+    if (m_impl->snapshot.phase != QStringLiteral("empty") &&
+        m_impl->snapshot.phase != QStringLiteral("configured")) {
+        return failure(QStringLiteral("invalid_state"),
+                       QStringLiteral("Configurations can only be saved while disconnected"));
+    }
+
+    ConfigurationDocument saved;
+    ConfigurationBackup backup;
+    const ActionResult saveResult = m_impl->configurationService.saveDocument(
+        documentId, expectedRevision, value, &saved, &backup);
+    if (!saveResult.ok) return saveResult;
+
+    const auto clearSelection = [this] {
+        m_impl->testConfigPath.clear();
+        m_impl->currentTestDocumentId.clear();
+        m_impl->appliedRevisions = {};
+        m_impl->dataStorageDirectory.clear();
+        m_impl->analysisConfig = {};
+        m_impl->halConfig.clear();
+        m_impl->executionConfig.clear();
+        m_impl->runParameterDefaults.clear();
+        m_impl->controls.clear();
+        m_impl->selectedAlgorithmId.clear();
+        m_impl->descriptor = {};
+        m_impl->analysisCoordinator.configureCapability({});
+        m_impl->snapshot = {};
+        emit snapshotChanged(m_impl->snapshot);
+    };
+
+    ActionResult reloadResult;
+    if (saved.kind == QStringLiteral("catalog")) {
+        ConfigurationCatalog updated;
+        reloadResult = m_impl->configurationService.catalog(&updated);
+        if (reloadResult.ok) {
+            const auto current = std::find_if(
+                updated.items.cbegin(), updated.items.cend(),
+                [this](const ConfigurationCatalogItem& item) {
+                    return item.documentId == m_impl->currentTestDocumentId;
+                });
+            if (current == updated.items.cend() ||
+                !current->enabled || !current->valid) {
+                const auto selectable = [](const ConfigurationCatalogItem& item) {
+                    return item.enabled && item.valid;
+                };
+                auto replacement = updated.items.cend();
+                if (current != updated.items.cend()) {
+                    replacement = std::find_if(std::next(current),
+                                               updated.items.cend(),
+                                               selectable);
+                    if (replacement == updated.items.cend()) {
+                        replacement = std::find_if(updated.items.cbegin(),
+                                                   current,
+                                                   selectable);
+                    }
+                } else {
+                    replacement = std::find_if(updated.items.cbegin(),
+                                               updated.items.cend(),
+                                               selectable);
+                }
+                if (replacement == updated.items.cend()) {
+                    clearSelection();
+                } else {
+                    reloadResult = loadConfigurations(
+                        m_impl->configurationService.testConfigPath(
+                            replacement->documentId),
+                        m_impl->configurationService.baseHalConfigPath());
+                }
+            }
+        }
+    } else if (saved.kind == QStringLiteral("station") ||
+               documentId == m_impl->currentTestDocumentId) {
+        if (!m_impl->testConfigPath.isEmpty()) {
+            reloadResult = loadConfigurations(
+                m_impl->testConfigPath,
+                m_impl->configurationService.baseHalConfigPath());
+        }
+    }
+    if (!reloadResult.ok) {
+        const ActionResult restored = m_impl->configurationService.restoreDocument(
+            backup, saved.revision);
+        if (!restored.ok) {
+            clearSelection();
+            return failure(
+                QStringLiteral("config_save_failed"),
+                QStringLiteral("Configuration was saved but reload and rollback failed; disk state may have changed: %1; %2")
+                    .arg(reloadResult.message, restored.message));
+        }
+        return failure(
+            QStringLiteral("config_reload_failed"),
+            QStringLiteral("Configuration was not saved because it could not be reloaded (%1): %2")
+                .arg(reloadResult.code, reloadResult.message));
+    }
+    if (output != nullptr) *output = std::move(saved);
     return {};
 }
 
@@ -1013,6 +1227,47 @@ ActionResult TestApplicationController::prepare()
     if (m_impl->snapshot.phase != QStringLiteral("configured")) {
         return failure(QStringLiteral("invalid_state"),
                        QStringLiteral("Prepare is only available after configurations are loaded and while disconnected"));
+    }
+
+    if (!m_impl->currentTestDocumentId.isEmpty()) {
+        bool selectable = false;
+        const ActionResult selection =
+            m_impl->configurationService.isTestDocumentSelectable(
+                m_impl->currentTestDocumentId, &selectable);
+        if (!selection.ok) {
+            return failure(
+                QStringLiteral("config_conflict"),
+                QStringLiteral("The test configuration catalog changed and must be reloaded: %1")
+                    .arg(selection.message));
+        }
+        if (!selectable) {
+            return failure(
+                QStringLiteral("config_conflict"),
+                QStringLiteral("The selected test configuration is disabled or invalid and must be reselected"));
+        }
+    }
+
+    ConfigurationSourceRevisions currentRevisions;
+    const ActionResult revisions =
+        m_impl->configurationService.currentSourceRevisions(
+            m_impl->testConfigPath, &currentRevisions);
+    if (!revisions.ok) {
+        return failure(QStringLiteral("config_conflict"),
+                       QStringLiteral("Configuration sources changed and must be reloaded: %1")
+                           .arg(revisions.message));
+    }
+    if (currentRevisions.testConfig !=
+        m_impl->appliedRevisions.testConfig) {
+        return failure(QStringLiteral("config_conflict"),
+                       QStringLiteral("The selected test configuration changed and must be reloaded"));
+    }
+    if (currentRevisions.station != m_impl->appliedRevisions.station) {
+        return failure(QStringLiteral("config_conflict"),
+                       QStringLiteral("The station configuration changed and must be reloaded"));
+    }
+    if (currentRevisions.baseHal != m_impl->appliedRevisions.baseHal) {
+        return failure(QStringLiteral("config_conflict"),
+                       QStringLiteral("The base HAL configuration changed and must be reloaded"));
     }
 
     m_impl->snapshot.phase = QStringLiteral("preparing");

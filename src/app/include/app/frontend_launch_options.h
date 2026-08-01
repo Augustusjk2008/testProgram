@@ -23,6 +23,7 @@ struct FrontendLaunchOptions {
     QString controlResourceId;
     QString serialPortName;
     QVector<FrontendTestConfigOption> testConfigs;
+    QString configurationDirectory;
 };
 
 struct FrontendOptionDefaults {

@@ -1,0 +1,70 @@
+{
+    "entries": [
+        {
+            "documentId": "mbddf_system_status.testcfg.json",
+            "enabled": true,
+            "order": 10
+        },
+        {
+            "documentId": "mbddf_elec_health.testcfg.json",
+            "enabled": true,
+            "order": 20
+        },
+        {
+            "documentId": "mbddf_memperf.testcfg.json",
+            "enabled": true,
+            "order": 30
+        },
+        {
+            "documentId": "mbddf_spi_flash.testcfg.json",
+            "enabled": true,
+            "order": 40
+        },
+        {
+            "documentId": "mbddf_dh_pulse_config.testcfg.json",
+            "enabled": true,
+            "order": 50
+        },
+        {
+            "documentId": "mbddf_dh_ignite_stream.testcfg.json",
+            "enabled": true,
+            "order": 60
+        },
+        {
+            "documentId": "mbddf_timer_jitter.testcfg.json",
+            "enabled": true,
+            "order": 70
+        },
+        {
+            "documentId": "mbddf_di.testcfg.json",
+            "enabled": true,
+            "order": 80
+        },
+        {
+            "documentId": "mbddf_do_write.testcfg.json",
+            "enabled": true,
+            "order": 90
+        },
+        {
+            "documentId": "mbddf_imu_stream.testcfg.json",
+            "enabled": true,
+            "order": 100
+        },
+        {
+            "documentId": "mbddf_helm_stream.testcfg.json",
+            "enabled": true,
+            "order": 110
+        },
+        {
+            "documentId": "mbddf_helm_board_test.testcfg.json",
+            "enabled": true,
+            "order": 120
+        },
+        {
+            "documentId": "mbddf_serial_test.testcfg.json",
+            "enabled": true,
+            "order": 130
+        }
+    ],
+    "schemaVersion": "1"
+}

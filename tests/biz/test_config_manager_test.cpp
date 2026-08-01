@@ -157,6 +157,30 @@ TEST(TestConfigManagerTest, SavesAndLoadsEveryCurrentConfigurationField)
     expectConfigEqual(expected, loaded.value);
 }
 
+TEST(TestConfigManagerTest, ParsesConfigurationBytesForNonDestructiveValidation)
+{
+    QTemporaryDir temporaryDirectory;
+    ASSERT_TRUE(temporaryDirectory.isValid());
+
+    TestConfigManager manager;
+    const TestConfig expected = test::makeCompleteConfig();
+    const ConfigPath path = temporaryDirectory.filePath(QStringLiteral("editor.testcfg"));
+    ASSERT_TRUE(manager.save(path, expected).ok());
+
+    QFile input(path);
+    ASSERT_TRUE(input.open(QIODevice::ReadOnly));
+    const QByteArray contents = input.readAll();
+    input.close();
+    ASSERT_TRUE(QFile::remove(path));
+
+    const Result<TestConfig> parsed = manager.parse(
+        contents, QStringLiteral("editor draft"));
+
+    ASSERT_TRUE(parsed.ok()) << parsed.status.error.message.toStdString();
+    expectConfigEqual(expected, parsed.value);
+    EXPECT_FALSE(QFileInfo::exists(path));
+}
+
 TEST(TestConfigManagerTest, MigratesLegacyExecutionKeyAndStringCriterionWithoutDataLoss)
 {
     QTemporaryDir temporaryDirectory;

@@ -5,6 +5,7 @@
 
 #include <QByteArray>
 #include <QDebug>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QFileInfo>
@@ -62,6 +63,45 @@ QJsonObject testConfigObject(const FrontendTestConfigOption& option)
     };
 }
 
+QJsonObject configurationCatalogItemObject(
+    const ConfigurationCatalogItem& item)
+{
+    return QJsonObject{
+        {QStringLiteral("documentId"), item.documentId},
+        {QStringLiteral("configId"), item.configId},
+        {QStringLiteral("title"), item.title},
+        {QStringLiteral("description"), item.description},
+        {QStringLiteral("algorithmId"), item.algorithmId},
+        {QStringLiteral("enabled"), item.enabled},
+        {QStringLiteral("order"), item.order},
+        {QStringLiteral("valid"), item.valid},
+        {QStringLiteral("message"), item.message},
+    };
+}
+
+QJsonObject configurationCatalogObject(const ConfigurationCatalog& catalog)
+{
+    QJsonArray items;
+    for (const ConfigurationCatalogItem& item : catalog.items) {
+        items.push_back(configurationCatalogItemObject(item));
+    }
+    return QJsonObject{
+        {QStringLiteral("revision"), catalog.revision},
+        {QStringLiteral("items"), items},
+    };
+}
+
+QJsonObject configurationDocumentObject(const ConfigurationDocument& document)
+{
+    return QJsonObject{
+        {QStringLiteral("documentId"), document.documentId},
+        {QStringLiteral("kind"), document.kind},
+        {QStringLiteral("revision"), document.revision},
+        {QStringLiteral("value"), QJsonObject::fromVariantMap(document.value)},
+        {QStringLiteral("schema"), QJsonObject::fromVariantMap(document.schema)},
+    };
+}
+
 QString selectedTestConfigId(const FrontendLaunchOptions& options)
 {
     const QString selectedPath = QFileInfo(options.testConfigPath).absoluteFilePath();
@@ -114,6 +154,52 @@ ActionResult loadSelectedTest(TestApplicationController& controller,
         *selectedConfigPath = selected->configPath;
     }
     return result;
+}
+
+ActionResult loadCatalogSelection(TestApplicationController& controller,
+                                  const FrontendLaunchOptions& options,
+                                  QString* selectedConfigPath)
+{
+    ConfigurationCatalog catalog;
+    const ActionResult listed = controller.configurationCatalog(&catalog);
+    if (!listed.ok) return listed;
+
+    const QString currentConfigId =
+        controller.snapshot().descriptor.configId.trimmed();
+    const QString configuredPath = QFileInfo(options.testConfigPath)
+                                       .absoluteFilePath();
+    const QString configurationDirectory =
+        options.configurationDirectory.trimmed().isEmpty()
+        ? QFileInfo(options.halConfigPath).absolutePath()
+        : options.configurationDirectory;
+    const auto selected = std::find_if(
+        catalog.items.cbegin(), catalog.items.cend(),
+        [&](const ConfigurationCatalogItem& item) {
+            if (!item.enabled || !item.valid) return false;
+            if (!currentConfigId.isEmpty()) {
+                return item.configId == currentConfigId;
+            }
+            return QFileInfo(QDir(configurationDirectory)
+                                 .filePath(item.documentId))
+                       .absoluteFilePath() == configuredPath;
+        });
+    if (selected == catalog.items.cend()) {
+        if (!currentConfigId.isEmpty()) {
+            return protocolError(
+                QStringLiteral("config_conflict"),
+                QStringLiteral("The current test configuration is disabled or invalid and must be reselected"));
+        }
+        return {};
+    }
+
+    FrontendLaunchOptions selectedOptions = options;
+    selectedOptions.testConfigPath = QDir(configurationDirectory)
+                                         .absoluteFilePath(selected->documentId);
+    const ActionResult loaded = configureController(controller, selectedOptions);
+    if (loaded.ok && selectedConfigPath != nullptr) {
+        *selectedConfigPath = selectedOptions.testConfigPath;
+    }
+    return loaded;
 }
 
 quint64 qtIncomingLimit(quint64 protocolLimit)
@@ -854,6 +940,8 @@ public:
         return action == QStringLiteral("snapshot") ||
             action == QStringLiteral("analysisResult") ||
             action == QStringLiteral("testConfigs") ||
+            action == QStringLiteral("configCatalog") ||
+            action == QStringLiteral("configDocument") ||
             action == QStringLiteral("controls") ||
             action == QStringLiteral("ports");
     }
@@ -1048,6 +1136,54 @@ public:
                     QStringLiteral("The testConfigs action does not accept parameters"));
             }
             return false;
+        }
+        if (request.action == QStringLiteral("configCatalog")) {
+            if (!request.params.isEmpty()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("The configCatalog action does not accept parameters"));
+                }
+                return false;
+            }
+            return true;
+        }
+        if (request.action == QStringLiteral("configDocument")) {
+            if (!validateRequiredString(request,
+                                        QStringLiteral("documentId"),
+                                        error)) {
+                return false;
+            }
+            if (request.params.size() != 1) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("The configDocument action only accepts documentId"));
+                }
+                return false;
+            }
+            return true;
+        }
+        if (request.action == QStringLiteral("saveConfig")) {
+            if (!validateRequiredString(request,
+                                        QStringLiteral("documentId"),
+                                        error) ||
+                !validateRequiredString(request,
+                                        QStringLiteral("expectedRevision"),
+                                        error)) {
+                return false;
+            }
+            if (request.params.size() != 3 ||
+                !request.params.contains(QStringLiteral("value")) ||
+                !request.params.value(QStringLiteral("value")).isObject()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("The saveConfig action requires documentId, expectedRevision and an object value"));
+                }
+                return false;
+            }
+            return true;
         }
         if (request.action == QStringLiteral("selectTest")) {
             if (!validateRequiredString(request,
@@ -1283,7 +1419,11 @@ public:
 
     void dispatchControllerAction(const WebRequest& request, QWebSocket* socket)
     {
-        if (request.action == QStringLiteral("testConfigs")) {
+        const bool legacyTestAllowlist =
+            launchOptions.configurationDirectory.trimmed().isEmpty() &&
+            !launchOptions.testConfigs.isEmpty();
+        if (request.action == QStringLiteral("testConfigs") &&
+            legacyTestAllowlist) {
             QJsonArray configs;
             for (const FrontendTestConfigOption& option : launchOptions.testConfigs) {
                 configs.push_back(testConfigObject(option));
@@ -1307,13 +1447,15 @@ public:
         const QPointer<TestApplicationController> controllerGuard(controller);
         const QPointer<QWebSocket> socketGuard(socket);
         const FrontendLaunchOptions optionsCopy = launchOptions;
+        const bool useLegacyTestAllowlist = legacyTestAllowlist;
         QMetaObject::invokeMethod(
             controller,
             [owner,
              controllerGuard,
              socketGuard,
              request,
-             optionsCopy] {
+             optionsCopy,
+             useLegacyTestAllowlist] {
                 if (owner == nullptr || controllerGuard == nullptr) {
                     return;
                 }
@@ -1321,15 +1463,112 @@ public:
                 ActionResult result;
                 QJsonObject data;
                 QString selectedConfigPath;
-                if (request.action == QStringLiteral("load")) {
-                    result = configureController(*controllerGuard, optionsCopy);
+                const bool needsConfigurationStorage =
+                    request.action == QStringLiteral("load") ||
+                    request.action == QStringLiteral("testConfigs") ||
+                    request.action == QStringLiteral("selectTest") ||
+                    request.action == QStringLiteral("configCatalog") ||
+                    request.action == QStringLiteral("configDocument") ||
+                    request.action == QStringLiteral("saveConfig");
+                if (needsConfigurationStorage &&
+                    !optionsCopy.halConfigPath.trimmed().isEmpty()) {
+                    const QString configurationDirectory =
+                        optionsCopy.configurationDirectory.trimmed().isEmpty()
+                        ? QFileInfo(optionsCopy.halConfigPath).absolutePath()
+                        : optionsCopy.configurationDirectory;
+                    result = controllerGuard->configureConfigurationStorage(
+                        configurationDirectory, optionsCopy.halConfigPath);
+                }
+
+                if (!result.ok) {
+                    // Preserve configuration-storage initialization failure.
+                } else if (request.action == QStringLiteral("load")) {
+                    const QString currentConfigId =
+                        controllerGuard->snapshot().descriptor.configId.trimmed();
+                    if (useLegacyTestAllowlist && !currentConfigId.isEmpty()) {
+                        result = loadSelectedTest(*controllerGuard,
+                                                  optionsCopy,
+                                                  currentConfigId,
+                                                  &selectedConfigPath);
+                    } else if (optionsCopy.configurationDirectory.trimmed().isEmpty()) {
+                        result = configureController(*controllerGuard, optionsCopy);
+                    } else {
+                        result = loadCatalogSelection(*controllerGuard,
+                                                      optionsCopy,
+                                                      &selectedConfigPath);
+                    }
                 } else if (request.action == QStringLiteral("selectTest")) {
-                    result = loadSelectedTest(
-                        *controllerGuard,
-                        optionsCopy,
-                        request.params.value(QStringLiteral("configId"))
+                    const QString configId = request.params
+                                                 .value(QStringLiteral("configId"))
+                                                 .toString().trimmed();
+                    if (useLegacyTestAllowlist) {
+                        result = loadSelectedTest(*controllerGuard,
+                                                  optionsCopy,
+                                                  configId,
+                                                  &selectedConfigPath);
+                    } else {
+                        result = controllerGuard->selectTestConfiguration(configId);
+                        if (result.ok) {
+                            ConfigurationCatalog catalog;
+                            result = controllerGuard->configurationCatalog(&catalog);
+                            const auto selected = std::find_if(
+                                catalog.items.cbegin(), catalog.items.cend(),
+                                [&configId](const ConfigurationCatalogItem& item) {
+                                    return item.enabled && item.valid &&
+                                        item.configId == configId;
+                                });
+                            if (result.ok && selected != catalog.items.cend()) {
+                                const QString configurationDirectory =
+                                    optionsCopy.configurationDirectory.trimmed().isEmpty()
+                                    ? QFileInfo(optionsCopy.halConfigPath).absolutePath()
+                                    : optionsCopy.configurationDirectory;
+                                selectedConfigPath = QDir(configurationDirectory)
+                                                         .absoluteFilePath(
+                                                             selected->documentId);
+                            }
+                        }
+                    }
+                } else if (request.action == QStringLiteral("testConfigs")) {
+                    ConfigurationCatalog catalog;
+                    result = controllerGuard->configurationCatalog(&catalog);
+                    if (result.ok) {
+                        QJsonArray configs;
+                        for (const ConfigurationCatalogItem& item : catalog.items) {
+                            if (!item.enabled || !item.valid) continue;
+                            configs.push_back(QJsonObject{
+                                {QStringLiteral("configId"), item.configId},
+                                {QStringLiteral("title"), item.title},
+                                {QStringLiteral("description"), item.description},
+                                {QStringLiteral("algorithmId"), item.algorithmId},
+                            });
+                        }
+                        data.insert(
+                            QStringLiteral("selectedConfigId"),
+                            controllerGuard->snapshot().descriptor.configId);
+                        data.insert(QStringLiteral("configs"), configs);
+                    }
+                } else if (request.action == QStringLiteral("configCatalog")) {
+                    ConfigurationCatalog catalog;
+                    result = controllerGuard->configurationCatalog(&catalog);
+                    if (result.ok) data = configurationCatalogObject(catalog);
+                } else if (request.action == QStringLiteral("configDocument")) {
+                    ConfigurationDocument document;
+                    result = controllerGuard->configurationDocument(
+                        request.params.value(QStringLiteral("documentId"))
                             .toString().trimmed(),
-                        &selectedConfigPath);
+                        &document);
+                    if (result.ok) data = configurationDocumentObject(document);
+                } else if (request.action == QStringLiteral("saveConfig")) {
+                    ConfigurationDocument document;
+                    result = controllerGuard->saveConfiguration(
+                        request.params.value(QStringLiteral("documentId"))
+                            .toString().trimmed(),
+                        request.params.value(QStringLiteral("expectedRevision"))
+                            .toString(),
+                        request.params.value(QStringLiteral("value"))
+                            .toObject().toVariantMap(),
+                        &document);
+                    if (result.ok) data = configurationDocumentObject(document);
                 } else if (request.action == QStringLiteral("controls")) {
                     QJsonArray controls;
                     for (const ControlResource& control :

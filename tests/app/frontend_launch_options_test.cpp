@@ -206,6 +206,81 @@ TEST(FrontendLaunchOptionsTest, DoesNotAdvertiseConflictingContinuousCapabilitie
     EXPECT_TRUE(options.testConfigs.isEmpty());
 }
 
+TEST(FrontendLaunchOptionsTest, RejectsAnExplicitlySelectedDisabledCatalogEntry)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString configDirectory = directory.filePath(QStringLiteral("configs"));
+    ASSERT_TRUE(QDir().mkpath(configDirectory));
+    const QString disabledName = QStringLiteral("disabled.testcfg.json");
+    const QString enabledName = QStringLiteral("enabled.testcfg.json");
+    const QString disabledPath = QDir(configDirectory).filePath(disabledName);
+    ASSERT_TRUE(QFile::copy(QStringLiteral(HWTEST_APP_TEST_CONFIG), disabledPath));
+    ASSERT_TRUE(QFile::copy(
+        QStringLiteral(HWTEST_APP_ELEC_HEALTH_CONFIG),
+        QDir(configDirectory).filePath(enabledName)));
+    QFile catalog(QDir(configDirectory).filePath(
+        QStringLiteral("test-config-catalog.json")));
+    ASSERT_TRUE(catalog.open(QIODevice::WriteOnly));
+    const QByteArray catalogBytes = QJsonDocument(QJsonObject{
+        {QStringLiteral("schemaVersion"), QStringLiteral("1")},
+        {QStringLiteral("entries"),
+         QJsonArray{
+             QJsonObject{{QStringLiteral("documentId"), disabledName},
+                         {QStringLiteral("enabled"), false},
+                         {QStringLiteral("order"), 0}},
+             QJsonObject{{QStringLiteral("documentId"), enabledName},
+                         {QStringLiteral("enabled"), true},
+                         {QStringLiteral("order"), 1}},
+         }},
+    }).toJson(QJsonDocument::Indented);
+    ASSERT_EQ(catalog.write(catalogBytes), catalogBytes.size());
+    catalog.close();
+
+    const FrontendOptionDefaults defaults{
+        disabledPath, QStringLiteral(HWTEST_APP_HAL_CONFIG), false};
+    QCommandLineParser parser;
+    parseFrontendArguments(
+        &parser, defaults,
+        {QStringLiteral("frontend"), QStringLiteral("--test-config"),
+         disabledPath});
+    FrontendLaunchOptions options;
+
+    const ActionResult result = readFrontendOptions(
+        parser, directory.path(), defaults, &options);
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_EQ(result.code, QStringLiteral("test_config_disabled"));
+}
+
+TEST(FrontendLaunchOptionsTest, RejectsAMalformedConfigurationCatalog)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString configDirectory = directory.filePath(QStringLiteral("configs"));
+    ASSERT_TRUE(QDir().mkpath(configDirectory));
+    const QString testPath = QDir(configDirectory).filePath(
+        QStringLiteral("test.testcfg.json"));
+    ASSERT_TRUE(QFile::copy(QStringLiteral(HWTEST_APP_TEST_CONFIG), testPath));
+    QFile catalog(QDir(configDirectory).filePath(
+        QStringLiteral("test-config-catalog.json")));
+    ASSERT_TRUE(catalog.open(QIODevice::WriteOnly));
+    ASSERT_EQ(catalog.write("{not-json"), 9);
+    catalog.close();
+
+    const FrontendOptionDefaults defaults{
+        testPath, QStringLiteral(HWTEST_APP_HAL_CONFIG), false};
+    QCommandLineParser parser;
+    parseFrontendArguments(&parser, defaults, {QStringLiteral("frontend")});
+    FrontendLaunchOptions options;
+
+    const ActionResult result = readFrontendOptions(
+        parser, directory.path(), defaults, &options);
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_EQ(result.code, QStringLiteral("config_invalid"));
+}
+
 TEST(FrontendLaunchOptionsTest, RequiresPathsForBatchRunner)
 {
     const FrontendOptionDefaults defaults{{}, {}, true};

@@ -25,8 +25,11 @@ import {
   type AnalysisResult,
   type ApplicationSample,
   type ApplicationSnapshot,
+  type ConfigCatalog,
+  type ConfigDocument,
   type DigitalStimulusSnapshot,
   type ReplyMessage,
+  type SaveConfigRequest,
   type SerialPortInfo,
   type TestConfigOption,
   type TestRunOptions,
@@ -65,6 +68,9 @@ interface SessionContextValue {
   connectionState: ConnectionState
   connectionDetail: string
   snapshot: ApplicationSnapshot
+  configCatalog: ConfigCatalog | null
+  configCatalogReady: boolean
+  configCatalogError: string
   testConfigs: TestConfigOption[]
   testConfigsReady: boolean
   serialPorts: SerialPortInfo[]
@@ -77,6 +83,9 @@ interface SessionContextValue {
   performanceNavigationIdentity: AnalysisIdentity | null
   connect: (reconnecting?: boolean) => Promise<void>
   invoke: (action: ActionName, params?: Record<string, unknown>) => Promise<ReplyMessage>
+  refreshConfigCatalog: () => Promise<ConfigCatalog>
+  getConfigDocument: (documentId: string) => Promise<ConfigDocument>
+  saveConfig: (request: SaveConfigRequest) => Promise<ConfigDocument>
   start: (options: TestRunOptions) => Promise<ReplyMessage>
   setDigitalStimulus: (
     switchId: string,
@@ -143,6 +152,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const diagnosticsRef = useRef<DiagnosticEntry[]>([])
   const diagnosticSequence = useRef(0)
   const descriptorConfigId = useRef('')
+  const configCatalogRef = useRef<ConfigCatalog | null>(null)
   const snapshotRef = useRef<ApplicationSnapshot>(EMPTY_SNAPSHOT)
   const sampleCountMismatchRef = useRef('')
   const autoLoadInFlight = useRef(false)
@@ -153,6 +163,9 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected')
   const [connectionDetail, setConnectionDetail] = useState('')
   const [snapshot, setSnapshot] = useState<ApplicationSnapshot>(EMPTY_SNAPSHOT)
+  const [configCatalog, setConfigCatalog] = useState<ConfigCatalog | null>(null)
+  const [configCatalogReady, setConfigCatalogReady] = useState(false)
+  const [configCatalogError, setConfigCatalogError] = useState('')
   const [testConfigs, setTestConfigs] = useState<TestConfigOption[]>([])
   const [testConfigsReady, setTestConfigsReady] = useState(false)
   const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>([])
@@ -263,6 +276,73 @@ export function SessionProvider({ children }: PropsWithChildren) {
       if (tracksGlobalBusy) setBusyAction(null)
     }
   }, [publishPerformanceNavigation, pushDiagnostic])
+
+  const refreshConfigCatalog = useCallback(async (): Promise<ConfigCatalog> => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket client is unavailable')
+    setConfigCatalogReady(false)
+    setConfigCatalogError('')
+    try {
+      const catalog = await client.getConfigCatalog()
+      configCatalogRef.current = catalog
+      setConfigCatalog(catalog)
+      pushDiagnostic('command', '完成 · configCatalog', `${catalog.items.length} 个配置文档`, catalog)
+      return catalog
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      configCatalogRef.current = null
+      setConfigCatalog(null)
+      setConfigCatalogError(message)
+      pushDiagnostic('error', '读取配置目录失败', message)
+      throw error
+    } finally {
+      setConfigCatalogReady(true)
+    }
+  }, [pushDiagnostic])
+
+  const getConfigDocument = useCallback(async (documentId: string): Promise<ConfigDocument> => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket client is unavailable')
+    pushDiagnostic('command', '发送 · configDocument', documentId, { documentId })
+    try {
+      const document = await client.getConfigDocument(documentId)
+      pushDiagnostic('command', '完成 · configDocument', document.documentId, document)
+      return document
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      pushDiagnostic('error', '读取配置文档失败', message, { documentId })
+      throw error
+    }
+  }, [pushDiagnostic])
+
+  const saveConfig = useCallback(async (request: SaveConfigRequest): Promise<ConfigDocument> => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket client is unavailable')
+    pushDiagnostic('command', '发送 · saveConfig', request.documentId, request)
+    try {
+      const document = await client.saveConfig(request)
+      pushDiagnostic('command', '完成 · saveConfig', document.documentId, document)
+      await refreshConfigCatalog().catch(() => undefined)
+      if (request.documentId === 'test-config-catalog') {
+        try {
+          const reply = await client.request('testConfigs')
+          if (!reply.ok) throw new Error(reply.message || reply.code)
+          const tests = parseTestConfigCatalog(reply.data)
+          setTestConfigs(tests.configs)
+          setSelectedConfigId(tests.selectedConfigId)
+          setTestConfigsReady(true)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          pushDiagnostic('error', '刷新运行测试目录失败', message)
+        }
+      }
+      return document
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      pushDiagnostic('error', '保存配置失败', message, { documentId: request.documentId })
+      throw error
+    }
+  }, [pushDiagnostic, refreshConfigCatalog])
 
   const fetchAnalysisResult = useCallback(async (
     identity: AnalysisIdentity,
@@ -442,7 +522,10 @@ export function SessionProvider({ children }: PropsWithChildren) {
             }
             try {
               const catalog = parseTestConfigCatalog(reply.data)
-              const initialConfig = selectInitialTestConfig(catalog)
+              const disabledConfigIds = new Set((configCatalogRef.current?.items ?? [])
+                .filter((item) => !item.enabled)
+                .map((item) => item.configId))
+              const initialConfig = selectInitialTestConfig(catalog, disabledConfigIds)
               setTestConfigs(catalog.configs)
               setSelectedConfigId(initialConfig?.configId ?? '')
               if (!initialConfig) {
@@ -476,9 +559,10 @@ export function SessionProvider({ children }: PropsWithChildren) {
             pushDiagnostic('error', '读取测试配置目录失败', detail)
           })
         }
+        const requestConfigCatalog = () => refreshConfigCatalog().catch(() => undefined)
 
         if (!supportsTelemetryBatch(message)) {
-          requestTestConfigs()
+          void requestConfigCatalog().finally(requestTestConfigs)
           return
         }
 
@@ -501,7 +585,9 @@ export function SessionProvider({ children }: PropsWithChildren) {
             const detail = error instanceof Error ? error.message : String(error)
             pushDiagnostic('error', '批量遥测协商失败，已回退单条模式', detail)
           })
-          .finally(requestTestConfigs)
+          .finally(() => {
+            void requestConfigCatalog().finally(requestTestConfigs)
+          })
       }
     })
 
@@ -512,7 +598,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
       telemetryStore.dispose()
       autoLoadInFlight.current = false
     }
-  }, [clearTelemetry, invoke, pushDiagnostic, synchronizeAnalysisIdentity, telemetryStore])
+  }, [clearTelemetry, invoke, pushDiagnostic, refreshConfigCatalog, synchronizeAnalysisIdentity, telemetryStore])
 
   const start = useCallback(async (options: TestRunOptions) => {
     clearTelemetry()
@@ -570,6 +656,9 @@ export function SessionProvider({ children }: PropsWithChildren) {
     connectionState,
     connectionDetail,
     snapshot,
+    configCatalog,
+    configCatalogReady,
+    configCatalogError,
     testConfigs,
     testConfigsReady,
     serialPorts,
@@ -582,6 +671,9 @@ export function SessionProvider({ children }: PropsWithChildren) {
     performanceNavigationIdentity,
     connect,
     invoke,
+    refreshConfigCatalog,
+    getConfigDocument,
+    saveConfig,
     start,
     setDigitalStimulus,
     resetDigitalStimulus,
@@ -595,10 +687,16 @@ export function SessionProvider({ children }: PropsWithChildren) {
     connect,
     connectionDetail,
     connectionState,
+    configCatalog,
+    configCatalogError,
+    configCatalogReady,
     fetchAnalysisResult,
+    getConfigDocument,
     invoke,
     performanceNavigationIdentity,
+    refreshConfigCatalog,
     resetDigitalStimulus,
+    saveConfig,
     selectedConfigId,
     serialPorts,
     setDigitalStimulus,

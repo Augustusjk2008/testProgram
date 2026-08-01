@@ -1,17 +1,14 @@
 #include <app/frontend_launch_options.h>
 
-#include "mbddf_algorithm_registry.h"
-#include "run_mode_capabilities.h"
-
-#include <biz/test_config_manager.h>
+#include "configuration_service.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFileInfo>
-#include <QSet>
 
 #include <algorithm>
+#include <utility>
 
 namespace hwtest::app {
 
@@ -31,101 +28,35 @@ ActionResult failure(const QString& code, const QString& message)
     return ActionResult{false, code, message};
 }
 
-bool makeTestConfigOption(const QString& configPath,
-                          FrontendTestConfigOption* output)
-{
-    if (output == nullptr) {
-        return false;
-    }
-
-    hwtest::biz::TestConfigManager manager;
-    const auto loaded = manager.load(configPath);
-    if (!loaded.ok()) {
-        return false;
-    }
-    QVector<QString> supportedRunModes;
-    if (!parseSupportedRunModes(loaded.value.reportFields,
-                                &supportedRunModes).isEmpty()) {
-        return false;
-    }
-    bool stoppable = true;
-    if (!parseStoppableCapability(loaded.value.reportFields,
-                                  supportedRunModes,
-                                  &stoppable).isEmpty()) {
-        return false;
-    }
-
-    const hwtest::biz::TestStep* selectedStep = nullptr;
-    for (const hwtest::biz::TestStep& step : loaded.value.steps) {
-        if (!step.enabled) {
-            continue;
-        }
-        if (selectedStep != nullptr || !isSupportedMbdDfAlgorithm(step.algorithmId)) {
-            return false;
-        }
-        selectedStep = &step;
-    }
-    if (selectedStep == nullptr) {
-        return false;
-    }
-
-    QString title = loaded.value.reportFields.value(QStringLiteral("title"))
-                        .toString().trimmed();
-    if (title.isEmpty()) {
-        title = selectedStep->name.trimmed();
-    }
-    if (title.isEmpty()) {
-        title = selectedStep->testItemId;
-    }
-    *output = FrontendTestConfigOption{
-        loaded.value.configId,
-        title,
-        loaded.value.reportFields.value(QStringLiteral("description"))
-            .toString().trimmed(),
-        selectedStep->algorithmId,
-        QFileInfo(configPath).absoluteFilePath(),
-    };
-    return true;
-}
-
-QVector<FrontendTestConfigOption> discoverTestConfigs(
+ActionResult discoverTestConfigs(
     const QString& baseDirectory,
-    const QString& selectedConfigPath)
+    QVector<FrontendTestConfigOption>* output,
+    ConfigurationCatalog* catalogOutput)
 {
-    QVector<FrontendTestConfigOption> result;
+    if (output == nullptr || catalogOutput == nullptr) {
+        return failure(QStringLiteral("invalid_output"),
+                       QStringLiteral("Test configuration discovery output is required"));
+    }
     const QDir configDirectory(QDir(baseDirectory).filePath(QStringLiteral("configs")));
-    QStringList configPaths;
-    const QString selectedAbsolute = QFileInfo(selectedConfigPath).absoluteFilePath();
-    if (!selectedConfigPath.trimmed().isEmpty()) {
-        configPaths.push_back(selectedAbsolute);
-    }
-    if (configDirectory.exists()) {
-        for (const QString& name : configDirectory.entryList(
-                 QStringList{QStringLiteral("*.testcfg.json")},
-                 QDir::Files,
-                 QDir::Name)) {
-            const QString path = configDirectory.absoluteFilePath(name);
-            if (!configPaths.contains(path)) {
-                configPaths.push_back(path);
-            }
-        }
-    }
+    ConfigurationService service(configDirectory.absolutePath(), {});
+    ConfigurationCatalog catalog;
+    const ActionResult listed = service.catalog(&catalog);
+    if (!listed.ok) return listed;
 
-    QSet<QString> configIds;
-    for (const QString& configPath : configPaths) {
-        FrontendTestConfigOption option;
-        if (!makeTestConfigOption(configPath, &option) ||
-            option.configId.trimmed().isEmpty() ||
-            configIds.contains(option.configId)) {
-            continue;
-        }
-        configIds.insert(option.configId);
-        result.push_back(option);
+    QVector<FrontendTestConfigOption> result;
+    for (const ConfigurationCatalogItem& item : catalog.items) {
+        if (!item.enabled || !item.valid) continue;
+        result.push_back(FrontendTestConfigOption{
+            item.configId,
+            item.title,
+            item.description,
+            item.algorithmId,
+            configDirectory.absoluteFilePath(item.documentId),
+        });
     }
-    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
-        return left.configId < right.configId;
-    });
-    return result;
+    *output = std::move(result);
+    *catalogOutput = std::move(catalog);
+    return {};
 }
 
 } // namespace
@@ -175,7 +106,42 @@ ActionResult readFrontendOptions(const QCommandLineParser& parser,
     result.halConfigPath = resolvedPath(halConfig, baseDirectory);
     result.controlResourceId = parser.value(QStringLiteral("control")).trimmed();
     result.serialPortName = parser.value(QStringLiteral("serial-port")).trimmed();
-    result.testConfigs = discoverTestConfigs(baseDirectory, result.testConfigPath);
+    result.configurationDirectory = QDir(baseDirectory)
+                                        .absoluteFilePath(QStringLiteral("configs"));
+    ConfigurationCatalog catalog;
+    const ActionResult discovered = discoverTestConfigs(
+        baseDirectory, &result.testConfigs, &catalog);
+    if (!discovered.ok) return discovered;
+    const QString catalogPath = QDir(result.configurationDirectory).filePath(
+        QStringLiteral("test-config-catalog.json"));
+    if (QFileInfo(catalogPath).isFile()) {
+        const QString selectedAbsolute = QFileInfo(result.testConfigPath).absoluteFilePath();
+        const auto catalogItem = std::find_if(
+            catalog.items.cbegin(), catalog.items.cend(),
+            [&result, &selectedAbsolute](const ConfigurationCatalogItem& item) {
+                return QFileInfo(QDir(result.configurationDirectory)
+                                     .filePath(item.documentId))
+                           .absoluteFilePath() == selectedAbsolute;
+            });
+        if (parser.isSet(QStringLiteral("test-config")) &&
+            catalogItem != catalog.items.cend() && !catalogItem->enabled) {
+            return failure(
+                QStringLiteral("test_config_disabled"),
+                QStringLiteral("Selected test configuration '%1' is disabled")
+                    .arg(catalogItem->documentId));
+        }
+        const auto selected = std::find_if(
+            result.testConfigs.cbegin(), result.testConfigs.cend(),
+            [&selectedAbsolute](const FrontendTestConfigOption& option) {
+                return QFileInfo(option.configPath).absoluteFilePath() == selectedAbsolute;
+            });
+        if (!parser.isSet(QStringLiteral("test-config")) &&
+            selected == result.testConfigs.cend()) {
+            result.testConfigPath = result.testConfigs.isEmpty()
+                ? QString{}
+                : result.testConfigs.first().configPath;
+        }
+    }
     *output = result;
     return {};
 }
@@ -183,8 +149,14 @@ ActionResult readFrontendOptions(const QCommandLineParser& parser,
 ActionResult configureController(TestApplicationController& controller,
                                  const FrontendLaunchOptions& options)
 {
-    ActionResult result = controller.loadConfigurations(options.testConfigPath,
-                                                        options.halConfigPath);
+    const QString configurationDirectory = options.configurationDirectory.trimmed().isEmpty()
+        ? QFileInfo(options.halConfigPath).absolutePath()
+        : options.configurationDirectory;
+    ActionResult result = controller.configureConfigurationStorage(
+        configurationDirectory, options.halConfigPath);
+    if (!result.ok || options.testConfigPath.trimmed().isEmpty()) return result;
+    result = controller.loadConfigurations(options.testConfigPath,
+                                           options.halConfigPath);
     if (!result.ok) {
         return result;
     }

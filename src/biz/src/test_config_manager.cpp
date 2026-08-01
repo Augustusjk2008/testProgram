@@ -742,15 +742,26 @@ Result<TestConfig> TestConfigManager::load(const ConfigPath& filePath) const
                                        .arg(filePath, file.errorString()));
     }
 
+    return parse(file.readAll(), filePath);
+}
+
+// 从内存中的 JSON 内容解析配置，供保存前的非破坏性校验复用
+Result<TestConfig> TestConfigManager::parse(const QByteArray& contents,
+                                            const QString& sourceName) const
+{
+    const QString source = sourceName.trimmed().isEmpty()
+        ? QStringLiteral("configuration")
+        : sourceName;
+
     // 解析 JSON
     QJsonParseError parseError;
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(contents, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
         const QString reason = (parseError.error == QJsonParseError::NoError)
             ? QStringLiteral("root must be an object") : parseError.errorString();
         return failure<TestConfig>(ErrorCode::ConfigParseError,
                                    QStringLiteral("Cannot parse configuration '%1': %2")
-                                       .arg(filePath, reason));
+                                       .arg(source, reason));
     }
 
     // JSON → TestConfig

@@ -1,5 +1,6 @@
 import {
   ChartLine,
+  Gear,
   Gauge,
   Moon,
   Pulse,
@@ -15,12 +16,13 @@ import { isPerformanceCapabilityEnabled } from '../features/performance/performa
 import { connectionStateLabel } from '../shared/format'
 import { useTheme } from './ThemeProvider'
 
-export type PageId = 'overview' | 'charts' | 'performance' | 'board-test' | 'diagnostics'
+export type PageId = 'overview' | 'charts' | 'performance' | 'board-test' | 'config' | 'diagnostics'
 
 const NAV_ITEMS = [
   { id: 'overview' as const, label: '任务', icon: Gauge },
   { id: 'charts' as const, label: '曲线', icon: ChartLine },
   { id: 'performance' as const, label: '性能', icon: Pulse },
+  { id: 'config' as const, label: '配置', icon: Gear },
   { id: 'diagnostics' as const, label: '诊断', icon: TerminalWindow },
 ]
 
