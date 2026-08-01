@@ -15,16 +15,16 @@
 
 | 范围 | CMake/测试目标 | 测试源文件 | 源级 GoogleTest 定义 | 当前验证重点 |
 | --- | --- | ---: | ---: | --- |
-| `tests/hal/` | `hwtest_hal_tests` | 10 | 56 | HAL 会话、资源、安全态、Provider、Mock、C ABI 和 Adapter 路由 |
+| `tests/hal/` | `hwtest_hal_tests` | 11 | 62 | HAL 会话、资源、安全态、Provider、Mock、C ABI 和 Adapter 路由 |
 | `tests/log/` | `hwtest_log_tests` | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
 | `tests/biz/` | `hwtest_biz_tests` | 6 | 45 | 配置、计划、三种运行模式、调度、线程、状态和报告 |
-| `tests/algorithm/` | `hwtest_algorithm_tests` | 16 | 133 | 协议 CSV、编解码、运行参数、串口、DH、DI、板级流程、流式算法和后处理 |
-| `tests/app/` | `hwtest_app_tests`、`hwtest_gui_tests`、`hwtest_web_tests` | 17 | 202 | 控制器、配置发现与持久化、TUI/GUI/WebSocket、连续保存、fixture、分析与 Web 出站边界 |
+| `tests/algorithm/` | `hwtest_algorithm_tests` | 16 | 134 | 协议 CSV、编解码、运行参数、串口、DH、DI、板级流程、流式算法和后处理 |
+| `tests/app/` | `hwtest_app_tests`、`hwtest_gui_tests`、`hwtest_web_tests` | 17 | 207 | 控制器、配置发现与持久化、TUI/GUI/WebSocket、连续保存、fixture、分析与 Web 出站边界 |
 | `src/adapters/ni_daqmx/tests/` | `hwtest_ni_daqmx_adapter_fake_tests` | 1 | 0 | 生产 Adapter 源码配合 Fake NIDAQmx 的软件路径 |
 
-- 合计为 52 个测试源文件：51 个含 GoogleTest 定义的源文件和 1 个 NI Fake 自定义 main；GoogleTest 定义数为 443。
-- 在一个已完成发现的构建树中，当前应有 454 条 CTest：443 条动态 GoogleTest、10 条应用进程测试和 1 条 NI Fake CTest。`ctest -N` 只核对该清单，不证明通过。
-- 浏览器前端当前有 29 个 `*.test.ts`/`*.test.tsx` 文件和 127 条 Vitest；它们不计入 454 条 CTest。
+- 合计为 54 个测试源文件：53 个含 GoogleTest 定义的源文件和 1 个 NI Fake 自定义 main；GoogleTest 定义数为 455。
+- 在一个已完成发现的构建树中，当前应有 466 条 CTest：455 条动态 GoogleTest、10 条应用进程测试和 1 条 NI Fake CTest。`ctest -N` 只核对该清单，不证明通过。
+- 浏览器前端当前有 34 个 `*.test.ts`/`*.test.tsx` 文件和 146 条 Vitest；它们不计入 466 条 CTest。
 
 ### 2.1 当前配置与运行模式门禁
 
@@ -37,7 +37,7 @@
 | `device_stream` | `dh_ignite_stream`、`imu_stream`、`helm_stream` |
 
 - 同一配置不得同时声明 `pc_periodic` 和 `device_stream`；能力字段缺失时只安全回退到 `single`。
-- 配置编辑回归至少锁定目录启停、禁用项不会被后续 `load` 复活、排队选择不回退、损坏目录拒绝启动、失败加载不改变既有存储绑定、SHA-256 陈旧 revision 不覆盖、testcfg 只读身份、工位叶子覆盖不改基础 HAL、目录与三份配置源在 `prepare()` 前的漂移检查、重载失败时返回 `config_reload_failed` 并恢复原文件，以及准备/运行期间拒绝保存。revision 回归不作为多进程强 CAS 证据；这些主机测试也不构成串口或 PXI 真机验收。
+- 配置编辑回归至少锁定目录启停、禁用项不会被后续 `load` 复活、排队选择不回退、损坏目录拒绝启动、失败加载不改变既有存储绑定、SHA-256 陈旧 revision 不覆盖、testcfg 只读身份、产品工程师表单描述及默认值、工位叶子覆盖不改基础 HAL、只读串口/NI 候选发现与手工输入降级、目录与三份配置源在 `prepare()` 前的漂移检查、重载失败时返回 `config_reload_failed` 并恢复原文件，以及准备/运行期间拒绝保存。revision 回归不作为多进程强 CAS 证据；这些主机测试也不构成串口或 PXI 真机验收。
 - `HELM_BOARD_TEST` 的 `automatic`/`manual` 是算法运行参数，不是 BIZ run mode。
 - `DO_WRITE` 是一次用户选择的完整掩码交互；测试完成、停止、断开和退出均发送 **0 次额外复位帧**。回归必须锁定“一次用户掩码、零额外复位帧”，不得描述为多步流程。
 

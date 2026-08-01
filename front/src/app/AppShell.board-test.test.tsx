@@ -17,11 +17,18 @@ const themeHooks = vi.hoisted(() => ({
 }))
 
 vi.mock('../features/session/SessionProvider', () => sessionHooks)
+vi.mock('../features/session/RunControlBar', () => ({
+  RunControlBar: () => <div data-testid="run-control-bar">运行控制</div>,
+}))
 vi.mock('./ThemeProvider', () => themeHooks)
 
-import { AppShell } from './AppShell'
+import { AppShell, type PageId, type WorkspaceId } from './AppShell'
 
-function renderShell(algorithmId: string): string {
+function renderShell(
+  algorithmId: string,
+  workspace: WorkspaceId = 'test',
+  page: PageId = 'overview',
+): string {
   const snapshot: ApplicationSnapshot = {
     ...EMPTY_SNAPSHOT,
     algorithmId,
@@ -54,7 +61,14 @@ function renderShell(algorithmId: string): string {
     },
   })
   return renderToStaticMarkup(
-    <AppShell onPageChange={vi.fn()} page="overview"><div>内容</div></AppShell>,
+    <AppShell
+      onPageChange={vi.fn()}
+      onWorkspaceChange={vi.fn()}
+      page={page}
+      workspace={workspace}
+    >
+      <div>内容</div>
+    </AppShell>,
   )
 }
 
@@ -63,8 +77,21 @@ beforeEach(() => {
 })
 
 describe('board-test navigation', () => {
-  it('always exposes the configuration page', () => {
-    expect(renderShell('mbddf.unrelated')).toContain('<strong>配置</strong>')
+  it('keeps system configuration outside the per-test main navigation', () => {
+    const markup = renderShell('mbddf.unrelated')
+    const primaryNavigation = markup.match(/<nav aria-label="主导航">([\s\S]*?)<\/nav>/)?.[1] ?? ''
+
+    expect(primaryNavigation).not.toContain('<strong>配置</strong>')
+    expect(markup).toContain('<strong>系统配置</strong>')
+  })
+
+  it('does not show test run controls inside system configuration', () => {
+    const markup = renderShell('mbddf.unrelated', 'configuration')
+
+    expect(markup).not.toContain('data-testid="run-control-bar"')
+    expect(markup).not.toContain('aria-label="主导航"')
+    expect(markup).toContain('返回测试工作台')
+    expect(markup).not.toContain('任务 ID')
   })
 
   it.each(['mbddf.do_write', 'mbddf.helm_board_test'])(

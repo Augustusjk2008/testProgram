@@ -76,6 +76,7 @@ QStringList modulesFromMask(unsigned int mask)
     if ((mask & HAL_MODULE_DIGITAL) != 0u) modules.push_back(QStringLiteral("digital"));
     if ((mask & HAL_MODULE_SERIAL) != 0u) modules.push_back(QStringLiteral("serial"));
     if ((mask & HAL_MODULE_CANFD) != 0u) modules.push_back(QStringLiteral("canfd"));
+    if ((mask & HAL_MODULE_COUNTER) != 0u) modules.push_back(QStringLiteral("counter"));
     return modules;
 }
 

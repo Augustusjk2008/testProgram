@@ -31,6 +31,7 @@ TEST(WebProtocolTest, AcceptsEveryVersionOneAction)
         QStringLiteral("configCatalog"),
         QStringLiteral("configDocument"),
         QStringLiteral("saveConfig"),
+        QStringLiteral("hardwareOptions"),
         QStringLiteral("snapshot"),
         QStringLiteral("analysisResult"),
         QStringLiteral("controls"),

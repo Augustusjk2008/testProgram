@@ -26,6 +26,56 @@ QByteArray readAll(const QString& path)
     return file.readAll();
 }
 
+QVariantMap sectionById(const QVariantMap& schema, const QString& id)
+{
+    for (const QVariant& value : schema.value(QStringLiteral("sections")).toList()) {
+        const QVariantMap section = value.toMap();
+        if (section.value(QStringLiteral("id")).toString() == id) return section;
+    }
+    return {};
+}
+
+QVariantMap fieldByPath(const QVariantMap& schema, const QString& path)
+{
+    for (const QVariant& sectionValue : schema.value(QStringLiteral("sections")).toList()) {
+        for (const QVariant& fieldValue :
+             sectionValue.toMap().value(QStringLiteral("fields")).toList()) {
+            const QVariantMap field = fieldValue.toMap();
+            if (field.value(QStringLiteral("path")).toString() == path) return field;
+        }
+    }
+    return {};
+}
+
+QVariantMap listByPath(const QVariantMap& schema, const QString& path)
+{
+    for (const QVariant& sectionValue : schema.value(QStringLiteral("sections")).toList()) {
+        for (const QVariant& listValue :
+             sectionValue.toMap().value(QStringLiteral("lists")).toList()) {
+            const QVariantMap list = listValue.toMap();
+            if (list.value(QStringLiteral("path")).toString() == path) return list;
+        }
+    }
+    return {};
+}
+
+QVariantMap columnByPath(const QVariantMap& list, const QString& path)
+{
+    for (const QVariant& value : list.value(QStringLiteral("columns")).toList()) {
+        const QVariantMap column = value.toMap();
+        if (column.value(QStringLiteral("path")).toString() == path) return column;
+    }
+    return {};
+}
+
+bool hasOptionValue(const QVariantMap& field, const QVariant& expected)
+{
+    for (const QVariant& value : field.value(QStringLiteral("options")).toList()) {
+        if (value.toMap().value(QStringLiteral("value")) == expected) return true;
+    }
+    return false;
+}
+
 TEST(ConfigurationServiceTest, CatalogUsesPersistedOrderAndDisablesUnregisteredFiles)
 {
     QTemporaryDir directory;
@@ -184,6 +234,224 @@ TEST(ConfigurationServiceTest, StationDocumentProjectsHardwareLeavesWithoutChang
                   .value(QStringLiteral("physicalIndex")).toInt(),
               7);
     EXPECT_EQ(readAll(basePath), baseBytes);
+}
+
+TEST(ConfigurationServiceTest, StationDocumentDescribesOnlyEditableFormLeaves)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString basePath = directory.filePath(QStringLiteral("mbddf_pc_hal.json"));
+    ASSERT_TRUE(QFile::copy(QString::fromUtf8(HWTEST_APP_HAL_CONFIG), basePath));
+
+    ConfigurationService service(directory.path(), basePath);
+    ConfigurationDocument station;
+    ASSERT_TRUE(service.document(QStringLiteral("mbddf-station"), &station).ok);
+
+    const QVariantMap schema = station.schema;
+    EXPECT_EQ(schema.value(QStringLiteral("contractVersion")).toInt(), 1);
+    EXPECT_EQ(schema.value(QStringLiteral("mode")).toString(), QStringLiteral("form"));
+    for (const QString& sectionId : {QStringLiteral("control"),
+                                     QStringLiteral("devices"),
+                                     QStringLiteral("serial"),
+                                     QStringLiteral("digital"),
+                                     QStringLiteral("analog")}) {
+        const QVariantMap section = sectionById(schema, sectionId);
+        ASSERT_FALSE(section.isEmpty()) << sectionId.toStdString();
+        EXPECT_TRUE(section.contains(QStringLiteral("fields")));
+        EXPECT_TRUE(section.contains(QStringLiteral("lists")));
+    }
+
+    const QVariantMap control = fieldByPath(schema, QStringLiteral("/control/resourceId"));
+    EXPECT_EQ(control.value(QStringLiteral("kind")).toString(), QStringLiteral("choice"));
+    EXPECT_TRUE(hasOptionValue(control, QStringLiteral("CONTROL_SERIAL")));
+
+    const QVariantMap ni6259Name = fieldByPath(
+        schema, QStringLiteral("/devices/ni6259_stimulus/physicalDeviceName"));
+    EXPECT_EQ(ni6259Name.value(QStringLiteral("kind")).toString(),
+              QStringLiteral("choiceOrText"));
+    EXPECT_EQ(ni6259Name.value(QStringLiteral("optionsSource")).toString(),
+              QStringLiteral("ni6259Devices"));
+    EXPECT_TRUE(ni6259Name.value(QStringLiteral("allowManualEntry")).toBool());
+    const QVariantMap ni6259Serial = fieldByPath(
+        schema, QStringLiteral("/devices/ni6259_stimulus/serialNumber"));
+    EXPECT_EQ(ni6259Serial.value(QStringLiteral("kind")).toString(),
+              QStringLiteral("choiceOrText"));
+    EXPECT_EQ(ni6259Serial.value(QStringLiteral("optionsSource")).toString(),
+              QStringLiteral("ni6259SerialNumbers"));
+
+    const QVariantMap serialPort = fieldByPath(
+        schema, QStringLiteral("/resources/CONTROL_SERIAL/portName"));
+    EXPECT_EQ(serialPort.value(QStringLiteral("kind")).toString(),
+              QStringLiteral("choiceOrText"));
+    EXPECT_EQ(serialPort.value(QStringLiteral("optionsSource")).toString(),
+              QStringLiteral("serialPorts"));
+    EXPECT_TRUE(serialPort.value(QStringLiteral("allowManualEntry")).toBool());
+    const QVariantMap dataBits = fieldByPath(
+        schema, QStringLiteral("/resources/CONTROL_SERIAL/dataBits"));
+    EXPECT_TRUE(dataBits.value(QStringLiteral("required")).toBool());
+    EXPECT_TRUE(hasOptionValue(dataBits, 5));
+    EXPECT_TRUE(hasOptionValue(dataBits, 8));
+    EXPECT_EQ(dataBits.value(QStringLiteral("defaultValue")).toInt(), 8);
+    EXPECT_TRUE(fieldByPath(schema,
+                            QStringLiteral("/resources/CONTROL_SERIAL/providerId"))
+                    .isEmpty());
+
+    const QVariantMap digitalPort = fieldByPath(
+        schema, QStringLiteral("/resources/DUT_DI3_STIM/portNumber"));
+    EXPECT_EQ(digitalPort.value(QStringLiteral("kind")).toString(),
+              QStringLiteral("choice"));
+    EXPECT_TRUE(hasOptionValue(digitalPort, 0));
+    EXPECT_TRUE(hasOptionValue(digitalPort, 1));
+    EXPECT_TRUE(hasOptionValue(digitalPort, 2));
+    int lineFieldCount = 0;
+    const QVariantList digitalFields = sectionById(schema, QStringLiteral("digital"))
+                                           .value(QStringLiteral("fields")).toList();
+    for (const QVariant& value : digitalFields) {
+        const QVariantMap field = value.toMap();
+        if (field.value(QStringLiteral("path")).toString() !=
+            QStringLiteral("/resources/DUT_DI3_STIM/lineNumber")) {
+            continue;
+        }
+        ++lineFieldCount;
+        const int port = field.value(QStringLiteral("visibleWhen")).toMap()
+                             .value(QStringLiteral("equals")).toInt();
+        EXPECT_EQ(field.value(QStringLiteral("maximum")).toInt(),
+                  port == 0 ? 31 : 7);
+    }
+    EXPECT_EQ(lineFieldCount, 3);
+    EXPECT_EQ(fieldByPath(schema,
+                           QStringLiteral("/resources/HELM_PWM1_SENSE/physicalIndex"))
+                  .value(QStringLiteral("kind")).toString(),
+              QStringLiteral("integer"));
+}
+
+TEST(ConfigurationServiceTest,
+     TestConfigFormSchemaProjectsRunParametersAndSavedCriteria)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString documentId = QStringLiteral("helm.testcfg.json");
+    const QString path = directory.filePath(documentId);
+    ASSERT_TRUE(QFile::copy(QString::fromUtf8(HWTEST_APP_HELM_STREAM_CONFIG), path));
+
+    ConfigurationService service(directory.path(), {});
+    ConfigurationDocument document;
+    ASSERT_TRUE(service.document(documentId, &document).ok);
+
+    const QVariantMap schema = document.schema;
+    EXPECT_EQ(schema.value(QStringLiteral("contractVersion")).toInt(), 1);
+    EXPECT_EQ(schema.value(QStringLiteral("mode")).toString(), QStringLiteral("form"));
+    EXPECT_TRUE(schema.value(QStringLiteral("readOnlyPaths")).toList().contains(
+        QStringLiteral("/schemaVersion")));
+    EXPECT_EQ(fieldByPath(schema, QStringLiteral("/reportFields/title"))
+                  .value(QStringLiteral("kind")).toString(),
+              QStringLiteral("text"));
+    EXPECT_EQ(fieldByPath(schema, QStringLiteral("/reportFields/description"))
+                  .value(QStringLiteral("kind")).toString(),
+              QStringLiteral("multiline"));
+    EXPECT_EQ(fieldByPath(schema, QStringLiteral("/steps/0/timeoutMs"))
+                  .value(QStringLiteral("kind")).toString(),
+              QStringLiteral("integer"));
+    EXPECT_EQ(fieldByPath(schema,
+                          QStringLiteral("/executionConfig/stream/readTimeoutMs"))
+                  .value(QStringLiteral("kind")).toString(),
+              QStringLiteral("integer"));
+
+    const QString parameterPath =
+        QStringLiteral("/steps/0/parameters/protocol/requestValues/max_freq");
+    const QVariantMap maximumFrequency = fieldByPath(schema, parameterPath);
+    EXPECT_EQ(maximumFrequency.value(QStringLiteral("kind")).toString(),
+              QStringLiteral("number"));
+    EXPECT_DOUBLE_EQ(maximumFrequency.value(QStringLiteral("defaultValue")).toDouble(),
+                     80.0);
+    const QVariantMap visibleWhen = maximumFrequency.value(
+        QStringLiteral("visibleWhen")).toMap();
+    EXPECT_EQ(visibleWhen.value(QStringLiteral("path")).toString(),
+              QStringLiteral("/steps/0/parameters/protocol/requestValues/waveform"));
+    EXPECT_EQ(visibleWhen.value(QStringLiteral("equals")).toInt(), 4);
+
+    const QVariantMap criteria = listByPath(schema, QStringLiteral("/steps/0/criteria"));
+    ASSERT_FALSE(criteria.isEmpty());
+    EXPECT_TRUE(criteria.value(QStringLiteral("allowAdd")).toBool());
+    EXPECT_TRUE(criteria.value(QStringLiteral("allowRemove")).toBool());
+    const QVariantMap operation = columnByPath(criteria, QStringLiteral("op"));
+    EXPECT_EQ(operation.value(QStringLiteral("kind")).toString(), QStringLiteral("choice"));
+    EXPECT_EQ(operation.value(QStringLiteral("options")).toList().size(), 7);
+    EXPECT_TRUE(hasOptionValue(operation, QStringLiteral("InRange")));
+    EXPECT_TRUE(operation.value(QStringLiteral("acceptOptionIndex")).toBool());
+    EXPECT_EQ(columnByPath(criteria, QStringLiteral("ref"))
+                  .value(QStringLiteral("kind")).toString(),
+              QStringLiteral("scalar"));
+
+    const QVariantMap measurements = listByPath(
+        schema, QStringLiteral("/reportFields/measurements"));
+    ASSERT_FALSE(measurements.isEmpty());
+    EXPECT_FALSE(measurements.value(QStringLiteral("allowAdd")).toBool());
+    EXPECT_FALSE(measurements.value(QStringLiteral("allowRemove")).toBool());
+    EXPECT_TRUE(columnByPath(measurements, QStringLiteral("id"))
+                    .value(QStringLiteral("readOnly")).toBool());
+    EXPECT_EQ(columnByPath(measurements, QStringLiteral("label"))
+                  .value(QStringLiteral("kind")).toString(),
+              QStringLiteral("text"));
+
+    QVariantMap draft = document.value;
+    QVariantList steps = draft.value(QStringLiteral("steps")).toList();
+    ASSERT_FALSE(steps.isEmpty());
+    QVariantMap firstStep = steps.first().toMap();
+    QVariantList criteriaDraft = firstStep.value(QStringLiteral("criteria")).toList();
+    criteriaDraft.push_back(QVariantMap{
+        {QStringLiteral("metric"), QStringLiteral("schema-only-metric")},
+        {QStringLiteral("op"), QStringLiteral("GreaterThan")},
+        {QStringLiteral("ref"), 0.0},
+        {QStringLiteral("lo"), 0.0},
+        {QStringLiteral("hi"), 0.0},
+        {QStringLiteral("tol"), 0.0},
+        {QStringLiteral("passIfMatched"), true},
+    });
+    firstStep.insert(QStringLiteral("criteria"), criteriaDraft);
+    steps[0] = firstStep;
+    draft.insert(QStringLiteral("steps"), steps);
+
+    ConfigurationDocument saved;
+    ASSERT_TRUE(service.saveDocument(documentId, document.revision, draft, &saved).ok);
+    const QVariantMap savedCriteria = listByPath(
+        saved.schema, QStringLiteral("/steps/0/criteria"));
+    EXPECT_TRUE(hasOptionValue(columnByPath(savedCriteria, QStringLiteral("metric")),
+                               QStringLiteral("schema-only-metric")));
+}
+
+TEST(ConfigurationServiceTest,
+     DiReadFormSchemaRestrictsStimulusResourcesTo6259DigitalOutputs)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString documentId = QStringLiteral("di.testcfg.json");
+    const QString testPath = directory.filePath(documentId);
+    const QString basePath = directory.filePath(QStringLiteral("mbddf_pc_hal.json"));
+    ASSERT_TRUE(QFile::copy(QString::fromUtf8(HWTEST_APP_DI_CONFIG), testPath));
+    ASSERT_TRUE(QFile::copy(QString::fromUtf8(HWTEST_APP_HAL_CONFIG), basePath));
+
+    ConfigurationService service(directory.path(), basePath);
+    ConfigurationDocument document;
+    ASSERT_TRUE(service.document(documentId, &document).ok);
+
+    const QVariantMap channels = listByPath(
+        document.schema,
+        QStringLiteral("/executionConfig/digitalStimulus/channels"));
+    ASSERT_FALSE(channels.isEmpty());
+    const QVariantMap resourceId = columnByPath(channels, QStringLiteral("resourceId"));
+    EXPECT_EQ(resourceId.value(QStringLiteral("kind")).toString(),
+              QStringLiteral("choice"));
+    EXPECT_TRUE(hasOptionValue(resourceId, QStringLiteral("DUT_DI3_STIM")));
+    EXPECT_FALSE(hasOptionValue(resourceId,
+                                 QStringLiteral("DUT_TX_ENABLE_SENSE")));
+    EXPECT_EQ(columnByPath(channels, QStringLiteral("dutBit"))
+                  .value(QStringLiteral("maximum")).toInt(),
+              15);
+    EXPECT_EQ(fieldByPath(document.schema,
+                          QStringLiteral("/executionConfig/digitalStimulus/settlingMs"))
+                  .value(QStringLiteral("kind")).toString(),
+              QStringLiteral("integer"));
 }
 
 TEST(ConfigurationControllerIntegrationTest, SavesAndReloadsCurrentTestAndStationDocuments)

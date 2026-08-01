@@ -78,6 +78,37 @@ QVector<SerialPortInfo> testSerialPorts()
     };
 }
 
+bool writeJsonObject(const QString& path, const QJsonObject& value)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    return file.write(QJsonDocument(value).toJson(QJsonDocument::Indented)) >= 0;
+}
+
+QJsonObject niAdapterHalConfig(const QString& libraryPath)
+{
+    QJsonObject adapter{
+        {QStringLiteral("adapterId"), QStringLiteral("ni.daqmx")},
+        {QStringLiteral("libraryPath"), libraryPath},
+        {QStringLiteral("settings"),
+         QJsonObject{{QStringLiteral("timeoutSeconds"), 0.25}}},
+    };
+    QJsonObject adapters;
+    adapters.insert(QStringLiteral("ni.daqmx"), adapter);
+    return QJsonObject{{QStringLiteral("adapters"), adapters}};
+}
+
+FrontendLaunchOptions hardwareOptionsLaunchOptions(const QString& halConfigPath,
+                                                    const QString& configurationDirectory)
+{
+    return FrontendLaunchOptions{QStringLiteral(HWTEST_APP_TEST_CONFIG),
+                                 halConfigPath,
+                                 {},
+                                 {},
+                                 {},
+                                 configurationDirectory};
+}
+
 TEST(WebSocketControllerIntegrationTest, QueuesLoadAndReturnsCachedSnapshot)
 {
     TestApplicationController controller;
@@ -153,7 +184,107 @@ TEST(WebSocketControllerIntegrationTest,
 }
 
 TEST(WebSocketControllerIntegrationTest,
-     SaveConfigForwardsExpectedRevisionAndValue)
+     HardwareOptionsRejectsParametersAndProjectsDetectedNiDevice)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString halPath = directory.filePath(QStringLiteral("mbddf_pc_hal.json"));
+    ASSERT_TRUE(writeJsonObject(
+        halPath,
+        niAdapterHalConfig(QStringLiteral(HAL_TEST_NI_DAQMX_ADAPTER_FIXTURE_PATH))));
+
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    WebSocketFrontendServer server(
+        &controller, hardwareOptionsLaunchOptions(halPath, directory.path()), options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+
+    const QJsonObject invalid = sendAndWait(
+        &client,
+        QStringLiteral("hardware-options-params"),
+        QStringLiteral("hardwareOptions"),
+        QJsonObject{{QStringLiteral("unexpected"), true}});
+    EXPECT_FALSE(invalid.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(invalid.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+
+    const QJsonObject reply = sendAndWait(
+        &client, QStringLiteral("hardware-options"), QStringLiteral("hardwareOptions"));
+    ASSERT_TRUE(reply.value(QStringLiteral("ok")).toBool())
+        << reply.value(QStringLiteral("message")).toString().toStdString();
+    const QJsonObject data = reply.value(QStringLiteral("data")).toObject();
+    EXPECT_EQ(data.value(QStringLiteral("state")).toString(), QStringLiteral("available"));
+    EXPECT_TRUE(data.value(QStringLiteral("allowManualEntry")).toBool());
+    const QJsonArray devices = data.value(QStringLiteral("devices")).toArray();
+    ASSERT_EQ(devices.size(), 1);
+    const QJsonObject device = devices.first().toObject();
+    EXPECT_EQ(device.value(QStringLiteral("deviceName")).toString(),
+              QStringLiteral("PXI1Slot2"));
+    EXPECT_EQ(device.value(QStringLiteral("deviceId")).toString(),
+              QStringLiteral("PXI1Slot2"));
+    EXPECT_EQ(device.value(QStringLiteral("model")).toString(),
+              QStringLiteral("PXI-6259"));
+    EXPECT_EQ(device.value(QStringLiteral("serialNumber")).toString(),
+              QStringLiteral("62590002"));
+    EXPECT_TRUE(device.value(QStringLiteral("supportedModules"))
+                    .toArray()
+                    .contains(QStringLiteral("analog")));
+    EXPECT_TRUE(device.value(QStringLiteral("supportedModules"))
+                    .toArray()
+                    .contains(QStringLiteral("digital")));
+    EXPECT_TRUE(device.value(QStringLiteral("supportedModules"))
+                    .toArray()
+                    .contains(QStringLiteral("counter")));
+}
+
+TEST(WebSocketControllerIntegrationTest,
+     HardwareOptionsKeepsManualEntryWhenNiIsMissingOrLibraryFails)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString halPath = directory.filePath(QStringLiteral("mbddf_pc_hal.json"));
+    ASSERT_TRUE(writeJsonObject(
+        halPath, QJsonObject{{QStringLiteral("adapters"), QJsonObject{}}}));
+
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    WebSocketFrontendServer server(
+        &controller, hardwareOptionsLaunchOptions(halPath, directory.path()), options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+
+    const auto assertManualEntry = [](const QJsonObject& reply,
+                                      const QString& expectedState) {
+        ASSERT_TRUE(reply.value(QStringLiteral("ok")).toBool())
+            << reply.value(QStringLiteral("message")).toString().toStdString();
+        const QJsonObject data = reply.value(QStringLiteral("data")).toObject();
+        EXPECT_EQ(data.value(QStringLiteral("state")).toString(), expectedState);
+        EXPECT_TRUE(data.value(QStringLiteral("allowManualEntry")).toBool());
+        EXPECT_TRUE(data.value(QStringLiteral("devices")).toArray().isEmpty());
+        EXPECT_FALSE(data.value(QStringLiteral("message")).toString().isEmpty());
+    };
+
+    assertManualEntry(
+        sendAndWait(&client,
+                    QStringLiteral("hardware-options-missing"),
+                    QStringLiteral("hardwareOptions")),
+        QStringLiteral("unavailable"));
+
+    ASSERT_TRUE(writeJsonObject(
+        halPath,
+        niAdapterHalConfig(QStringLiteral("Z:/definitely/missing/hwtest_adapter.dll"))));
+    assertManualEntry(
+        sendAndWait(&client,
+                    QStringLiteral("hardware-options-library"),
+                    QStringLiteral("hardwareOptions")),
+        QStringLiteral("error"));
+}
+
+TEST(WebSocketControllerIntegrationTest,
+      SaveConfigForwardsExpectedRevisionAndValue)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());

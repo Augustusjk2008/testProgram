@@ -178,6 +178,62 @@ const RunParameterSchema& serialTestSchema()
     return schema;
 }
 
+const RunParameterSchema& memperfSchema()
+{
+    static const RunParameterSchema schema = [] {
+        RunParameterSchema result;
+        result.version = QStringLiteral("1");
+
+        RunParameterDescriptor type;
+        type.id = QStringLiteral("memperf_type");
+        type.label = QStringLiteral("测试类型");
+        type.kind = RunParameterKind::Choice;
+        type.defaultValue = 0;
+        type.choices = {
+            {0, QStringLiteral("图样校验 0")},
+            {1, QStringLiteral("图样校验 1")},
+            {2, QStringLiteral("图样校验 2")},
+            {3, QStringLiteral("顺序读取带宽")},
+            {4, QStringLiteral("顺序写入带宽")},
+            {5, QStringLiteral("内存复制带宽")},
+            {6, QStringLiteral("非暂存写入带宽")},
+        };
+        result.parameters.push_back(type);
+
+        RunParameterDescriptor length = integerParameter(
+            QStringLiteral("length"), QStringLiteral("校验长度"),
+            QStringLiteral("KiB"), 65536, 1, 256 * 1024);
+        result.parameters.push_back(length);
+
+        RunParameterDescriptor seed = integerParameter(
+            QStringLiteral("seed"), QStringLiteral("图样种子"),
+            QString{}, 1515870810, 0, 0xFFFFFFFFLL);
+        result.parameters.push_back(seed);
+        return result;
+    }();
+    return schema;
+}
+
+const RunParameterSchema& timerJitterSchema()
+{
+    static const RunParameterSchema schema = [] {
+        RunParameterSchema result;
+        result.version = QStringLiteral("1");
+        RunParameterDescriptor mode;
+        mode.id = QStringLiteral("mode");
+        mode.label = QStringLiteral("负载模式");
+        mode.kind = RunParameterKind::Choice;
+        mode.defaultValue = 0;
+        mode.choices = {
+            {0, QStringLiteral("空载")},
+            {1, QStringLiteral("存储读取负载")},
+        };
+        result.parameters.push_back(mode);
+        return result;
+    }();
+    return schema;
+}
+
 const RunParameterSchema& helmSchema()
 {
     static const RunParameterSchema schema = [] {
@@ -466,6 +522,12 @@ const RunParameterSchema* findRunParameterSchema(const QString& algorithmId)
     }
     if (algorithmId == QStringLiteral("mbddf.serial_test")) {
         return &serialTestSchema();
+    }
+    if (algorithmId == QStringLiteral("mbddf.memperf")) {
+        return &memperfSchema();
+    }
+    if (algorithmId == QStringLiteral("mbddf.timer_jitter")) {
+        return &timerJitterSchema();
     }
     return nullptr;
 }

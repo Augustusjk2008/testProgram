@@ -137,6 +137,26 @@ TEST(CAbiAdapterTest, ReportsLibraryLoadFailure)
     EXPECT_EQ(status.code, HalStatusCode::AdapterLoadFailed);
 }
 
+TEST(CAbiAdapterTest, EnumeratesNiFixtureAndProjectsCounterModule)
+{
+    CAbiAdapter adapter;
+    ASSERT_TRUE(adapter.initialize(niAdapterConfig(
+        QString::fromLatin1(HAL_TEST_NI_DAQMX_ADAPTER_FIXTURE_PATH))).ok());
+
+    const auto devices = adapter.enumerateDevices(OperationOptions{});
+
+    ASSERT_TRUE(devices.ok()) << devices.status.error.message.toStdString();
+    ASSERT_EQ(devices.value.size(), 1);
+    const DeviceDescriptor& device = devices.value.first();
+    EXPECT_EQ(device.deviceId, QStringLiteral("PXI1Slot2"));
+    EXPECT_EQ(device.model, QStringLiteral("PXI-6259"));
+    EXPECT_EQ(device.serialNumber, QStringLiteral("62590002"));
+    EXPECT_TRUE(device.properties.value(QStringLiteral("supportedModules"))
+                    .toStringList()
+                    .contains(QStringLiteral("counter")));
+    EXPECT_TRUE(adapter.shutdown().ok());
+}
+
 TEST(CAbiAdapterTest, MapsLogicalAliasWhenQueryingCapabilities)
 {
     CAbiAdapter adapter;

@@ -3,6 +3,26 @@ import type { ConfigCatalogItem } from '../shared/protocol'
 export type ConfigValue = Record<string, unknown>
 export type EditableCatalogItem = ConfigCatalogItem & Record<string, unknown>
 
+export interface ConfigurationWorkspaceNavigationState {
+  dirty: boolean
+  saving: boolean
+}
+
+export function shouldPreserveConfigDraftOnReconnect(
+  wasDisconnected: boolean,
+  dirty: boolean,
+): boolean {
+  return wasDisconnected && dirty
+}
+
+export function canLeaveConfigurationWorkspace(
+  state: ConfigurationWorkspaceNavigationState,
+  confirmDiscard: () => boolean,
+): boolean {
+  if (state.saving) return false
+  return !state.dirty || confirmDiscard()
+}
+
 export type TestConfigField =
   | 'title'
   | 'description'
@@ -23,11 +43,11 @@ export interface TestConfigFormFields {
 }
 
 export function isConfigDocumentNavigationBlocked(
-  dirty: boolean,
+  _dirty: boolean,
   loading: boolean,
   saving: boolean,
 ): boolean {
-  return dirty || loading || saving
+  return loading || saving
 }
 
 function asRecord(value: unknown): ConfigValue | null {

@@ -1,5 +1,6 @@
 #include "hal/hal_factory.h"
 
+#include "c_abi_adapter.h"
 #include "hal_service.h"
 
 #include <QSerialPortInfo>
@@ -41,6 +42,24 @@ QVector<SerialPortDescriptor> availableSerialPorts()
                                             Qt::CaseInsensitive);
         return folded == 0 ? left.portName < right.portName : folded < 0;
     });
+    return result;
+}
+
+HalResult<QVector<DeviceDescriptor>> enumerateCAbiAdapterDevices(
+    const QVariantMap& driverConfig,
+    const OperationOptions& options)
+{
+    CAbiAdapter adapter;
+    const HalStatus initialized = adapter.initialize(driverConfig);
+    if (!initialized.ok()) {
+        return HalResult<QVector<DeviceDescriptor>>{initialized, {}};
+    }
+
+    HalResult<QVector<DeviceDescriptor>> result = adapter.enumerateDevices(options);
+    const HalStatus stopped = adapter.shutdown();
+    if (result.ok() && !stopped.ok()) {
+        result.status = stopped;
+    }
     return result;
 }
 

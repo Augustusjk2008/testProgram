@@ -3,6 +3,7 @@
 #include "mbddf_algorithm_registry.h"
 #include "run_mode_capabilities.h"
 
+#include <algorithm/run_parameter_schema.h>
 #include <biz/test_config_manager.h>
 
 #include <QCryptographicHash>
@@ -565,18 +566,733 @@ ActionResult applyStationOverlay(const QVariantMap& base,
     return {};
 }
 
-QVariantMap schemaFor(const QString& kind)
+QString escapedJsonPointerSegment(QString value)
 {
-    if (kind == QStringLiteral("testcfg")) {
-        return QVariantMap{
-            {QStringLiteral("readOnlyPaths"),
-             QVariantList{QStringLiteral("/schemaVersion"),
-                          QStringLiteral("/configId"),
-                          QStringLiteral("/steps/*/algorithmId")}},
-            {QStringLiteral("advancedPaths"),
-             QVariantList{QStringLiteral("/executionConfig")}},
-        };
+    value.replace(QLatin1Char('~'), QStringLiteral("~0"));
+    value.replace(QLatin1Char('/'), QStringLiteral("~1"));
+    return value;
+}
+
+QVariantMap formOption(const QVariant& value, const QString& label)
+{
+    return QVariantMap{{QStringLiteral("value"), value},
+                       {QStringLiteral("label"), label}};
+}
+
+QVariantMap formField(const QString& path,
+                      const QString& label,
+                      const QString& kind)
+{
+    return QVariantMap{{QStringLiteral("path"), path},
+                       {QStringLiteral("label"), label},
+                       {QStringLiteral("kind"), kind}};
+}
+
+QVariantMap formSection(const QString& id,
+                        const QString& title,
+                        const QString& description = {})
+{
+    QVariantMap section{{QStringLiteral("id"), id},
+                        {QStringLiteral("title"), title},
+                        {QStringLiteral("fields"), QVariantList{}},
+                        {QStringLiteral("lists"), QVariantList{}}};
+    if (!description.isEmpty()) {
+        section.insert(QStringLiteral("description"), description);
     }
+    return section;
+}
+
+void appendFormField(QVariantMap* section, QVariantMap field)
+{
+    QVariantList fields = section->value(QStringLiteral("fields")).toList();
+    fields.push_back(std::move(field));
+    section->insert(QStringLiteral("fields"), fields);
+}
+
+void appendFormList(QVariantMap* section, QVariantMap list)
+{
+    QVariantList lists = section->value(QStringLiteral("lists")).toList();
+    lists.push_back(std::move(list));
+    section->insert(QStringLiteral("lists"), lists);
+}
+
+QVariantMap emptyFormSchema()
+{
+    return QVariantMap{{QStringLiteral("contractVersion"), 1},
+                       {QStringLiteral("mode"), QStringLiteral("form")},
+                       {QStringLiteral("sections"), QVariantList{}}};
+}
+
+QString runParameterKindName(
+    hwtest::algorithm::mbddf::RunParameterKind kind)
+{
+    using Kind = hwtest::algorithm::mbddf::RunParameterKind;
+    switch (kind) {
+    case Kind::Integer: return QStringLiteral("integer");
+    case Kind::Number: return QStringLiteral("number");
+    case Kind::Boolean: return QStringLiteral("boolean");
+    case Kind::Choice: return QStringLiteral("choice");
+    }
+    return {};
+}
+
+QVariantList criterionMetricOptions(const QVariantMap& value,
+                                    const QVariantMap& firstStep)
+{
+    QMap<QString, QString> labels;
+    const auto addMetric = [&labels](const QString& id, QString label) {
+        const QString normalized = id.trimmed();
+        if (normalized.isEmpty() || labels.contains(normalized)) return;
+        label = label.trimmed();
+        labels.insert(normalized, label.isEmpty() ? normalized : label);
+    };
+
+    const QVariantMap reportFields = value.value(QStringLiteral("reportFields")).toMap();
+    for (const QVariant& measurementValue :
+         reportFields.value(QStringLiteral("measurements")).toList()) {
+        const QVariantMap measurement = measurementValue.toMap();
+        addMetric(measurement.value(QStringLiteral("id")).toString(),
+                  measurement.value(QStringLiteral("label")).toString());
+    }
+    for (const QVariant& criterionValue :
+         firstStep.value(QStringLiteral("criteria")).toList()) {
+        const QString metric = criterionValue.toMap()
+                                   .value(QStringLiteral("metric"))
+                                   .toString();
+        addMetric(metric, metric);
+    }
+
+    QVariantList options;
+    for (auto it = labels.cbegin(); it != labels.cend(); ++it) {
+        options.push_back(formOption(it.key(), it.value()));
+    }
+    return options;
+}
+
+QVariantMap criteriaListSchema(const QVariantMap& value,
+                               const QVariantMap& firstStep)
+{
+    const QVariantList metricOptions = criterionMetricOptions(value, firstStep);
+    QVariantMap metric = formField(QStringLiteral("metric"),
+                                   QStringLiteral("指标"),
+                                   QStringLiteral("choice"));
+    metric.insert(QStringLiteral("options"), metricOptions);
+
+    QVariantMap operation = formField(QStringLiteral("op"),
+                                      QStringLiteral("比较"),
+                                      QStringLiteral("choice"));
+    operation.insert(
+        QStringLiteral("options"),
+         QVariantList{formOption(QStringLiteral("GreaterThan"),
+                                 QStringLiteral("大于 (>)")),
+                      formOption(QStringLiteral("GreaterOrEqual"),
+                                 QStringLiteral("大于等于 (≥)")),
+                      formOption(QStringLiteral("LessThan"),
+                                 QStringLiteral("小于 (<)")),
+                      formOption(QStringLiteral("LessOrEqual"),
+                                 QStringLiteral("小于等于 (≤)")),
+                      formOption(QStringLiteral("Equal"), QStringLiteral("等于 (=)")),
+                      formOption(QStringLiteral("NotEqual"), QStringLiteral("不等于 (≠)")),
+                      formOption(QStringLiteral("InRange"), QStringLiteral("范围内"))});
+    operation.insert(QStringLiteral("acceptOptionIndex"), true);
+
+    QVariantMap defaults{{QStringLiteral("metric"),
+                          metricOptions.isEmpty()
+                              ? QVariant{}
+                              : metricOptions.first().toMap()
+                                    .value(QStringLiteral("value"))},
+                         {QStringLiteral("op"), QStringLiteral("GreaterThan")},
+                         {QStringLiteral("ref"), 0.0},
+                         {QStringLiteral("lo"), 0.0},
+                         {QStringLiteral("hi"), 0.0},
+                         {QStringLiteral("tol"), 0.0},
+                         {QStringLiteral("passIfMatched"), true}};
+    return QVariantMap{
+        {QStringLiteral("path"), QStringLiteral("/steps/0/criteria")},
+        {QStringLiteral("label"), QStringLiteral("判定条件")},
+        {QStringLiteral("description"), QStringLiteral("测试结果判定阈值")},
+        {QStringLiteral("addLabel"), QStringLiteral("添加判定条件")},
+        {QStringLiteral("itemDefaults"), defaults},
+        {QStringLiteral("allowAdd"), true},
+        {QStringLiteral("allowRemove"), true},
+        {QStringLiteral("columns"),
+         QVariantList{metric,
+                      operation,
+                      formField(QStringLiteral("ref"), QStringLiteral("参考值"),
+                                QStringLiteral("scalar")),
+                      formField(QStringLiteral("lo"), QStringLiteral("下限"),
+                                QStringLiteral("number")),
+                      formField(QStringLiteral("hi"), QStringLiteral("上限"),
+                                QStringLiteral("number")),
+                      formField(QStringLiteral("tol"), QStringLiteral("容差"),
+                                QStringLiteral("number")),
+                      formField(QStringLiteral("passIfMatched"),
+                                QStringLiteral("匹配即通过"),
+                                QStringLiteral("boolean"))}},
+    };
+}
+
+QVariantMap measurementDisplayListSchema(const QVariantMap& value)
+{
+    const QVariantList measurements = value.value(QStringLiteral("reportFields")).toMap()
+                                          .value(QStringLiteral("measurements")).toList();
+    if (measurements.isEmpty()) return {};
+
+    QVariantMap id = formField(QStringLiteral("id"), QStringLiteral("指标 ID"),
+                               QStringLiteral("text"));
+    id.insert(QStringLiteral("readOnly"), true);
+    QVariantMap label = formField(QStringLiteral("label"), QStringLiteral("显示名称"),
+                                  QStringLiteral("text"));
+    label.insert(QStringLiteral("required"), true);
+    return QVariantMap{
+        {QStringLiteral("path"), QStringLiteral("/reportFields/measurements")},
+        {QStringLiteral("label"), QStringLiteral("结果显示")},
+        {QStringLiteral("description"),
+         QStringLiteral("指标 ID 由算法固定，只调整界面名称、单位和重点显示")},
+        {QStringLiteral("allowAdd"), false},
+        {QStringLiteral("allowRemove"), false},
+        {QStringLiteral("itemDefaults"), QVariantMap{}},
+        {QStringLiteral("columns"),
+         QVariantList{id,
+                      label,
+                      formField(QStringLiteral("unit"), QStringLiteral("单位"),
+                                QStringLiteral("text")),
+                      formField(QStringLiteral("primary"), QStringLiteral("重点显示"),
+                                QStringLiteral("boolean"))}},
+    };
+}
+
+void appendExecutionField(QVariantMap* section,
+                          const QVariantMap& owner,
+                          const QString& key,
+                          const QString& path,
+                          const QString& label,
+                          const QString& kind,
+                          const QString& unit = {},
+                          double minimum = 0.0)
+{
+    if (!owner.contains(key)) return;
+    QVariantMap field = formField(path, label, kind);
+    field.insert(QStringLiteral("required"), true);
+    field.insert(QStringLiteral("minimum"), minimum);
+    if (!unit.isEmpty()) field.insert(QStringLiteral("unit"), unit);
+    appendFormField(section, std::move(field));
+}
+
+QVariantMap executionTimingSection(const QVariantMap& value)
+{
+    const QVariantMap execution = value.value(QStringLiteral("executionConfig")).toMap();
+    QVariantMap section = formSection(
+        QStringLiteral("executionTiming"),
+        QStringLiteral("执行时序"),
+        QStringLiteral("硬件打开、流式收发和夹具采样的工程参数"));
+
+    const QVariantMap transport = execution.value(QStringLiteral("transport")).toMap();
+    appendExecutionField(&section, transport, QStringLiteral("openTimeoutMs"),
+                         QStringLiteral("/executionConfig/transport/openTimeoutMs"),
+                         QStringLiteral("硬件打开超时"), QStringLiteral("integer"),
+                         QStringLiteral("ms"));
+
+    const QVariantMap stream = execution.value(QStringLiteral("stream")).toMap();
+    appendExecutionField(&section, stream, QStringLiteral("readTimeoutMs"),
+                         QStringLiteral("/executionConfig/stream/readTimeoutMs"),
+                         QStringLiteral("流式读取超时"), QStringLiteral("integer"),
+                         QStringLiteral("ms"));
+    appendExecutionField(&section, stream, QStringLiteral("startTimeoutMs"),
+                         QStringLiteral("/executionConfig/stream/startTimeoutMs"),
+                         QStringLiteral("启动响应超时"), QStringLiteral("integer"),
+                         QStringLiteral("ms"));
+    appendExecutionField(&section, stream, QStringLiteral("stopTimeoutMs"),
+                         QStringLiteral("/executionConfig/stream/stopTimeoutMs"),
+                         QStringLiteral("停止响应超时"), QStringLiteral("integer"),
+                         QStringLiteral("ms"));
+
+    const QVariantMap stimulus = execution.value(QStringLiteral("digitalStimulus")).toMap();
+    appendExecutionField(&section, stimulus, QStringLiteral("settlingMs"),
+                         QStringLiteral("/executionConfig/digitalStimulus/settlingMs"),
+                         QStringLiteral("数字激励稳定时间"), QStringLiteral("integer"),
+                         QStringLiteral("ms"));
+
+    const QVariantMap fixture = execution.value(QStringLiteral("boardFixture")).toMap();
+    appendExecutionField(&section, fixture, QStringLiteral("settlingMs"),
+                         QStringLiteral("/executionConfig/boardFixture/settlingMs"),
+                         QStringLiteral("夹具稳定时间"), QStringLiteral("integer"),
+                         QStringLiteral("ms"));
+    appendExecutionField(&section, fixture, QStringLiteral("directionSampleRateHz"),
+                         QStringLiteral("/executionConfig/boardFixture/directionSampleRateHz"),
+                         QStringLiteral("方向采样率"), QStringLiteral("number"),
+                         QStringLiteral("Hz"), 1.0);
+    appendExecutionField(&section, fixture, QStringLiteral("directionSamplesPerChannel"),
+                         QStringLiteral("/executionConfig/boardFixture/directionSamplesPerChannel"),
+                         QStringLiteral("方向每通道采样点数"), QStringLiteral("integer"),
+                         QStringLiteral("点"), 1.0);
+    appendExecutionField(&section, fixture, QStringLiteral("pwmSampleRateHz"),
+                         QStringLiteral("/executionConfig/boardFixture/pwmSampleRateHz"),
+                         QStringLiteral("PWM 采样率"), QStringLiteral("number"),
+                         QStringLiteral("Hz"), 1.0);
+    appendExecutionField(&section, fixture, QStringLiteral("pwmSamplesPerChannel"),
+                         QStringLiteral("/executionConfig/boardFixture/pwmSamplesPerChannel"),
+                         QStringLiteral("PWM 每通道采样点数"), QStringLiteral("integer"),
+                         QStringLiteral("点"), 1.0);
+    return section;
+}
+
+QVariantMap digitalStimulusChannelsListSchema(const QVariantMap& value,
+                                              const QVariantMap& base)
+{
+    const QVariantList steps = value.value(QStringLiteral("steps")).toList();
+    if (steps.isEmpty() ||
+        steps.first().toMap().value(QStringLiteral("algorithmId")).toString() !=
+            QStringLiteral("mbddf.di_read")) {
+        return {};
+    }
+    const QVariantMap stimulus = value.value(QStringLiteral("executionConfig")).toMap()
+                                     .value(QStringLiteral("digitalStimulus"))
+                                     .toMap();
+    if (stimulus.value(QStringLiteral("channels")).userType() !=
+        QMetaType::QVariantList) {
+        return {};
+    }
+
+    QVariantList resourceOptions;
+    const QVariantMap resources = base.value(QStringLiteral("hardware")).toMap()
+                                      .value(QStringLiteral("resources")).toMap();
+    for (auto it = resources.cbegin(); it != resources.cend(); ++it) {
+        const QVariantMap resource = it.value().toMap();
+        if (resource.value(QStringLiteral("device")).toString() ==
+                QStringLiteral("ni6259_stimulus") &&
+            resource.value(QStringLiteral("module")).toString() ==
+                QStringLiteral("digital") &&
+            resource.value(QStringLiteral("direction")).toString() ==
+                QStringLiteral("output")) {
+            resourceOptions.push_back(formOption(it.key(), it.key()));
+        }
+    }
+
+    QVariantMap resourceId = formField(QStringLiteral("resourceId"),
+                                       QStringLiteral("资源"),
+                                       QStringLiteral("choice"));
+    resourceId.insert(QStringLiteral("options"), resourceOptions);
+    const QVariantMap activeLevel = QVariantMap{
+        {QStringLiteral("path"), QStringLiteral("activeLevel")},
+        {QStringLiteral("label"), QStringLiteral("有效电平")},
+        {QStringLiteral("kind"), QStringLiteral("choice")},
+        {QStringLiteral("options"),
+         QVariantList{formOption(QStringLiteral("High"), QStringLiteral("高电平")),
+                      formOption(QStringLiteral("Low"), QStringLiteral("低电平"))}},
+    };
+    return QVariantMap{
+        {QStringLiteral("path"),
+         QStringLiteral("/executionConfig/digitalStimulus/channels")},
+        {QStringLiteral("label"), QStringLiteral("数字激励通道")},
+        {QStringLiteral("addLabel"), QStringLiteral("添加数字激励通道")},
+        {QStringLiteral("itemDefaults"),
+         QVariantMap{{QStringLiteral("switchId"), QString{}},
+                     {QStringLiteral("resourceId"),
+                      resourceOptions.isEmpty()
+                          ? QVariant{}
+                          : resourceOptions.first().toMap()
+                                .value(QStringLiteral("value"))},
+                     {QStringLiteral("label"), QString{}},
+                     {QStringLiteral("dutBit"), 0},
+                     {QStringLiteral("activeLevel"), QStringLiteral("High")}}},
+        {QStringLiteral("allowAdd"), true},
+        {QStringLiteral("allowRemove"), true},
+        {QStringLiteral("columns"),
+         QVariantList{formField(QStringLiteral("switchId"), QStringLiteral("开关 ID"),
+                                QStringLiteral("text")),
+                      resourceId,
+                      formField(QStringLiteral("label"), QStringLiteral("标签"),
+                                QStringLiteral("text")),
+                      QVariantMap{{QStringLiteral("path"), QStringLiteral("dutBit")},
+                                  {QStringLiteral("label"), QStringLiteral("DUT 位")},
+                                  {QStringLiteral("kind"), QStringLiteral("integer")},
+                                  {QStringLiteral("minimum"), 0},
+                                  {QStringLiteral("maximum"), 15}},
+                      activeLevel}},
+    };
+}
+
+QVariantMap testConfigSchema(const QVariantMap& value, const QVariantMap& base)
+{
+    QVariantMap schema = emptyFormSchema();
+    schema.insert(
+        QStringLiteral("readOnlyPaths"),
+        QVariantList{QStringLiteral("/schemaVersion"),
+                     QStringLiteral("/configId"),
+                     QStringLiteral("/steps/*/algorithmId")});
+    schema.insert(QStringLiteral("advancedPaths"),
+                  QVariantList{QStringLiteral("/executionConfig")});
+
+    QVariantMap basic = formSection(QStringLiteral("basic"),
+                                    QStringLiteral("基本信息"));
+    QVariantMap title = formField(QStringLiteral("/reportFields/title"),
+                                  QStringLiteral("标题"), QStringLiteral("text"));
+    title.insert(QStringLiteral("required"), true);
+    appendFormField(&basic, std::move(title));
+    QVariantMap description = formField(QStringLiteral("/reportFields/description"),
+                                        QStringLiteral("说明"),
+                                        QStringLiteral("multiline"));
+    description.insert(QStringLiteral("wide"), true);
+    appendFormField(&basic, std::move(description));
+    QVariantMap name = formField(QStringLiteral("/steps/0/name"),
+                                 QStringLiteral("步骤名称"), QStringLiteral("text"));
+    name.insert(QStringLiteral("required"), true);
+    appendFormField(&basic, std::move(name));
+    QVariantMap timeout = formField(QStringLiteral("/steps/0/timeoutMs"),
+                                    QStringLiteral("超时"), QStringLiteral("integer"));
+    timeout.insert(QStringLiteral("unit"), QStringLiteral("ms"));
+    timeout.insert(QStringLiteral("required"), true);
+    timeout.insert(QStringLiteral("minimum"), 0);
+    appendFormField(&basic, std::move(timeout));
+    QVariantMap retry = formField(QStringLiteral("/steps/0/retryCount"),
+                                  QStringLiteral("重试次数"),
+                                  QStringLiteral("integer"));
+    retry.insert(QStringLiteral("required"), true);
+    retry.insert(QStringLiteral("minimum"), -1);
+    appendFormField(&basic, std::move(retry));
+
+    const QVariantList steps = value.value(QStringLiteral("steps")).toList();
+    const QVariantMap firstStep = steps.isEmpty() ? QVariantMap{} : steps.first().toMap();
+    QVariantList sections{basic};
+
+    const QString algorithmId = firstStep.value(QStringLiteral("algorithmId"))
+                                    .toString()
+                                    .trimmed();
+    if (const auto* parameterSchema =
+            hwtest::algorithm::mbddf::findRunParameterSchema(algorithmId);
+        parameterSchema != nullptr) {
+        QVariantMap parameters = formSection(
+            QStringLiteral("runParameters"),
+            QStringLiteral("默认测试参数"),
+            QStringLiteral("保存后作为测试默认值；测试工作台仍可在单次运行时覆盖"));
+        const QString parameterBase =
+            QStringLiteral("/steps/0/parameters/protocol/requestValues/");
+        for (const auto& descriptor : parameterSchema->parameters) {
+            QVariantMap field = formField(
+                parameterBase + escapedJsonPointerSegment(descriptor.id),
+                descriptor.label, runParameterKindName(descriptor.kind));
+            if (!descriptor.description.isEmpty()) {
+                field.insert(QStringLiteral("description"), descriptor.description);
+            }
+            if (!descriptor.unit.isEmpty()) {
+                field.insert(QStringLiteral("unit"), descriptor.unit);
+            }
+            field.insert(QStringLiteral("required"), descriptor.required);
+            if (descriptor.defaultValue.isValid()) {
+                field.insert(QStringLiteral("defaultValue"), descriptor.defaultValue);
+            }
+            if (descriptor.minimum.isValid()) {
+                field.insert(QStringLiteral("minimum"), descriptor.minimum);
+            }
+            if (descriptor.maximum.isValid()) {
+                field.insert(QStringLiteral("maximum"), descriptor.maximum);
+            }
+            if (!descriptor.choices.isEmpty()) {
+                QVariantList options;
+                for (const auto& choice : descriptor.choices) {
+                    options.push_back(formOption(choice.value, choice.label));
+                }
+                field.insert(QStringLiteral("options"), options);
+            }
+            if (!descriptor.visibleWhenParameter.isEmpty()) {
+                field.insert(
+                    QStringLiteral("visibleWhen"),
+                    QVariantMap{{QStringLiteral("path"),
+                                 parameterBase + escapedJsonPointerSegment(
+                                     descriptor.visibleWhenParameter)},
+                                {QStringLiteral("equals"),
+                                 descriptor.visibleWhenEquals}});
+            }
+            appendFormField(&parameters, std::move(field));
+        }
+        sections.push_back(parameters);
+    }
+
+    QVariantMap executionTiming = executionTimingSection(value);
+    if (!executionTiming.value(QStringLiteral("fields")).toList().isEmpty()) {
+        sections.push_back(std::move(executionTiming));
+    }
+
+    QVariantMap criteria = formSection(QStringLiteral("criteria"),
+                                       QStringLiteral("判定条件"));
+    appendFormList(&criteria, criteriaListSchema(value, firstStep));
+    sections.push_back(criteria);
+    const QVariantMap measurementDisplay = measurementDisplayListSchema(value);
+    if (!measurementDisplay.isEmpty()) {
+        QVariantMap reporting = formSection(QStringLiteral("reporting"),
+                                            QStringLiteral("结果显示"));
+        appendFormList(&reporting, measurementDisplay);
+        sections.push_back(reporting);
+    }
+    const QVariantMap digitalChannels = digitalStimulusChannelsListSchema(value, base);
+    if (!digitalChannels.isEmpty()) {
+        QVariantMap digitalStimulus = formSection(QStringLiteral("digitalStimulus"),
+                                                  QStringLiteral("数字激励"));
+        appendFormList(&digitalStimulus, digitalChannels);
+        sections.push_back(digitalStimulus);
+    }
+    schema.insert(QStringLiteral("sections"), sections);
+    return schema;
+}
+
+QVariantList serialDataBitsOptions()
+{
+    return QVariantList{formOption(5, QStringLiteral("5")),
+                        formOption(6, QStringLiteral("6")),
+                        formOption(7, QStringLiteral("7")),
+                        formOption(8, QStringLiteral("8"))};
+}
+
+QVariantList serialParityOptions()
+{
+    return QVariantList{formOption(QStringLiteral("None"), QStringLiteral("无校验")),
+                        formOption(QStringLiteral("Odd"), QStringLiteral("奇校验")),
+                        formOption(QStringLiteral("Even"), QStringLiteral("偶校验")),
+                        formOption(QStringLiteral("Mark"), QStringLiteral("标记校验")),
+                        formOption(QStringLiteral("Space"), QStringLiteral("空格校验"))};
+}
+
+QVariantList serialStopBitsOptions()
+{
+    return QVariantList{formOption(1.0, QStringLiteral("1")),
+                        formOption(1.5, QStringLiteral("1.5")),
+                        formOption(2.0, QStringLiteral("2"))};
+}
+
+QVariantList serialFlowControlOptions()
+{
+    return QVariantList{formOption(QStringLiteral("None"), QStringLiteral("无流控")),
+                        formOption(QStringLiteral("Hardware"),
+                                   QStringLiteral("硬件流控")),
+                        formOption(QStringLiteral("Software"),
+                                   QStringLiteral("软件流控"))};
+}
+
+QVariantMap stationField(const QString& path,
+                         const QString& label,
+                         const QString& kind,
+                         const QVariant& defaultValue = {})
+{
+    QVariantMap field = formField(path, label, kind);
+    field.insert(QStringLiteral("required"), true);
+    if (defaultValue.isValid()) {
+        field.insert(QStringLiteral("defaultValue"), defaultValue);
+    }
+    return field;
+}
+
+QString stationResourcePath(const QString& resourceId, const QString& leaf)
+{
+    return QStringLiteral("/resources/%1/%2")
+        .arg(escapedJsonPointerSegment(resourceId),
+             escapedJsonPointerSegment(leaf));
+}
+
+QVariantMap stationSchema(const QVariantMap& base)
+{
+    QVariantMap schema = emptyFormSchema();
+    QVariantMap control = formSection(QStringLiteral("control"),
+                                      QStringLiteral("控制资源"));
+    QVariantMap devices = formSection(QStringLiteral("devices"),
+                                      QStringLiteral("PXI 设备"));
+    QVariantMap serial = formSection(QStringLiteral("serial"),
+                                     QStringLiteral("串口资源"));
+    QVariantMap digital = formSection(QStringLiteral("digital"),
+                                      QStringLiteral("PXI-6259 数字资源"));
+    QVariantMap analog = formSection(QStringLiteral("analog"),
+                                     QStringLiteral("PXI 模拟资源"));
+
+    const QVariantMap hardware = base.value(QStringLiteral("hardware")).toMap();
+    const QVariantMap resources = hardware.value(QStringLiteral("resources")).toMap();
+    const QVariantList baseDevices = hardware.value(QStringLiteral("devices")).toList();
+    const QVariantMap baseControl = base.value(QStringLiteral("control")).toMap();
+
+    QVariantList controlOptions;
+    for (auto it = resources.cbegin(); it != resources.cend(); ++it) {
+        const QVariantMap resource = it.value().toMap();
+        if (resource.value(QStringLiteral("module")).toString() !=
+                QStringLiteral("control") ||
+            resource.value(QStringLiteral("direction")).toString() !=
+                QStringLiteral("bidirectional") ||
+            resource.value(QStringLiteral("properties")).toMap()
+                    .value(QStringLiteral("role")).toString() ==
+                QStringLiteral("auxiliary-link")) {
+            continue;
+        }
+        controlOptions.push_back(formOption(it.key(), it.key()));
+    }
+    if (!controlOptions.isEmpty()) {
+        QVariantMap resourceId = stationField(QStringLiteral("/control/resourceId"),
+                                              QStringLiteral("控制资源"),
+                                              QStringLiteral("choice"),
+                                              baseControl.value(QStringLiteral("resourceId")));
+        resourceId.insert(QStringLiteral("options"), controlOptions);
+        appendFormField(&control, std::move(resourceId));
+    }
+
+    QMap<QString, QVariantMap> devicesByAlias;
+    for (const QVariant& deviceValue : baseDevices) {
+        const QVariantMap device = deviceValue.toMap();
+        const QString alias = device.value(QStringLiteral("alias"))
+                                  .toString()
+                                  .trimmed();
+        if (!alias.isEmpty()) devicesByAlias.insert(alias, device);
+    }
+    for (const QString& alias : {QStringLiteral("ni6259_stimulus"),
+                                 QStringLiteral("ni6733_fixture")}) {
+        if (!devicesByAlias.contains(alias)) continue;
+        const QVariantMap baseDevice = devicesByAlias.value(alias);
+        const QVariant deviceNameDefault = baseDevice.value(QStringLiteral("properties"))
+                                               .toMap()
+                                               .value(QStringLiteral("vendor"))
+                                               .toMap()
+                                               .value(QStringLiteral("ni"))
+                                               .toMap()
+                                               .value(QStringLiteral("deviceName"));
+        const QString productLabel = alias == QStringLiteral("ni6259_stimulus")
+            ? QStringLiteral("PXI-6259")
+            : QStringLiteral("PXI-6733");
+        const QString devicePath = QStringLiteral("/devices/%1/")
+                                       .arg(escapedJsonPointerSegment(alias));
+        QVariantMap deviceName = stationField(
+            devicePath + QStringLiteral("physicalDeviceName"),
+            QStringLiteral("%1 设备名").arg(productLabel),
+            QStringLiteral("choiceOrText"),
+            deviceNameDefault);
+        const QString deviceOptionsSource = alias == QStringLiteral("ni6259_stimulus")
+            ? QStringLiteral("ni6259Devices")
+            : QStringLiteral("ni6733Devices");
+        const QString serialOptionsSource = alias == QStringLiteral("ni6259_stimulus")
+            ? QStringLiteral("ni6259SerialNumbers")
+            : QStringLiteral("ni6733SerialNumbers");
+        deviceName.insert(QStringLiteral("optionsSource"), deviceOptionsSource);
+        deviceName.insert(QStringLiteral("allowManualEntry"), true);
+        appendFormField(&devices, std::move(deviceName));
+        QVariantMap serialNumber = stationField(
+            devicePath + QStringLiteral("serialNumber"),
+            QStringLiteral("%1 序列号").arg(productLabel),
+            QStringLiteral("choiceOrText"),
+            baseDevice.value(QStringLiteral("serialNumber")));
+        serialNumber.insert(QStringLiteral("optionsSource"), serialOptionsSource);
+        serialNumber.insert(QStringLiteral("allowManualEntry"), true);
+        appendFormField(&devices, std::move(serialNumber));
+    }
+
+    for (auto it = resources.cbegin(); it != resources.cend(); ++it) {
+        const QString resourceId = it.key();
+        const QVariantMap resource = it.value().toMap();
+        const QString providerId = resource.value(QStringLiteral("providerId")).toString();
+        const QString deviceAlias = resource.value(QStringLiteral("device")).toString();
+        const QString module = resource.value(QStringLiteral("module")).toString();
+        const QString direction = resource.value(QStringLiteral("direction")).toString();
+        const QVariantMap properties = resource.value(QStringLiteral("properties")).toMap();
+
+        if (providerId == QStringLiteral("qt.serial")) {
+            QVariantMap portName = stationField(
+                stationResourcePath(resourceId, QStringLiteral("portName")),
+                QStringLiteral("%1 端口").arg(resourceId),
+                QStringLiteral("choiceOrText"),
+                properties.value(QStringLiteral("portName")));
+            portName.insert(QStringLiteral("optionsSource"), QStringLiteral("serialPorts"));
+            portName.insert(QStringLiteral("allowManualEntry"), true);
+            appendFormField(&serial, std::move(portName));
+
+            QVariantMap baudRate = stationField(
+                stationResourcePath(resourceId, QStringLiteral("baudRate")),
+                QStringLiteral("%1 波特率").arg(resourceId),
+                QStringLiteral("integer"),
+                properties.value(QStringLiteral("baudRate")));
+            baudRate.insert(QStringLiteral("minimum"), 1);
+            appendFormField(&serial, std::move(baudRate));
+
+            QVariantMap dataBits = stationField(
+                stationResourcePath(resourceId, QStringLiteral("dataBits")),
+                QStringLiteral("%1 数据位").arg(resourceId), QStringLiteral("choice"),
+                properties.value(QStringLiteral("dataBits")));
+            dataBits.insert(QStringLiteral("options"), serialDataBitsOptions());
+            appendFormField(&serial, std::move(dataBits));
+
+            QVariantMap parity = stationField(
+                stationResourcePath(resourceId, QStringLiteral("parity")),
+                QStringLiteral("%1 校验位").arg(resourceId), QStringLiteral("choice"),
+                properties.value(QStringLiteral("parity")));
+            parity.insert(QStringLiteral("options"), serialParityOptions());
+            appendFormField(&serial, std::move(parity));
+
+            QVariantMap stopBits = stationField(
+                stationResourcePath(resourceId, QStringLiteral("stopBits")),
+                QStringLiteral("%1 停止位").arg(resourceId), QStringLiteral("choice"),
+                properties.value(QStringLiteral("stopBits")));
+            stopBits.insert(QStringLiteral("options"), serialStopBitsOptions());
+            appendFormField(&serial, std::move(stopBits));
+
+            QVariantMap flowControl = stationField(
+                stationResourcePath(resourceId, QStringLiteral("flowControl")),
+                QStringLiteral("%1 流控").arg(resourceId), QStringLiteral("choice"),
+                properties.value(QStringLiteral("flowControl")));
+            flowControl.insert(QStringLiteral("options"), serialFlowControlOptions());
+            appendFormField(&serial, std::move(flowControl));
+        }
+
+        if (deviceAlias == QStringLiteral("ni6259_stimulus") &&
+            module == QStringLiteral("digital")) {
+            QVariantMap port = stationField(
+                stationResourcePath(resourceId, QStringLiteral("portNumber")),
+                QStringLiteral("%1 端口号").arg(resourceId),
+                QStringLiteral("choice"),
+                properties.value(QStringLiteral("portNumber")));
+            port.insert(
+                QStringLiteral("options"),
+                QVariantList{formOption(0, QStringLiteral("端口 0")),
+                             formOption(1, QStringLiteral("端口 1")),
+                             formOption(2, QStringLiteral("端口 2"))});
+            appendFormField(&digital, std::move(port));
+            const QString portPath = stationResourcePath(
+                resourceId, QStringLiteral("portNumber"));
+            for (int portNumber = 0; portNumber <= 2; ++portNumber) {
+                QVariantMap line = stationField(
+                    stationResourcePath(resourceId, QStringLiteral("lineNumber")),
+                    QStringLiteral("%1 线号").arg(resourceId),
+                    QStringLiteral("integer"),
+                    properties.value(QStringLiteral("lineNumber")));
+                line.insert(QStringLiteral("minimum"), 0);
+                line.insert(QStringLiteral("maximum"), portNumber == 0 ? 31 : 7);
+                line.insert(
+                    QStringLiteral("visibleWhen"),
+                    QVariantMap{{QStringLiteral("path"), portPath},
+                                {QStringLiteral("equals"), portNumber}});
+                appendFormField(&digital, std::move(line));
+            }
+        }
+
+        const bool ni6259Input = deviceAlias == QStringLiteral("ni6259_stimulus") &&
+            module == QStringLiteral("analog") && direction == QStringLiteral("input");
+        const bool ni6733Output = deviceAlias == QStringLiteral("ni6733_fixture") &&
+            module == QStringLiteral("analog") && direction == QStringLiteral("output");
+        if (ni6259Input || ni6733Output) {
+            QVariantMap physicalIndex = stationField(
+                stationResourcePath(resourceId, QStringLiteral("physicalIndex")),
+                QStringLiteral("%1 通道").arg(resourceId),
+                QStringLiteral("integer"),
+                resource.value(QStringLiteral("physicalIndex")));
+            physicalIndex.insert(QStringLiteral("minimum"), 0);
+            physicalIndex.insert(QStringLiteral("maximum"), ni6259Input ? 31 : 7);
+            appendFormField(&analog, std::move(physicalIndex));
+        }
+    }
+
+    schema.insert(QStringLiteral("sections"),
+                  QVariantList{control, devices, serial, digital, analog});
+    return schema;
+}
+
+QVariantMap schemaFor(const QString& kind,
+                      const QVariantMap& value,
+                      const QVariantMap& base = {})
+{
+    if (kind == QStringLiteral("testcfg")) return testConfigSchema(value, base);
+    if (kind == QStringLiteral("station")) return stationSchema(base);
     return {};
 }
 
@@ -728,8 +1444,16 @@ ActionResult ConfigurationService::document(const QString& documentId,
         ? readJsonObject(path, &value, &bytes)
         : readOptionalJsonObject(path, fallback, &value, &bytes);
     if (!read.ok) return read;
+    QVariantMap schemaBase;
+    if ((kind == QStringLiteral("station") || kind == QStringLiteral("testcfg")) &&
+        !m_baseHalConfigPath.isEmpty()) {
+        // Raw base HAL supplies station leaves and DI resource choices.
+        const ActionResult baseRead = readJsonObject(m_baseHalConfigPath, &schemaBase);
+        if (!baseRead.ok) schemaBase.clear();
+    }
     *output = ConfigurationDocument{
-        documentId, kind, revisionFor(bytes), value, schemaFor(kind)};
+        documentId, kind, revisionFor(bytes), value,
+        schemaFor(kind, value, schemaBase)};
     return {};
 }
 
@@ -750,6 +1474,7 @@ ActionResult ConfigurationService::saveDocument(
 
     const QByteArray bytes = serialized(value);
     QString path;
+    QVariantMap schemaBase;
     if (current.kind == QStringLiteral("catalog")) {
         QMap<QString, CatalogSetting> entries;
         const ActionResult valid = parseCatalog(value, &entries);
@@ -770,6 +1495,7 @@ ActionResult ConfigurationService::saveDocument(
         QVariantMap projected;
         const ActionResult valid = applyStationOverlay(base, value, &projected);
         if (!valid.ok) return valid;
+        schemaBase = base;
         path = QDir(m_configurationDirectory).filePath(
             QString::fromLatin1(kStationFileName));
     } else {
@@ -812,6 +1538,12 @@ ActionResult ConfigurationService::saveDocument(
         path = temporaryPath;
     }
 
+    if (current.kind == QStringLiteral("testcfg") &&
+        !m_baseHalConfigPath.isEmpty()) {
+        const ActionResult baseRead = readJsonObject(m_baseHalConfigPath, &schemaBase);
+        if (!baseRead.ok) schemaBase.clear();
+    }
+
     const bool existed = QFileInfo(path).isFile();
     QByteArray originalBytes;
     ActionResult captured;
@@ -840,7 +1572,7 @@ ActionResult ConfigurationService::saveDocument(
     if (output != nullptr) {
         *output = ConfigurationDocument{
             documentId, current.kind, revisionFor(bytes), value,
-            schemaFor(current.kind)};
+            schemaFor(current.kind, value, schemaBase)};
     }
     return {};
 }

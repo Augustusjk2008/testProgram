@@ -1055,6 +1055,65 @@ QVector<SerialPortInfo> TestApplicationController::availableSerialPorts() const
                                       : QVector<SerialPortInfo>{};
 }
 
+HardwareOptions TestApplicationController::hardwareOptions() const
+{
+    HardwareOptions result;
+    Q_ASSERT_X(onAffinityThread(this),
+               "TestApplicationController::hardwareOptions",
+               "must run on the controller affinity thread");
+    if (!onAffinityThread(this)) {
+        result.state = QStringLiteral("error");
+        result.message = QStringLiteral("Hardware options must be read on the controller affinity thread");
+        return result;
+    }
+
+    const QString baseHalConfigPath = m_impl->configurationService.baseHalConfigPath();
+    if (baseHalConfigPath.isEmpty()) {
+        result.message = QStringLiteral("NI DAQmx adapter is not configured");
+        return result;
+    }
+
+    QVariantMap baseHalConfig;
+    const ActionResult loaded = loadJsonMap(baseHalConfigPath, &baseHalConfig);
+    if (!loaded.ok) {
+        result.state = QStringLiteral("error");
+        result.message = loaded.message;
+        return result;
+    }
+
+    const QVariantMap adapterConfigs = baseHalConfig.value(
+        QStringLiteral("adapters")).toMap();
+    const QVariantMap niDriverConfig = adapterConfigs.value(
+        QStringLiteral("ni.daqmx")).toMap();
+    if (niDriverConfig.isEmpty()) {
+        result.message = QStringLiteral("NI DAQmx adapter is not configured");
+        return result;
+    }
+
+    const auto devices = hwtest::hal::enumerateCAbiAdapterDevices(
+        niDriverConfig, hwtest::hal::OperationOptions{});
+    if (!devices.ok()) {
+        result.state = QStringLiteral("error");
+        result.message = devices.status.error.message.isEmpty()
+            ? QStringLiteral("NI DAQmx device enumeration failed")
+            : devices.status.error.message;
+        return result;
+    }
+
+    result.state = QStringLiteral("available");
+    result.devices.reserve(devices.value.size());
+    for (const hwtest::hal::DeviceDescriptor& device : devices.value) {
+        result.devices.push_back(HardwareOptionDevice{
+            device.deviceId,
+            device.deviceId,
+            device.model,
+            device.serialNumber,
+            device.properties.value(QStringLiteral("supportedModules")).toStringList(),
+        });
+    }
+    return result;
+}
+
 ActionResult TestApplicationController::selectControl(const QString& resourceId)
 {
     if (!onAffinityThread(this)) {

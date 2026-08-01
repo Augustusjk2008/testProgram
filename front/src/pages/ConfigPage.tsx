@@ -1,169 +1,33 @@
 import { ArrowClockwise, ArrowCounterClockwise, ArrowDown, ArrowUp, FloppyDisk } from '@phosphor-icons/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { useSession } from '../features/session/SessionProvider'
 import type { ConfigCatalogItem, ConfigDocument } from '../shared/protocol'
 import { ConfigRequestError } from '../shared/ws/HwtestClient'
-import { useSession } from '../features/session/SessionProvider'
 import {
   catalogEditorItems,
   isConfigDocumentNavigationBlocked,
-  testConfigFormFields,
+  shouldPreserveConfigDraftOnReconnect,
   updateCatalogDocument,
-  updateTestConfigDocument,
   type ConfigValue,
+  type ConfigurationWorkspaceNavigationState,
   type EditableCatalogItem,
-  type TestConfigField,
 } from './config-draft'
+import { ConfigForm } from './ConfigForm'
+import { parseConfigFormSchema } from './config-form-schema'
+import { validateConfigForm } from './config-form-validation'
 
 const FIXED_DOCUMENTS = [
-  { documentId: 'test-config-catalog', title: '测试配置目录', kind: 'catalog' },
-  { documentId: 'mbddf-station', title: 'MB_DDF 工位', kind: 'station' },
+  { documentId: 'test-config-catalog', title: '测试项目管理', kind: 'catalog' },
+  { documentId: 'mbddf-station', title: '工位硬件', kind: 'station' },
 ] as const
 
 function cloneValue(value: ConfigValue): ConfigValue {
   return JSON.parse(JSON.stringify(value)) as ConfigValue
 }
 
-function jsonText(value: unknown): string {
-  return JSON.stringify(value ?? {}, null, 2)
-}
-
-function asRecord(value: unknown): ConfigValue | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as ConfigValue
-    : null
-}
-
 function isWriteBlocked(phase: string): boolean {
   return phase !== 'empty' && phase !== 'configured'
-}
-
-function isTestConfig(document: ConfigDocument): boolean {
-  return document.kind === 'testcfg' || document.documentId.endsWith('.testcfg.json')
-}
-
-function JsonEditor({
-  label,
-  value,
-  disabled,
-  onValueChange,
-  onError,
-}: {
-  label: string
-  value: ConfigValue
-  disabled: boolean
-  onValueChange: (value: ConfigValue) => void
-  onError: (message: string) => void
-}) {
-  const [text, setText] = useState(() => jsonText(value))
-
-  useEffect(() => {
-    setText(jsonText(value))
-  }, [value])
-
-  return (
-    <label className="config-field config-field--json">
-      <span>{label}</span>
-      <textarea
-        aria-label={label}
-        disabled={disabled}
-        onChange={(event) => {
-          const next = event.target.value
-          setText(next)
-          try {
-            const parsed = asRecord(JSON.parse(next))
-            if (!parsed) throw new Error('根节点必须是 JSON 对象')
-            onError('')
-            onValueChange(parsed)
-          } catch (error) {
-            const detail = error instanceof Error ? error.message : 'JSON 格式无效'
-            onError(`${label}：${detail}`)
-          }
-        }}
-        spellCheck={false}
-        value={text}
-      />
-    </label>
-  )
-}
-
-function TestConfigEditor({
-  value,
-  disabled,
-  onChange,
-  onJsonError,
-}: {
-  value: ConfigValue
-  disabled: boolean
-  onChange: (value: ConfigValue) => void
-  onJsonError: (field: string, message: string) => void
-}) {
-  const fields = testConfigFormFields(value)
-  const update = (field: TestConfigField, next: unknown) => {
-    onChange(updateTestConfigDocument(value, field, next))
-  }
-
-  return (
-    <div className="config-editor__fields">
-      <label className="config-field">
-        <span>标题</span>
-        <input
-          aria-label="标题"
-          disabled={disabled}
-          onChange={(event) => update('title', event.target.value)}
-          value={fields.title}
-        />
-      </label>
-      <label className="config-field config-field--wide">
-        <span>说明</span>
-        <textarea
-          aria-label="说明"
-          disabled={disabled}
-          onChange={(event) => update('description', event.target.value)}
-          value={fields.description}
-        />
-      </label>
-      <label className="config-field">
-        <span>步骤 ID</span>
-        <input
-          aria-label="步骤 ID"
-          disabled={disabled}
-          onChange={(event) => update('stepId', event.target.value)}
-          value={fields.stepId}
-        />
-      </label>
-      <label className="config-field">
-        <span>测试项 ID</span>
-        <input
-          aria-label="测试项 ID"
-          disabled={disabled}
-          onChange={(event) => update('testItemId', event.target.value)}
-          value={fields.testItemId}
-        />
-      </label>
-      <JsonEditor
-        disabled={disabled}
-        label="步骤参数 JSON"
-        onError={(message) => onJsonError('parameters', message)}
-        onValueChange={(next) => update('parameters', next)}
-        value={fields.parameters}
-      />
-      <JsonEditor
-        disabled={disabled}
-        label="步骤 JSON"
-        onError={(message) => onJsonError('step', message)}
-        onValueChange={(next) => update('step', next)}
-        value={fields.step}
-      />
-      <JsonEditor
-        disabled={disabled}
-        label="执行配置 JSON"
-        onError={(message) => onJsonError('executionConfig', message)}
-        onValueChange={(next) => update('executionConfig', next)}
-        value={fields.executionConfig}
-      />
-    </div>
-  )
 }
 
 function CatalogEditor({
@@ -171,13 +35,11 @@ function CatalogEditor({
   fallbackItems,
   disabled,
   onChange,
-  onJsonError,
 }: {
   value: ConfigValue
   fallbackItems: readonly ConfigCatalogItem[]
   disabled: boolean
   onChange: (value: ConfigValue) => void
-  onJsonError: (field: string, message: string) => void
 }) {
   const items = catalogEditorItems(value, fallbackItems)
   const updateItems = (nextItems: EditableCatalogItem[]) => {
@@ -197,7 +59,7 @@ function CatalogEditor({
 
   return (
     <div className="config-catalog-editor">
-      <p className="config-editor__hint">启停和排序仅在保存“测试配置目录”后由后端持久化并刷新运行目录。</p>
+      <p className="config-editor__hint">保存后，停用的测试项目将不会出现在测试工作台中。</p>
       <div className="config-catalog-editor__items">
         {items.map((item, index) => (
           <article className="config-catalog-editor__item" key={item.documentId}>
@@ -213,9 +75,9 @@ function CatalogEditor({
             </label>
             <div>
               <strong>{item.title || item.documentId}</strong>
-              <small>{item.documentId}{item.valid ? '' : ` · ${item.message || '无效配置'}`}</small>
+              {!item.valid && <small>{item.message || '配置无效'}</small>}
             </div>
-            <span className="config-catalog-editor__order">#{item.order + 1}</span>
+            <span className="config-catalog-editor__order">#{index + 1}</span>
             <div className="config-catalog-editor__move">
               <button aria-label={`${item.title || item.documentId} 上移`} disabled={disabled || index === 0} onClick={() => move(item.documentId, -1)} title="上移" type="button"><ArrowUp aria-hidden="true" size={14} /></button>
               <button aria-label={`${item.title || item.documentId} 下移`} disabled={disabled || index === items.length - 1} onClick={() => move(item.documentId, 1)} title="下移" type="button"><ArrowDown aria-hidden="true" size={14} /></button>
@@ -223,72 +85,25 @@ function CatalogEditor({
           </article>
         ))}
       </div>
-      <details className="config-editor__advanced">
-        <summary>高级目录 JSON</summary>
-        <JsonEditor disabled={disabled} label="目录 JSON" onError={(message) => onJsonError('catalog', message)} onValueChange={onChange} value={value} />
-      </details>
     </div>
   )
 }
 
-function StationEditor({
-  value,
-  disabled,
-  onChange,
-  onJsonError,
+export function ConfigPage({
+  onNavigationStateChange,
 }: {
-  value: ConfigValue
-  disabled: boolean
-  onChange: (value: ConfigValue) => void
-  onJsonError: (field: string, message: string) => void
-}) {
-  return (
-    <div className="config-editor__fields">
-      <p className="config-editor__hint">使用 JSON 编辑串口、波特率、PXI-6259 / PXI-6733 identity，以及资源端口和通道映射；未知或受保护字段会由后端拒绝。</p>
-      <JsonEditor
-        disabled={disabled}
-        label="工位配置 JSON"
-        onError={(message) => onJsonError('station', message)}
-        onValueChange={onChange}
-        value={value}
-      />
-    </div>
-  )
-}
-
-function GenericEditor({
-  value,
-  disabled,
-  onChange,
-  onJsonError,
-}: {
-  value: ConfigValue
-  disabled: boolean
-  onChange: (value: ConfigValue) => void
-  onJsonError: (field: string, message: string) => void
-}) {
-  return (
-    <div className="config-editor__fields">
-      <JsonEditor
-        disabled={disabled}
-        label="配置 JSON"
-        onError={(message) => onJsonError('document', message)}
-        onValueChange={onChange}
-        value={value}
-      />
-    </div>
-  )
-}
-
-export function ConfigPage() {
+  onNavigationStateChange?: (state: ConfigurationWorkspaceNavigationState) => void
+} = {}) {
   const {
     configCatalog,
     configCatalogError,
     configCatalogReady,
     connectionState,
     getConfigDocument,
+    hardwareOptions,
     refreshConfigCatalog,
     saveConfig,
+    serialPorts,
     snapshot,
   } = useSession()
   const [selectedDocumentId, setSelectedDocumentId] = useState('test-config-catalog')
@@ -299,8 +114,9 @@ export function ConfigPage() {
   const [dirty, setDirty] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [saveError, setSaveError] = useState<{ code: string; message: string } | null>(null)
-  const [jsonErrors, setJsonErrors] = useState<Record<string, string>>({})
   const [reloadGeneration, setReloadGeneration] = useState(0)
+  const dirtyRef = useRef(false)
+  const wasDisconnected = useRef(false)
 
   const catalogItems = useMemo(() => [...(configCatalog?.items ?? [])]
     .sort((left, right) => left.order - right.order || left.documentId.localeCompare(right.documentId)), [configCatalog])
@@ -311,21 +127,84 @@ export function ConfigPage() {
       .map((item) => ({ documentId: item.documentId, title: item.title || item.documentId, kind: 'testcfg' })),
   ], [catalogItems])
   const writeBlocked = isWriteBlocked(snapshot.phase)
+  const selectedDocumentTitle = documents.find((entry) =>
+    entry.documentId === selectedDocumentId)?.title ?? '配置项'
   const navigationBlocked = isConfigDocumentNavigationBlocked(dirty, loading, saving)
-  const hasJsonError = Object.values(jsonErrors).some(Boolean)
-  const saveDisabled = !document || !draft || !dirty || loading || saving || writeBlocked || hasJsonError
+  const formSchema = useMemo(() => parseConfigFormSchema(document?.schema), [document?.schema])
+  const optionSources = useMemo(() => ({
+    serialPorts: (serialPorts ?? []).map((port) => ({
+      value: port.portName,
+      label: [port.portName, port.description, port.manufacturer].filter(Boolean).join(' · '),
+    })),
+    niDevices: (hardwareOptions?.devices ?? []).map((device) => ({
+      value: device.deviceName,
+      label: [device.deviceName, device.model, device.serialNumber].filter(Boolean).join(' · '),
+    })),
+    ni6259Devices: (hardwareOptions?.devices ?? [])
+      .filter((device) => device.model.toUpperCase().includes('6259'))
+      .map((device) => ({
+        value: device.deviceName,
+        label: [device.deviceName, device.model, device.serialNumber].filter(Boolean).join(' · '),
+      })),
+    ni6733Devices: (hardwareOptions?.devices ?? [])
+      .filter((device) => device.model.toUpperCase().includes('6733'))
+      .map((device) => ({
+        value: device.deviceName,
+        label: [device.deviceName, device.model, device.serialNumber].filter(Boolean).join(' · '),
+      })),
+    ni6259SerialNumbers: (hardwareOptions?.devices ?? [])
+      .filter((device) => device.model.toUpperCase().includes('6259') && device.serialNumber)
+      .map((device) => ({ value: device.serialNumber, label: `${device.serialNumber} · ${device.deviceName}` })),
+    ni6733SerialNumbers: (hardwareOptions?.devices ?? [])
+      .filter((device) => device.model.toUpperCase().includes('6733') && device.serialNumber)
+      .map((device) => ({ value: device.serialNumber, label: `${device.serialNumber} · ${device.deviceName}` })),
+  }), [hardwareOptions, serialPorts])
+  const formErrors = useMemo(() => formSchema && draft
+    ? validateConfigForm(formSchema, draft, optionSources)
+    : [], [draft, formSchema, optionSources])
+  const saveDisabled = connectionState !== 'connected' || !document || !draft || !dirty ||
+    loading || saving || writeBlocked || formErrors.length > 0
+
+  useEffect(() => {
+    dirtyRef.current = dirty
+    onNavigationStateChange?.({ dirty, saving })
+  }, [dirty, onNavigationStateChange, saving])
+
+  useEffect(() => () => {
+    onNavigationStateChange?.({ dirty: false, saving: false })
+  }, [onNavigationStateChange])
+
+  useEffect(() => {
+    if (!dirty && !saving) return
+    const preventAccidentalClose = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', preventAccidentalClose)
+    return () => window.removeEventListener('beforeunload', preventAccidentalClose)
+  }, [dirty, saving])
 
   useEffect(() => {
     if (connectionState !== 'connected') {
+      wasDisconnected.current = true
       setLoading(false)
-      setLoadError('等待 WebSocket 连接后读取配置文档。')
+      setLoadError('等待 WebSocket 连接后读取配置。')
+      return
+    }
+    const preserveDraft = shouldPreserveConfigDraftOnReconnect(
+      wasDisconnected.current,
+      dirtyRef.current,
+    )
+    wasDisconnected.current = false
+    if (preserveDraft) {
+      setLoading(false)
+      setLoadError('')
       return
     }
     let disposed = false
     setLoading(true)
     setLoadError('')
     setSaveError(null)
-    setJsonErrors({})
     void getConfigDocument(selectedDocumentId)
       .then((next) => {
         if (disposed) return
@@ -350,16 +229,19 @@ export function ConfigPage() {
     setDirty(true)
   }
 
-  function setJsonError(field: string, message: string) {
-    setJsonErrors((current) => ({ ...current, [field]: message }))
-  }
-
   function discardDraft() {
     if (!document) return
     setDraft(cloneValue(document.value))
     setDirty(false)
-    setJsonErrors({})
     setSaveError(null)
+  }
+
+  function selectDocument(nextDocumentId: string) {
+    if (nextDocumentId === selectedDocumentId || navigationBlocked) return
+    if (dirty && !window.confirm('当前配置尚未保存。是否放弃修改并切换配置项？')) return
+    setDirty(false)
+    dirtyRef.current = false
+    setSelectedDocumentId(nextDocumentId)
   }
 
   async function save() {
@@ -375,7 +257,6 @@ export function ConfigPage() {
       setDocument(saved)
       setDraft(cloneValue(saved.value))
       setDirty(false)
-      setJsonErrors({})
     } catch (error) {
       if (error instanceof ConfigRequestError) {
         setSaveError({ code: error.code, message: error.message })
@@ -397,10 +278,10 @@ export function ConfigPage() {
     <div className="config-page">
       <aside className="config-page__catalog panel">
         <header className="panel__header">
-          <div><h3>配置目录</h3><small>{configCatalogReady ? `${catalogItems.length} 个 testcfg` : '正在读取目录…'}</small></div>
+          <div><h3>配置项目</h3><small>{configCatalogReady ? `${catalogItems.length} 个测试项目` : '正在读取…'}</small></div>
           <button className="button button--quiet button--compact" disabled={loading || saving} onClick={() => void refreshConfigCatalog().catch(() => undefined)} type="button"><ArrowClockwise aria-hidden="true" size={14} />刷新</button>
         </header>
-        {configCatalogError && <p className="config-page__catalog-error">目录读取失败：{configCatalogError}</p>}
+        {configCatalogError && <p className="config-page__catalog-error">读取失败：{configCatalogError}</p>}
         <div className="config-page__document-list" role="list">
           {documents.map((entry) => {
             const item = catalogItems.find((candidate) => candidate.documentId === entry.documentId)
@@ -411,12 +292,11 @@ export function ConfigPage() {
                 className={selected ? 'config-page__document is-active' : 'config-page__document'}
                 disabled={!selected && navigationBlocked}
                 key={entry.documentId}
-                onClick={() => setSelectedDocumentId(entry.documentId)}
+                onClick={() => selectDocument(entry.documentId)}
                 role="listitem"
                 type="button"
               >
                 <strong>{entry.title}</strong>
-                <span>{entry.documentId}</span>
                 {item && <small>{item.enabled ? '启用' : '已停用'} · #{item.order + 1}{item.valid ? '' : ' · 无效'}</small>}
               </button>
             )
@@ -427,8 +307,8 @@ export function ConfigPage() {
       <main className="config-page__editor panel">
         <header className="panel__header">
           <div>
-            <h3>{document?.documentId ?? selectedDocumentId}</h3>
-            <small>{document ? `${document.kind} · revision ${document.revision}` : '等待配置文档'}</small>
+            <h3>{selectedDocumentTitle}</h3>
+            <small>{document ? `版本 ${document.revision.slice(0, 12)}` : '等待配置内容'}</small>
           </div>
           <div className="config-page__actions">
             <button className="button button--quiet" disabled={!dirty || loading || saving} onClick={discardDraft} type="button"><ArrowCounterClockwise aria-hidden="true" size={15} />放弃修改</button>
@@ -438,7 +318,14 @@ export function ConfigPage() {
           </div>
         </header>
 
-        {writeBlocked && <p className="config-editor__lock" role="status">运行态禁止保存配置；请等待测试停止后再保存。</p>}
+        {writeBlocked && <p className="config-editor__lock" role="status">测试正在运行，系统配置暂时只读；请返回测试工作台停止测试后再修改。</p>}
+        {document?.documentId === 'mbddf-station' && hardwareOptions && (
+          <p className={hardwareOptions.state === 'available' ? 'config-editor__hint' : 'config-editor__lock'} role="status">
+            {hardwareOptions.state === 'available'
+              ? `已检测到 ${hardwareOptions.devices.length} 台 NI 设备；也可以手工填写设备名和序列号。`
+              : `NI 设备未自动检测：${hardwareOptions.message || '当前不可用'}。仍可手工填写。`}
+          </p>
+        )}
         {saveError && (
           <p className="config-editor__error" role="alert">
             <strong>{saveErrorTitle}（{saveError.code}）</strong>{saveError.message}
@@ -449,22 +336,26 @@ export function ConfigPage() {
             )}
           </p>
         )}
-        {Object.values(jsonErrors).filter(Boolean).map((error) => <p className="config-editor__error" key={error} role="alert">{error}</p>)}
 
         {loading ? (
-          <div className="compact-empty">正在读取配置文档…</div>
+          <div className="compact-empty">正在读取配置…</div>
         ) : loadError ? (
           <div className="config-editor__error" role="alert">读取失败：{loadError}</div>
         ) : document && draft ? (
           <div className="config-editor">
             {document.documentId === 'test-config-catalog' ? (
-              <CatalogEditor disabled={writeBlocked || saving} fallbackItems={catalogItems} onChange={updateDraft} onJsonError={setJsonError} value={draft} />
-            ) : document.documentId === 'mbddf-station' ? (
-              <StationEditor disabled={writeBlocked || saving} onChange={updateDraft} onJsonError={setJsonError} value={draft} />
-            ) : isTestConfig(document) ? (
-              <TestConfigEditor disabled={writeBlocked || saving} onChange={updateDraft} onJsonError={setJsonError} value={draft} />
+              <CatalogEditor disabled={writeBlocked || saving} fallbackItems={catalogItems} onChange={updateDraft} value={draft} />
+            ) : formSchema ? (
+              <ConfigForm
+                disabled={writeBlocked || saving}
+                onChange={updateDraft}
+                optionSources={optionSources}
+                schema={formSchema}
+                validationErrors={formErrors}
+                value={draft}
+              />
             ) : (
-              <GenericEditor disabled={writeBlocked || saving} onChange={updateDraft} onJsonError={setJsonError} value={draft} />
+              <div className="compact-empty">该配置尚未提供产品工程师表单，当前不可编辑。</div>
             )}
           </div>
         ) : null}

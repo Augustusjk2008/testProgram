@@ -438,5 +438,46 @@ TEST(RunParameterSchemaTest, SerialTestUnifiesModeLinkAndCycleCount)
                      .ok());
 }
 
+TEST(RunParameterSchemaTest, MemperfAndTimerJitterExposeCurrentProductParameters)
+{
+    const RunParameterSchema* memory = findRunParameterSchema(
+        QStringLiteral("mbddf.memperf"));
+    ASSERT_NE(memory, nullptr);
+    ASSERT_EQ(memory->parameters.size(), 3);
+    const RunParameterDescriptor* memoryType = parameter(
+        *memory, QStringLiteral("memperf_type"));
+    const RunParameterDescriptor* length = parameter(
+        *memory, QStringLiteral("length"));
+    const RunParameterDescriptor* seed = parameter(
+        *memory, QStringLiteral("seed"));
+    ASSERT_NE(memoryType, nullptr);
+    ASSERT_NE(length, nullptr);
+    ASSERT_NE(seed, nullptr);
+    EXPECT_EQ(memoryType->kind, RunParameterKind::Choice);
+    EXPECT_EQ(memoryType->choices.size(), 7);
+    EXPECT_EQ(length->minimum.toInt(), 1);
+    EXPECT_EQ(length->maximum.toInt(), 256 * 1024);
+    EXPECT_EQ(seed->minimum.toLongLong(), 0);
+    EXPECT_EQ(seed->maximum.toLongLong(), 0xFFFFFFFFLL);
+
+    const RunParameterSchema* timer = findRunParameterSchema(
+        QStringLiteral("mbddf.timer_jitter"));
+    ASSERT_NE(timer, nullptr);
+    ASSERT_EQ(timer->parameters.size(), 1);
+    const RunParameterDescriptor* mode = parameter(*timer, QStringLiteral("mode"));
+    ASSERT_NE(mode, nullptr);
+    EXPECT_EQ(mode->kind, RunParameterKind::Choice);
+    EXPECT_EQ(mode->choices.size(), 2);
+
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.memperf"), {},
+                     {{QStringLiteral("length"), 0}})
+                     .ok());
+    EXPECT_FALSE(normalizeRunParameters(
+                     QStringLiteral("mbddf.timer_jitter"), {},
+                     {{QStringLiteral("mode"), 2}})
+                     .ok());
+}
+
 } // namespace
 } // namespace hwtest::algorithm::mbddf

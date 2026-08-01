@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { AppShell, type PageId } from './AppShell'
+import { AppShell, type PageId, type WorkspaceId } from './AppShell'
 import { ChartsPage } from '../pages/ChartsPage'
 import { DiagnosticsPage } from '../pages/DiagnosticsPage'
 import { OverviewPage } from '../pages/OverviewPage'
@@ -11,21 +11,28 @@ import { isBoardTestAlgorithm } from '../features/board-test/board-test-navigati
 import { useSession } from '../features/session/SessionProvider'
 import { isPerformanceCapabilityEnabled } from '../features/performance/performance-navigation'
 import { analysisIdentityKey } from '../features/performance/analysis-session-state'
+import {
+  canLeaveConfigurationWorkspace,
+  type ConfigurationWorkspaceNavigationState,
+} from '../pages/config-draft'
 
 export function App() {
   const [page, setPage] = useState<PageId>('overview')
+  const [workspace, setWorkspace] = useState<WorkspaceId>('test')
+  const [configNavigationState, setConfigNavigationState] =
+    useState<ConfigurationWorkspaceNavigationState>({ dirty: false, saving: false })
   const { performanceNavigationIdentity, snapshot } = useSession()
   const navigatedIdentityKey = useRef('')
   const performanceAvailable = isPerformanceCapabilityEnabled(snapshot.descriptor.postRunAnalysis)
   const boardTestAvailable = isBoardTestAlgorithm(snapshot.algorithmId || snapshot.descriptor.algorithmId)
 
   useEffect(() => {
-    if (!performanceNavigationIdentity || !performanceAvailable) return
+    if (workspace !== 'test' || !performanceNavigationIdentity || !performanceAvailable) return
     const identityKey = analysisIdentityKey(performanceNavigationIdentity)
     if (identityKey === navigatedIdentityKey.current) return
     navigatedIdentityKey.current = identityKey
     setPage('performance')
-  }, [performanceAvailable, performanceNavigationIdentity])
+  }, [performanceAvailable, performanceNavigationIdentity, workspace])
 
   useEffect(() => {
     if (page === 'performance' && !performanceAvailable) setPage('overview')
@@ -33,13 +40,29 @@ export function App() {
   }, [boardTestAvailable, page, performanceAvailable])
 
   return (
-    <AppShell onPageChange={setPage} page={page}>
-      {page === 'overview' && <OverviewPage />}
-      {page === 'charts' && <ChartsPage />}
-      {page === 'diagnostics' && <DiagnosticsPage />}
-      {page === 'performance' && <PerformancePage />}
-      {page === 'board-test' && boardTestAvailable && <BoardTestPage />}
-      {page === 'config' && <ConfigPage />}
+    <AppShell
+      onPageChange={setPage}
+      onWorkspaceChange={(nextWorkspace) => {
+        if (workspace === 'configuration' && nextWorkspace === 'test' &&
+            !canLeaveConfigurationWorkspace(configNavigationState, () => window.confirm(
+              '当前配置尚未保存。是否放弃修改并返回测试工作台？',
+            ))) return
+        setWorkspace(nextWorkspace)
+      }}
+      page={page}
+      workspace={workspace}
+    >
+      {workspace === 'configuration' ? (
+        <ConfigPage onNavigationStateChange={setConfigNavigationState} />
+      ) : (
+        <>
+          {page === 'overview' && <OverviewPage />}
+          {page === 'charts' && <ChartsPage />}
+          {page === 'diagnostics' && <DiagnosticsPage />}
+          {page === 'performance' && <PerformancePage />}
+          {page === 'board-test' && boardTestAvailable && <BoardTestPage />}
+        </>
+      )}
     </AppShell>
   )
 }

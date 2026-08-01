@@ -17,6 +17,8 @@ import type {
   DigitalStimulusSnapshot,
   DigitalSwitchDescriptor,
   HelloMessage,
+  HardwareOptions,
+  HardwareOptionsState,
   ReplyData,
   ReplyMessage,
   RunMode,
@@ -468,6 +470,49 @@ export function parseConfigDocument(value: JsonObject): ConfigDocument {
   }
 }
 
+function hardwareOptionsState(value: unknown): HardwareOptionsState {
+  if (value === 'available' || value === 'unavailable' || value === 'error') return value
+  throw new Error('Invalid protocol field: hardwareOptions.state')
+}
+
+export function parseHardwareOptions(value: JsonObject): HardwareOptions {
+  try {
+    const devicesValue = requiredArray(value, 'devices')
+    if (devicesValue.length > 128) throw new Error('too many devices')
+    const names = new Set<string>()
+    const devices = devicesValue.map((item) => {
+      if (!isObject(item)) throw new Error('device')
+      const deviceName = requiredNonEmptyString(item, 'deviceName')
+      const normalizedName = deviceName.toLocaleLowerCase()
+      if (names.has(normalizedName)) throw new Error('duplicate deviceName')
+      names.add(normalizedName)
+      const supportedModules = requiredArray(item, 'supportedModules').map((module) => {
+        if (typeof module !== 'string' || !module.trim()) throw new Error('supportedModules')
+        return module
+      })
+      if (new Set(supportedModules).size !== supportedModules.length) {
+        throw new Error('duplicate supportedModules')
+      }
+      return {
+        deviceName,
+        deviceId: requiredNonEmptyString(item, 'deviceId'),
+        model: requiredString(item, 'model'),
+        serialNumber: requiredString(item, 'serialNumber'),
+        supportedModules,
+      }
+    })
+    return {
+      state: hardwareOptionsState(value.state),
+      message: requiredString(value, 'message'),
+      allowManualEntry: requiredBoolean(value, 'allowManualEntry'),
+      devices,
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid protocol hardwareOptions: ${detail}`)
+  }
+}
+
 function emptyDigitalStimulus(): DigitalStimulusSnapshot {
   return { ...EMPTY_DIGITAL_STIMULUS, switches: [] }
 }
@@ -817,6 +862,12 @@ export class HwtestClient {
     const reply = await this.request('configCatalog')
     if (!reply.ok) throw new ConfigRequestError('configCatalog', reply.code, reply.message, reply.data)
     return reply.data.configCatalog ?? parseConfigCatalog(reply.data)
+  }
+
+  async getHardwareOptions(): Promise<HardwareOptions> {
+    const reply = await this.request('hardwareOptions')
+    if (!reply.ok) throw new Error(reply.message || reply.code || 'hardwareOptions was rejected')
+    return parseHardwareOptions(reply.data)
   }
 
   async getConfigDocument(documentId: string): Promise<ConfigDocument> {

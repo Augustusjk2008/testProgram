@@ -254,13 +254,14 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `testConfigs` | `{}` | 返回目录中 `enabled=true` 且可加载的测试配置摘要；`data` 为 `{ "selectedConfigId": "...", "configs": [{"configId":"...","title":"...","description":"...","algorithmId":"..."}] }`，不返回本地路径 |
 | `selectTest` | `{"configId":"mbddf-elec-health"}` | 只接受 `testConfigs` 返回的白名单 `configId`；服务器映射到本地路径并重新加载配置，若当前处于可运行终态则先安全关闭当前会话；运行中或停止中拒绝切换 |
 | `configCatalog` | `{}` | 返回 `{revision, items}`；管理项包含服务端 `documentId`、展示信息、`enabled`、`order`、`valid` 和校验消息，既包括停用项也包括当前无法加载的 testcfg |
-| `configDocument` | `{"documentId":"mbddf_system_status.testcfg.json"}` | 只接受服务端文档 ID；返回 `{documentId,kind,revision,value,schema}`。保留 ID 为 `test-config-catalog`、`mbddf-station`，其余仅为当前目录中的 `*.testcfg.json` 文件名 |
+| `configDocument` | `{"documentId":"mbddf_system_status.testcfg.json"}` | 只接受服务端文档 ID；返回 `{documentId,kind,revision,value,schema}`。保留 ID 为 `test-config-catalog`、`mbddf-station`，其余仅为当前目录中的 `*.testcfg.json` 文件名。station/testcfg 的 `schema` 是不落盘的产品工程师表单描述，见下文 |
 | `saveConfig` | `{"documentId":"...","expectedRevision":"sha256-hex","value":{}}` | 先比较 revision，再验证并用 `QSaveFile` 原子提交；当前 testcfg 或工位配置仅在自动重载成功后返回保存后的文档，重载失败则条件回滚并返回 `config_reload_failed`。目录保存后立即应用启停和顺序。只有 `empty`/`configured` 可保存，准备完成、运行、暂停、停止收尾或分析期间拒绝 |
 | `snapshot` | `{}` | 从 Web 层缓存读取；`data` 为 `{ "seq": n, "snapshot": { ... } }`，其中包含当前配置 descriptor |
 | `setTelemetryDelivery` | `{"mode":"single"}` 或 `{"mode":"batch"}` | Web 层本地协商动作，不调用应用控制器、不占用全局硬件 busy；每个新连接默认为 `single`。只能在没有 `preparing`/`running`/`paused`/`stopping` 活动测试、没有待批样本、没有待发输出且不在 cleanup 时切换；成功 `data` 为 `{ "mode": "single" | "batch" }`。缺少 `mode` 为 `missing_field`，非 string、未知 mode 或额外字段为 `invalid_envelope`，状态不满足为 `invalid_state`。 |
 | `analysisResult` | `{"taskId":"...","analysisGeneration":3,"channel":0}` | 只读；参数必须且只能为这三个字段，taskId 非空，generation 为 `1..9007199254740991` 的安全整数，channel 为 `0..3`。只允许读取当前身份且 `completed`/`partial` 的通道；不匹配返回 `stale_analysis_result`，未就绪返回 `analysis_not_ready`。成功 `data` 为 `{ "analysisResult": { "channelSummary": { ... }, "bode": { "frequencyHz": [], "magnitudeDb": [], "phaseDeg": [], "pointStatus": [] } } }` |
 | `controls` | `{}` | 在控制器亲和线程读取；`data.controls` 为 `{resourceId, providerId}` 数组 |
 | `ports` | `{}` | 在控制器亲和线程读取；`data.ports` 为完整 `SerialPortInfo` 对象数组 |
+| `hardwareOptions` | `{}` | 只读返回 `{state,message,allowManualEntry,devices}`。`devices[]` 包含 NI `deviceName`、`deviceId`、`model`、`serialNumber` 和 `supportedModules`；`state` 为 `available`、`unavailable` 或 `error`。服务端只按基础 HAL 中 `adapters["ni.daqmx"]` 的驱动级配置执行 Adapter `initialize -> enumerateDevices -> shutdown`，不得打开设备、查询需要打开设备的能力、创建任务或应用安全输出；Adapter、驱动或板卡不可用仍返回成功 reply 和 `allowManualEntry=true` |
 | `selectControl` | `{"resourceId":"CONTROL_SERIAL"}` | 调用 `selectControl`；`resourceId` 必须是非空字符串 |
 | `selectSerialPort` | `{"portName":"COM7"}` | 调用 `selectSerialPort`；`portName` 必须是非空字符串 |
 | `selectAuxiliarySerialPort` | `{"portName":"COM8"}` | 只允许当前 `mbddf.serial_test` 在配置态选择 `ports` 枚举中的非空串口；保存到 `snapshot.auxiliarySerialPortName`。回显启动时必须已选择，且不得与主控制串口相同；回环忽略该端口 |
@@ -273,6 +274,10 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `stop` | `{}` | 调用 `stopAsync`；发起成功时只在 `stopCompleted` 后发送 reply，初始调用失败时立即回复且不等待不存在的完成信号。活动 descriptor `stoppable=false` 时立即返回 `CapabilityUnsupported`，不调用控制器动作 |
 | `disconnect` | `{}` | 通常必要时先异步停止，再调用 `shutdown`；最后回复并关闭当前连接，服务器继续监听。不可停止有限流活动时回复成功后仅分离连接，不停止、不 shutdown，允许重连 |
 | `quit` | `{}` | 通常执行与 `disconnect` 相同的安全收尾，随后关闭服务器并退出进程。不可停止有限流活动时返回 `invalid_state`，不得关闭连接、监听或进程 |
+
+station/testcfg 表单描述使用轻量契约 `{"contractVersion":1,"mode":"form","sections":[]}`，不是通用 JSON Schema。`sections[]` 按产品工程师可理解的主题组织 `fields[]` 和 `lists[]`：字段以 JSON Pointer `path` 定位，`kind` 当前只允许 `text`、`multiline`、`integer`、`number`、`boolean`、`choice`、`choiceOrText`、`scalar`，并可携带单位、范围、静态选项、动态 `optionsSource`、条件显示、只读标志和 `defaultValue`；`scalar` 只用于兼容判据参考值的文本、数字或开关标量。列表声明固定列、默认新行以及是否允许增删。testcfg 只描述标题、说明、步骤显示名、超时/重试、算法 Schema 中已有的默认测试参数、批准的执行时序、判定条件、结果显示字段和 DI 通道映射；station 只描述现有控制资源、串口属性、PXI-6259/PXI-6733 identity 及批准的端口/通道叶子。协议 Profile、算法 ID、Adapter/Provider、资源拓扑和 `safeState` 不进入表单。
+
+表单 Schema 不写入配置文件，也不参与配置 revision；客户端只能在完整 `value` 草稿上修改 Schema 声明路径，必须原样保留未显示字段。文档未显式写某个字段时，`defaultValue` 只作为界面显示、条件判断和保存前校验的继承值；工程师实际修改该控件后才把值写入草稿。判据比较字段的 `acceptOptionIndex=true` 只兼容旧配置中的枚举整数，工程师重新选择后写入稳定字符串名。`optionsSource=serialPorts` 使用 `ports` 结果；板卡型号对应的 NI 设备名和序列号选项使用 `hardwareOptions`，但始终允许手工输入。目录文档由固定的启停/排序控件编辑，不使用该表单契约。未知契约版本或缺少表单描述时，浏览器不得回退成原始配置编辑器。
 
 除 `start`、`selectTest`、`configDocument`、`saveConfig`、`selectControl`、`selectSerialPort`、`selectAuxiliarySerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，`configDocument`/`saveConfig` 只读取服务端文档 ID，三者都不读取客户端路径。testcfg 的文件名、`schemaVersion`、`configId` 和 `steps[].algorithmId` 是当前只读标识；“本次运行参数”继续是单次启动覆盖，不因配置页面保存而回写。`selectSerialPort` 保留既有非空端口名覆盖能力；`selectAuxiliarySerialPort` 则必须命中本次系统枚举。`start`、`saveConfig` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知顶层字段按 `invalid_envelope` 拒绝；`algorithmParameters` 内的未知字段由应用/算法边界以 `ParameterRangeError` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
 
@@ -315,7 +320,7 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 - 默认出站限制为：`maxBatchSamples=64`、`maxBatchBytes=32768`、`maxBatchLatencyMs=20`、`snapshotIntervalMs=100`、`socketHighWaterBytes=1048576`、`socketLowWaterBytes=262144`、`maxQueuedOutputBytes=4194304`。`bytesToWrite()` 到达高水位后暂停继续提交到 Qt socket；在 `bytesWritten()` 使其降至低水位后恢复。达到硬上限时，服务端记录 `telemetry_backpressure`、停止向旧连接投影新遥测并关闭旧连接；普通任务执行既有安全停止/收尾，不可停止有限流只分离连接且继续自然运行。不保留历史、不重放，也不得把旧 epoch 的 FIFO 内容交给重连客户端。
 - `setDigitalStimulus` 和 `resetDigitalStimulus` 只在控制器处于 `ready`、`running`、`paused`、`finished` 或 `stopped`，且 DI 已准备时才会执行；Web 层不持有或传递物理资源/Adapter 参数。
 - `stop` 保存请求 id，调用 `stopAsync()` 后保持事件循环运行；发起成功后收到 `stopCompleted` 才回复。若 `stopAsync()` 因状态、超时参数或已有停止而立即失败，则直接返回该控制器错误并清除 Web 层 pending 状态。
-- `[当前实现]` 异步停止、断开收尾或后处理处于 `queued` 到终态期间，`snapshot`、`analysisResult`、`testConfigs`、`controls` 和 `ports` 等只读动作仍允许；其他新会话写动作回复 `command_in_progress`，不得再次触发控制器写动作。当前捕获任务 STOP 和所有 cleanup 始终允许。
+- `[当前实现]` 异步停止、断开收尾或后处理处于 `queued` 到终态期间，`snapshot`、`analysisResult`、`testConfigs`、`controls`、`ports` 和 `hardwareOptions` 等只读动作仍允许；其他新会话写动作回复 `command_in_progress`，不得再次触发控制器写动作。当前捕获任务 STOP 和所有 cleanup 始终允许。
 - `disconnect`、`quit`、异常掉线和服务器内部 `DropCleanup` 在普通测试状态为 `running` 或 `paused` 时按 `stopAsync -> stopCompleted -> shutdown` 顺序执行；其他普通状态直接尝试 `shutdown`。活动 descriptor `stoppable=false` 时是显式例外：`disconnect`/异常掉线/背压只 detach，`quit` 拒绝，均不调用 stop、shutdown 或 DI 复位。DI 配置的普通停止/收尾会在 BIZ 停止后尽力 `resetDigitalStimulus`，随后按刺激设备会话、DUT 会话、HAL 的顺序释放；这不是进程崩溃、主机掉电或未验证台架的物理安全保证。shutdown 同时请求后处理协作取消并在配置时限内 join，不使用 `terminate()` 或 detach；join 超时返回 `analysis_shutdown_timeout` 并保留仍被线程引用的对象，服务器继续保持 cleanup 门禁并重试。SPA 页面内导航不等于断线，不取消分析。
 - `shutdown` 的失败必须通过对应 reply 返回；异常掉线时没有 reply，但服务器仍清理会话并恢复到可接纳下一客户端的状态。
 - 服务器停止监听或客户端对象销毁，不得先于已经排队的安全收尾。

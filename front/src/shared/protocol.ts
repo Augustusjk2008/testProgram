@@ -267,6 +267,23 @@ export interface SaveConfigRequest {
   value: Record<string, unknown>
 }
 
+export type HardwareOptionsState = 'available' | 'unavailable' | 'error'
+
+export interface HardwareOptionDevice {
+  deviceName: string
+  deviceId: string
+  model: string
+  serialNumber: string
+  supportedModules: string[]
+}
+
+export interface HardwareOptions {
+  state: HardwareOptionsState
+  message: string
+  allowManualEntry: boolean
+  devices: HardwareOptionDevice[]
+}
+
 export interface DigitalSwitchDescriptor {
   switchId: string
   dutBit: number
@@ -290,6 +307,7 @@ export type ActionName =
   | 'load'
   | 'testConfigs'
   | 'configCatalog'
+  | 'hardwareOptions'
   | 'configDocument'
   | 'saveConfig'
   | 'selectTest'

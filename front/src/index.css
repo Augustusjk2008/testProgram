@@ -212,6 +212,48 @@ code,
   padding: 8px;
 }
 
+.sidebar__workspace-title {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-bright);
+  background: var(--surface-active);
+  color: var(--lime);
+}
+
+.sidebar__workspace-title small,
+.sidebar__workspace-title strong {
+  display: block;
+}
+
+.sidebar__workspace-title small {
+  color: var(--muted);
+  font: 9px "Geist Mono", monospace;
+}
+
+.sidebar__workspace-title strong {
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.sidebar__workspace-switch {
+  margin-top: auto;
+  padding: 8px 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.sidebar__workspace-switch .nav-item {
+  width: 100%;
+}
+
+.nav-item--configuration {
+  color: var(--text-soft);
+}
+
 .nav-item {
   position: relative;
   display: grid;
@@ -270,7 +312,7 @@ code,
 }
 
 .sidebar__link {
-  margin: auto 8px 8px;
+  margin: 8px;
   padding: 9px 10px;
   border: 1px solid var(--line);
   background: var(--panel);
@@ -306,6 +348,10 @@ code,
   grid-template-rows: var(--topbar-height) auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+}
+
+.workspace--configuration {
+  grid-template-rows: var(--topbar-height) minmax(0, 1fr);
 }
 
 .topbar {
@@ -1094,58 +1140,153 @@ code,
   align-items: center;
 }
 
-.config-editor__fields {
+.config-form {
+  display: grid;
+}
+
+.config-form-section {
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.config-form-section:last-child {
+  border-bottom: 0;
+}
+
+.config-form-section__header {
+  margin-bottom: 12px;
+}
+
+.config-form-section__header h4,
+.config-form-list h5 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.config-form-section__header p,
+.config-form-list header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.config-form-section__fields,
+.config-form-list__fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  padding: 12px;
 }
 
-.config-editor__fields > .config-editor__hint {
-  grid-column: 1 / -1;
-  padding: 0;
-}
-
-.config-field {
+.config-form-field {
   display: grid;
   min-width: 0;
   gap: 5px;
 }
 
-.config-field--wide,
-.config-field--json {
+.config-form-field--wide {
   grid-column: 1 / -1;
 }
 
-.config-field > span {
+.config-form-field > span:first-child {
   color: var(--text-soft);
   font-size: 11px;
   font-weight: 620;
 }
 
-.config-field input,
-.config-field textarea {
+.config-form-field > small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.config-form-field > .config-form-field__error {
+  color: var(--red);
+}
+
+.config-form-field__control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.config-form-field__control > input:not([type="checkbox"]),
+.config-form-field__control > select,
+.config-form-field__control > textarea {
   width: 100%;
+  min-width: 0;
   border: 1px solid var(--line-bright);
   border-radius: 2px;
   background: var(--input);
   color: var(--text);
 }
 
-.config-field input {
+.config-form-field__control > input:not([type="checkbox"]),
+.config-form-field__control > select {
   height: 32px;
   padding: 0 8px;
 }
 
-.config-field textarea {
+.config-form-field__control > textarea {
   min-height: 76px;
-  resize: vertical;
   padding: 8px;
-  font: 11px/1.5 "Geist Mono", monospace;
+  resize: vertical;
+  font: 11px/1.5 "Geist", sans-serif;
 }
 
-.config-field--json textarea {
-  min-height: 180px;
+.config-form-field__control > input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 7px 0;
+  accent-color: var(--lime);
+}
+
+.config-form-field__control > b {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font: 10px "Geist Mono", monospace;
+}
+
+.config-form-list {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+}
+
+.config-form-list > header {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.config-form-list__items {
+  display: grid;
+}
+
+.config-form-list__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.config-form-list__item:last-child {
+  border-bottom: 0;
+}
+
+.config-form-list__empty {
+  margin: 0;
+  padding: 12px 10px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .config-catalog-editor__items {
@@ -1218,22 +1359,6 @@ code,
 .config-catalog-editor__move button:disabled {
   cursor: not-allowed;
   opacity: .42;
-}
-
-.config-editor__advanced {
-  margin: 10px;
-  border: 1px solid var(--line);
-}
-
-.config-editor__advanced summary {
-  padding: 8px 10px;
-  color: var(--muted);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.config-editor__advanced .config-field {
-  padding: 0 10px 10px;
 }
 
 .panel {
@@ -2861,11 +2986,18 @@ code,
 
   .brand > strong,
   .nav-item strong,
+  .sidebar__workspace-title > div,
   .sidebar__link {
     display: none;
   }
 
   .sidebar nav {
+    padding: 10px 7px;
+  }
+
+  .sidebar__workspace-title {
+    grid-template-columns: 22px;
+    justify-content: center;
     padding: 10px 7px;
   }
 
@@ -2877,6 +3009,20 @@ code,
 }
 
 @media (max-width: 760px) {
+  .config-page {
+    grid-template-columns: 1fr;
+  }
+
+  .config-page__catalog {
+    max-height: 42vh;
+  }
+
+  .config-form-section__fields,
+  .config-form-list__fields,
+  .config-form-list__item {
+    grid-template-columns: 1fr;
+  }
+
   .performance-summary {
     grid-template-columns: 1fr;
   }

@@ -171,6 +171,8 @@ HAL 部署配置与 BIZ 的产品测试配置是不同边界：BIZ 新配置使�
 
 `[当前实现]` Web 工位配置持久化在 `configs/mbddf_station.json`，由应用层在读取基础 `mbddf_pc_hal.json` 后投影到内存中的最终 HAL map；基础文件不被改写。覆盖只匹配基础配置中已经存在的控制资源、PXI-6259/PXI-6733 设备 alias 和资源 ID：可选择既有主控制资源，可设置串口属性、两张 NI 卡的物理设备名/序列号、6259 数字端口/线号，以及 6259 AI、6733 AO 的资源 `physicalIndex`。未知设备/资源或试图修改 Adapter、Provider、module、direction、设备型号、connector、量程或根 `safeState` 会在进入 HAL 前拒绝。模拟通道路由以资源顶层 `physicalIndex` 为准；`properties.channel` 只是基础配置中的说明字段，不是工位覆盖入口。
 
+配置页的 NI 候选发现是独立只读路径：应用层只把基础 HAL 的 `adapters["ni.daqmx"]` 驱动级配置交给 C ABI Adapter，依次执行初始化、枚举和关闭。该路径不调用 `openDevice`、需要打开设备的能力查询、采样任务或任何输出，因此不投影工位资源和 `safeState`；库、驱动或板卡缺失是允许手工输入的正常降级状态，不构成真实 PXI 验收。串口候选仍由 Qt 系统枚举提供，持久化时也允许填写当前未枚举到的端口名。
+
 ---
 
 ## 5. 资源、参数和安全

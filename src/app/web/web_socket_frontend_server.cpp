@@ -102,6 +102,30 @@ QJsonObject configurationDocumentObject(const ConfigurationDocument& document)
     };
 }
 
+QJsonObject hardwareOptionsObject(const HardwareOptions& options)
+{
+    QJsonArray devices;
+    for (const HardwareOptionDevice& device : options.devices) {
+        QJsonArray supportedModules;
+        for (const QString& module : device.supportedModules) {
+            supportedModules.push_back(module);
+        }
+        devices.push_back(QJsonObject{
+            {QStringLiteral("deviceName"), device.deviceName},
+            {QStringLiteral("deviceId"), device.deviceId},
+            {QStringLiteral("model"), device.model},
+            {QStringLiteral("serialNumber"), device.serialNumber},
+            {QStringLiteral("supportedModules"), supportedModules},
+        });
+    }
+    return QJsonObject{
+        {QStringLiteral("state"), options.state},
+        {QStringLiteral("message"), options.message},
+        {QStringLiteral("allowManualEntry"), options.allowManualEntry},
+        {QStringLiteral("devices"), devices},
+    };
+}
+
 QString selectedTestConfigId(const FrontendLaunchOptions& options)
 {
     const QString selectedPath = QFileInfo(options.testConfigPath).absoluteFilePath();
@@ -942,6 +966,7 @@ public:
             action == QStringLiteral("testConfigs") ||
             action == QStringLiteral("configCatalog") ||
             action == QStringLiteral("configDocument") ||
+            action == QStringLiteral("hardwareOptions") ||
             action == QStringLiteral("controls") ||
             action == QStringLiteral("ports");
     }
@@ -1143,6 +1168,17 @@ public:
                     *error = protocolError(
                         QStringLiteral("invalid_envelope"),
                         QStringLiteral("The configCatalog action does not accept parameters"));
+                }
+                return false;
+            }
+            return true;
+        }
+        if (request.action == QStringLiteral("hardwareOptions")) {
+            if (!request.params.isEmpty()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("The hardwareOptions action does not accept parameters"));
                 }
                 return false;
             }
@@ -1469,7 +1505,8 @@ public:
                     request.action == QStringLiteral("selectTest") ||
                     request.action == QStringLiteral("configCatalog") ||
                     request.action == QStringLiteral("configDocument") ||
-                    request.action == QStringLiteral("saveConfig");
+                    request.action == QStringLiteral("saveConfig") ||
+                    request.action == QStringLiteral("hardwareOptions");
                 if (needsConfigurationStorage &&
                     !optionsCopy.halConfigPath.trimmed().isEmpty()) {
                     const QString configurationDirectory =
@@ -1569,6 +1606,8 @@ public:
                             .toObject().toVariantMap(),
                         &document);
                     if (result.ok) data = configurationDocumentObject(document);
+                } else if (request.action == QStringLiteral("hardwareOptions")) {
+                    data = hardwareOptionsObject(controllerGuard->hardwareOptions());
                 } else if (request.action == QStringLiteral("controls")) {
                     QJsonArray controls;
                     for (const ControlResource& control :

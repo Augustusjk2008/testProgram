@@ -28,6 +28,7 @@ import {
   type ConfigCatalog,
   type ConfigDocument,
   type DigitalStimulusSnapshot,
+  type HardwareOptions,
   type ReplyMessage,
   type SaveConfigRequest,
   type SerialPortInfo,
@@ -74,6 +75,7 @@ interface SessionContextValue {
   testConfigs: TestConfigOption[]
   testConfigsReady: boolean
   serialPorts: SerialPortInfo[]
+  hardwareOptions: HardwareOptions
   selectedConfigId: string
   busyAction: ActionName | null
   actionError: string
@@ -117,6 +119,13 @@ export interface SessionTelemetryValue {
 
 const SessionContext = createContext<SessionContextValue | null>(null)
 const TelemetryContext = createContext<TelemetryContextValue | null>(null)
+
+const EMPTY_HARDWARE_OPTIONS: HardwareOptions = {
+  state: 'unavailable',
+  message: '尚未读取 NI 硬件选项',
+  allowManualEntry: true,
+  devices: [],
+}
 
 function parseSerialPorts(value: unknown): SerialPortInfo[] {
   if (!Array.isArray(value)) throw new Error('后端 ports 不是数组')
@@ -169,6 +178,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const [testConfigs, setTestConfigs] = useState<TestConfigOption[]>([])
   const [testConfigsReady, setTestConfigsReady] = useState(false)
   const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>([])
+  const [hardwareOptions, setHardwareOptions] = useState<HardwareOptions>(EMPTY_HARDWARE_OPTIONS)
   const [selectedConfigId, setSelectedConfigId] = useState('')
   const [diagnostics, setDiagnostics] = useState<DiagnosticEntry[]>([])
   const [busyAction, setBusyAction] = useState<ActionName | null>(null)
@@ -507,6 +517,21 @@ export function SessionProvider({ children }: PropsWithChildren) {
           setSerialPorts([])
           pushDiagnostic('error', '读取本地串口失败', detail)
         })
+        void client.getHardwareOptions().then((options) => {
+          setHardwareOptions(options)
+          if (options.state !== 'available' && options.message) {
+            pushDiagnostic('link', 'NI 硬件使用手工配置', options.message)
+          }
+        }).catch((error) => {
+          const detail = error instanceof Error ? error.message : String(error)
+          setHardwareOptions({
+            state: 'error',
+            message: detail,
+            allowManualEntry: true,
+            devices: [],
+          })
+          pushDiagnostic('error', '读取 NI 硬件选项失败', detail)
+        })
         const requestTestConfigs = () => {
           void client.request('testConfigs').then((reply) => {
             setTestConfigsReady(true)
@@ -662,6 +687,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
     testConfigs,
     testConfigsReady,
     serialPorts,
+    hardwareOptions,
     selectedConfigId,
     busyAction,
     actionError,
@@ -692,6 +718,7 @@ export function SessionProvider({ children }: PropsWithChildren) {
     configCatalogReady,
     fetchAnalysisResult,
     getConfigDocument,
+    hardwareOptions,
     invoke,
     performanceNavigationIdentity,
     refreshConfigCatalog,

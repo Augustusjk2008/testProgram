@@ -2,17 +2,28 @@ import { describe, expect, it } from 'vitest'
 
 import type { ConfigCatalogItem } from '../shared/protocol'
 import {
+  canLeaveConfigurationWorkspace,
   catalogEditorItems,
   isConfigDocumentNavigationBlocked,
+  shouldPreserveConfigDraftOnReconnect,
   testConfigFormFields,
   updateCatalogDocument,
   updateTestConfigDocument,
 } from './config-draft'
 
 describe('configuration document draft mapping', () => {
-  it('blocks document switching while a draft, load or save is in flight', () => {
+  it('preserves dirty drafts across reconnects and confirms before leaving the workspace', () => {
+    expect(shouldPreserveConfigDraftOnReconnect(true, true)).toBe(true)
+    expect(shouldPreserveConfigDraftOnReconnect(true, false)).toBe(false)
+    expect(canLeaveConfigurationWorkspace({ dirty: false, saving: false }, () => false)).toBe(true)
+    expect(canLeaveConfigurationWorkspace({ dirty: true, saving: false }, () => true)).toBe(true)
+    expect(canLeaveConfigurationWorkspace({ dirty: true, saving: false }, () => false)).toBe(false)
+    expect(canLeaveConfigurationWorkspace({ dirty: false, saving: true }, () => true)).toBe(false)
+  })
+
+  it('only hard-blocks document switching while a load or save is in flight', () => {
     expect(isConfigDocumentNavigationBlocked(false, false, false)).toBe(false)
-    expect(isConfigDocumentNavigationBlocked(true, false, false)).toBe(true)
+    expect(isConfigDocumentNavigationBlocked(true, false, false)).toBe(false)
     expect(isConfigDocumentNavigationBlocked(false, true, false)).toBe(true)
     expect(isConfigDocumentNavigationBlocked(false, false, true)).toBe(true)
   })

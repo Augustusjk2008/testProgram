@@ -165,6 +165,7 @@ target_compile_definitions(hwtest_web_tests
         HWTEST_APP_HAL_CONFIG="${HWTEST_APP_HAL_CONFIG}"
         HWTEST_APP_HELM_STREAM_CONFIG="${HWTEST_APP_HELM_STREAM_CONFIG}"
         HWTEST_APP_DH_IGNITE_STREAM_CONFIG="${HWTEST_APP_DH_IGNITE_STREAM_CONFIG}"
+        HAL_TEST_NI_DAQMX_ADAPTER_FIXTURE_PATH="$<TARGET_FILE:hal_adapter_ni_daqmx_fixture>"
         HWTEST_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )
 
@@ -182,7 +183,10 @@ target_link_libraries(hwtest_web_tests
         GTest::gtest
 )
 
-add_dependencies(hwtest_web_tests hwtest_web)
+add_dependencies(hwtest_web_tests
+    hal_adapter_ni_daqmx_fixture
+    hwtest_web
+)
 
 if(MSVC)
     target_compile_options(hwtest_web_tests PRIVATE /utf-8)

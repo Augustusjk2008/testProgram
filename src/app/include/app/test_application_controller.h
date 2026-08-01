@@ -4,6 +4,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 #include <QVector>
 
@@ -29,6 +30,21 @@ struct SerialPortInfo {
     QString manufacturer;
     QString serialNumber;
     QString systemLocation;
+};
+
+struct HardwareOptionDevice {
+    QString deviceName;
+    QString deviceId;
+    QString model;
+    QString serialNumber;
+    QStringList supportedModules;
+};
+
+struct HardwareOptions {
+    QString state = QStringLiteral("unavailable");
+    QString message;
+    bool allowManualEntry = true;
+    QVector<HardwareOptionDevice> devices;
 };
 
 struct TestRunOptions {
@@ -246,6 +262,7 @@ public:
     ActionResult selectTestConfiguration(const QString& configId);
     QVector<ControlResource> availableControls() const;
     QVector<SerialPortInfo> availableSerialPorts() const;
+    HardwareOptions hardwareOptions() const;
     ActionResult selectControl(const QString& resourceId);
     ActionResult selectSerialPort(const QString& portName);
     ActionResult prepare();
