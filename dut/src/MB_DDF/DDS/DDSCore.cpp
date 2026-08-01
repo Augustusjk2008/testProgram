@@ -9,10 +9,12 @@
  */
 
 #include "MB_DDF/DDS/DDSCore.h"
+#include "MB_DDF/DDS/BeforeVisibleContext.h"
 #include "MB_DDF/Debug/Logger.h"
 
 #include <iostream>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <cstdlib>
 #include <unistd.h>
@@ -27,6 +29,29 @@ namespace DDS {
 
 // 定义静态成员变量
 const uint32_t DDSCore::VERSION;
+
+#ifdef MB_DDF_TEST_BUILD
+namespace {
+std::mutex topic_buffer_test_hook_mutex;
+DDSCore::TopicBufferTestHook topic_buffer_test_hook;
+
+void notify_topic_buffer_test_hook(const char* event, const std::string& topic_name) {
+    DDSCore::TopicBufferTestHook hook;
+    {
+        std::lock_guard<std::mutex> lock(topic_buffer_test_hook_mutex);
+        hook = topic_buffer_test_hook;
+    }
+    if (hook) {
+        hook(event, topic_name);
+    }
+}
+} // namespace
+
+void DDSCore::set_topic_buffer_test_hook(TopicBufferTestHook hook) {
+    std::lock_guard<std::mutex> lock(topic_buffer_test_hook_mutex);
+    topic_buffer_test_hook = std::move(hook);
+}
+#endif
 
 DDSCore& DDSCore::instance() {
     static DDSCore instance;
@@ -180,6 +205,10 @@ std::vector<LocalTopicInfo> DDSCore::list_topics() const {
         return topics;
     }
 
+    // 与同进程的RingBuffer构造使用相同锁，避免枚举到已登记但尚未初始化完成的
+    // Topic头。锁顺序固定为进程内mutex在前、共享注册信号量在后。
+    std::lock_guard<std::mutex> topic_buffers_lock(topic_buffers_mutex_);
+
     for (const auto* metadata : topic_registry_->get_all_topics()) {
         if (metadata == nullptr) {
             continue;
@@ -188,6 +217,16 @@ std::vector<LocalTopicInfo> DDSCore::list_topics() const {
         info.topic_id = metadata->topic_id;
         info.topic_name = metadata->topic_name;
         info.ring_buffer_size = metadata->ring_buffer_size;
+        if (shm_manager_ && shm_manager_->get_address() &&
+            metadata->ring_buffer_offset + sizeof(RingHeader) <= shm_manager_->get_size()) {
+            const auto* header = reinterpret_cast<const RingHeader*>(
+                static_cast<const char*>(shm_manager_->get_address()) +
+                metadata->ring_buffer_offset);
+            if (header->magic_number == RingHeader::MAGIC) {
+                info.current_sequence =
+                    header->current_sequence.load(std::memory_order_acquire);
+            }
+        }
         topics.push_back(std::move(info));
     }
     return topics;
@@ -195,6 +234,17 @@ std::vector<LocalTopicInfo> DDSCore::list_topics() const {
 
 std::shared_ptr<Subscriber> DDSCore::create_observer(const std::string& topic_name,
                                                      const LocalMessageCallback& callback) {
+    RingBuffer* buffer = create_or_get_topic_buffer(topic_name, true);
+    if (buffer == nullptr) {
+        return nullptr;
+    }
+    return create_observer(topic_name, callback, buffer->current_sequence());
+}
+
+std::shared_ptr<Subscriber> DDSCore::create_observer(
+    const std::string& topic_name,
+    const LocalMessageCallback& callback,
+    uint64_t start_after_sequence) {
     RingBuffer* buffer = create_or_get_topic_buffer(topic_name, true);
     if (buffer == nullptr) {
         LOG_ERROR << "failed to create observer buffer, topic name: " << topic_name;
@@ -208,7 +258,7 @@ std::shared_ptr<Subscriber> DDSCore::create_observer(const std::string& topic_na
     }
 
     auto subscriber = std::make_shared<Subscriber>(metadata, buffer, process_name_ + "_gateway_observer");
-    if (!subscriber->subscribe_observer(callback)) {
+    if (!subscriber->subscribe_observer(callback, start_after_sequence)) {
         return nullptr;
     }
     return subscriber;
@@ -290,7 +340,10 @@ bool DDSCore::initialize(size_t shared_memory_size) {
         LOG_DEBUG << "topic registry initialized";
         
         // 3. 初始化其他成员变量
-        topic_buffers_.clear();
+        {
+            std::lock_guard<std::mutex> lock(topic_buffers_mutex_);
+            topic_buffers_.clear();
+        }
         process_name_ = get_process_name();
         initialized_ = true;
 
@@ -319,7 +372,10 @@ void DDSCore::shutdown() {
         return;
     }
 
-    topic_buffers_.clear();
+    {
+        std::lock_guard<std::mutex> lock(topic_buffers_mutex_);
+        topic_buffers_.clear();
+    }
     topic_registry_.reset();
     shm_manager_.reset();
     process_name_.clear();
@@ -327,6 +383,16 @@ void DDSCore::shutdown() {
 }
 
 RingBuffer* DDSCore::create_or_get_topic_buffer(const std::string& topic_name, bool enable_checksum) {
+    if (Detail::before_visible_callback_active()) {
+        LOG_ERROR << "DDS Topic/entity creation rejected during before_visible callback: "
+                  << topic_name;
+        return nullptr;
+    }
+
+#ifdef MB_DDF_TEST_BUILD
+    notify_topic_buffer_test_hook("entry", topic_name);
+#endif
+
     // 检查系统是否已初始化
     if (!initialized_) {
         if (!initialize()) {
@@ -345,6 +411,11 @@ RingBuffer* DDSCore::create_or_get_topic_buffer(const std::string& topic_name, b
         LOG_ERROR << "Invalid topic name: " << topic_name;
         return nullptr;
     }
+
+    // 同一进程内的Publisher、Subscriber和Gateway扫描可能同时创建同一Topic。
+    // RingBuffer实例被实体以裸指针引用，因此从缓存查询到构造/插入必须整体串行化，
+    // 禁止后创建者覆盖unique_ptr并留下悬空实体。
+    std::lock_guard<std::mutex> topic_buffers_lock(topic_buffers_mutex_);
     
     // 首先尝试从TopicRegistry获取已存在的Topic元数据
     TopicMetadata* metadata = topic_registry_->get_topic_metadata(topic_name);
@@ -364,6 +435,9 @@ RingBuffer* DDSCore::create_or_get_topic_buffer(const std::string& topic_name, b
                 void* buffer_addr = static_cast<char*>(shm_manager_->get_address()) + metadata->ring_buffer_offset;
                 
                 // 创建RingBuffer实例
+#ifdef MB_DDF_TEST_BUILD
+                notify_topic_buffer_test_hook("before_ring_buffer_construct", topic_name);
+#endif
                 auto ring_buffer = std::make_unique<RingBuffer>(
                     buffer_addr, 
                     metadata->ring_buffer_size, 
@@ -403,6 +477,9 @@ RingBuffer* DDSCore::create_or_get_topic_buffer(const std::string& topic_name, b
             void* buffer_addr = static_cast<char*>(shm_manager_->get_address()) + metadata->ring_buffer_offset;
             
             // 创建RingBuffer实例
+#ifdef MB_DDF_TEST_BUILD
+            notify_topic_buffer_test_hook("before_ring_buffer_construct", topic_name);
+#endif
             auto ring_buffer = std::make_unique<RingBuffer>(
                 buffer_addr, 
                 metadata->ring_buffer_size, 
@@ -434,6 +511,8 @@ TopicMetadata* DDSCore::find_topic(const std::string& topic_name) {
         return nullptr;
     }
     
+    std::lock_guard<std::mutex> lock(topic_buffers_mutex_);
+
     // 遍历topic_buffers_映射，查找匹配的TopicMetadata
     for (const auto& pair : topic_buffers_) {
         TopicMetadata* metadata = pair.first;
@@ -453,20 +532,10 @@ std::string DDSCore::get_process_name() {
         std::getline(comm, name);
     }
 
-    // RingBuffer 会按 subscriber_name 复用读游标。只使用可执行文件名会让同一程序的
-    // 多个并发进程（尤其是“业务订阅者 + Gateway observer”）误用同一个状态；而
-    // SylixOS 没有 /proc/self/comm 时，旧实现更会令全部进程都叫 unknown。PID 后缀
-    // 在两个系统上都可用，且不会改变共享内存 ABI。
-    const std::string pid_suffix = "_" + std::to_string(
-        static_cast<unsigned long>(::getpid()));
     if (name.empty()) {
-        return "process" + pid_suffix;
+        return "process";
     }
-    if (name.size() >= pid_suffix.size() &&
-        name.compare(name.size() - pid_suffix.size(), pid_suffix.size(), pid_suffix) == 0) {
-        return name;
-    }
-    return name + pid_suffix;
+    return name;
 }
 
 } // namespace DDS

@@ -14,6 +14,7 @@
 #include "MB_DDF/DDS/Message.h"
 #include "MB_DDF/DDS/ProcessSharedSync.h"
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -37,12 +38,18 @@ struct alignas(64) SubscriberState {
     std::atomic<uint64_t> timestamp;             ///< 最后读取消息时间戳（纳秒精度）
     uint64_t subscriber_id;                      ///< 订阅者唯一标识符
     char subscriber_name[64];                    ///< 订阅者名称（最大63字符 + 终止符）
+    uint64_t owner_pid;                          ///< 注册槽所属进程PID，用于确认异常退出后安全回收
     
     SubscriberState() : read_pos(0), last_read_sequence(0), 
-                       timestamp(0), subscriber_id(0) {
+                       timestamp(0), subscriber_id(0), owner_pid(0) {
         subscriber_name[0] = '\0';
     }
 };
+
+static_assert(offsetof(SubscriberState, owner_pid) == 96,
+              "SubscriberState owner_pid must use the former tail padding");
+static_assert(sizeof(SubscriberState) == 128,
+              "SubscriberState shared-memory size must remain 128 bytes");
 
 
 /**
@@ -189,15 +196,20 @@ public:
                                          const std::string& subscriber_name);
 
     /**
-     * @brief 按指定起点注册订阅者，同时保留上方两参数接口的二进制兼容符号
+     * @brief 从指定序列号之后注册订阅者
      * @param subscriber_id 订阅者唯一标识符
      * @param subscriber_name 订阅者名称
-     * @param start_from_latest true 时跳过注册前已经存在的消息，仅观察后续新消息
+     * @param start_after_sequence 跳过不大于该序列号的消息；0 表示从仍保留的最早消息开始
      * @return 注册成功返回订阅者状态结构体指针，失败返回nullptr
      */
     SubscriberState* register_subscriber(uint64_t subscriber_id,
                                          const std::string& subscriber_name,
-                                         bool start_from_latest);
+                                         uint64_t start_after_sequence);
+
+    /// 返回当前已经发布可见的最新序列号。
+    uint64_t current_sequence() const {
+        return header_ ? header_->current_sequence.load(std::memory_order_acquire) : 0U;
+    }
     
     /**
      * @brief 注销订阅者（使用信号量保护）

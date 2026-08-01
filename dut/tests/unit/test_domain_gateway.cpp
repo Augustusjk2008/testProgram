@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -19,8 +20,11 @@
 #include "MB_DDF/DDS/Gateway/DdsGatewayLocalBus.h"
 #include "MB_DDF/DDS/Gateway/DomainGateway.h"
 
+#include <csignal>
 #include <semaphore.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 using namespace MB_DDF::DDS;
 
@@ -41,7 +45,14 @@ public:
         return topics;
     }
 
-    bool subscribe_topic(const std::string& topic_name, LocalMessageCallback callback) override {
+    bool subscribe_topic(const std::string& topic_name,
+                         LocalMessageCallback callback,
+                         uint64_t start_after_sequence) override {
+        subscribe_attempts.emplace_back(topic_name, start_after_sequence);
+        if (subscribe_failures_remaining > 0) {
+            --subscribe_failures_remaining;
+            return false;
+        }
         callbacks[topic_name] = std::move(callback);
         return true;
     }
@@ -106,7 +117,35 @@ public:
     std::map<std::string, LocalMessageCallback> callbacks;
     std::map<std::string, uint64_t> next_sequence;
     std::vector<PublishedMessage> published;
+    std::vector<std::pair<std::string, uint64_t>> subscribe_attempts;
+    size_t subscribe_failures_remaining{0};
     bool emit_observer_during_publish{false};
+};
+
+class GatedDdsGatewayLocalBus : public DdsGatewayLocalBus {
+public:
+    std::vector<LocalTopicInfo> list_topics() override {
+        const size_t call_index = list_call_count_.fetch_add(1, std::memory_order_acq_rel);
+        if (call_index > 0) {
+            std::unique_lock<std::mutex> lock(scan_gate_mutex_);
+            scan_gate_cv_.wait(lock, [this] { return late_scans_allowed_; });
+        }
+        return DdsGatewayLocalBus::list_topics();
+    }
+
+    void allow_late_scans() {
+        {
+            std::lock_guard<std::mutex> lock(scan_gate_mutex_);
+            late_scans_allowed_ = true;
+        }
+        scan_gate_cv_.notify_all();
+    }
+
+private:
+    std::atomic<size_t> list_call_count_{0};
+    std::mutex scan_gate_mutex_;
+    std::condition_variable scan_gate_cv_;
+    bool late_scans_allowed_{false};
 };
 
 class FakeEndpoint : public ExternalEndpoint {
@@ -261,6 +300,19 @@ DomainGatewayConfig config(uint32_t domain_id, uint64_t gateway_id) {
     return cfg;
 }
 
+bool wait_for_sent_count(const std::shared_ptr<FakeEndpoint>& endpoint,
+                         size_t expected,
+                         std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (endpoint->sent_count() >= expected) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return endpoint->sent_count() >= expected;
+}
+
 } // namespace
 
 TEST(DomainGatewayTest, ScanTopicsSubscribesNormalTopicsOnly) {
@@ -276,6 +328,41 @@ TEST(DomainGatewayTest, ScanTopicsSubscribesNormalTopicsOnly) {
     EXPECT_NE(bus->callbacks.find("rt://sensor/temp"), bus->callbacks.end());
     EXPECT_EQ(bus->callbacks.find("gateway://status"), bus->callbacks.end());
     EXPECT_EQ(bus->callbacks.find(""), bus->callbacks.end());
+}
+
+TEST(DomainGatewayTest, InitialTopicRetryPreservesStartupSequenceBoundary) {
+    constexpr uint64_t kStartupBoundary = 42;
+    auto bus = std::make_shared<FakeLocalBus>(std::vector<LocalTopicInfo>{
+        {1, "rt://sensor/retry", 1024, kStartupBoundary},
+    });
+    bus->subscribe_failures_remaining = 1;
+    DomainGateway gateway(config(1, 101), bus);
+
+    ASSERT_TRUE(gateway.start());
+    gateway.stop();
+    gateway.scan_topics_once();
+
+    ASSERT_EQ(bus->subscribe_attempts.size(), 2u);
+    EXPECT_EQ(bus->subscribe_attempts[0].second, kStartupBoundary);
+    EXPECT_EQ(bus->subscribe_attempts[1].second, kStartupBoundary);
+}
+
+TEST(DomainGatewayTest, RestartSkipsHistoryForTopicCreatedWhileStopped) {
+    constexpr uint64_t kRestartBoundary = 73;
+    auto bus = std::make_shared<FakeLocalBus>(std::vector<LocalTopicInfo>{});
+    DomainGateway gateway(config(1, 101), bus);
+
+    ASSERT_TRUE(gateway.start());
+    gateway.stop();
+
+    bus->topics.push_back(
+        {1, "rt://sensor/created-while-stopped", 1024, kRestartBoundary});
+
+    ASSERT_TRUE(gateway.start());
+    gateway.stop();
+
+    ASSERT_EQ(bus->subscribe_attempts.size(), 1u);
+    EXPECT_EQ(bus->subscribe_attempts[0].second, kRestartBoundary);
 }
 
 TEST(DomainGatewayTest, LocalTopicMessageSendsToAllEnabledEndpoints) {
@@ -558,6 +645,326 @@ protected:
     }
 };
 
+TEST_F(DdsGatewayLocalBusTest, InitialTopicHistoryIsSkippedButFreshMessageIsForwarded) {
+    auto& dds = DDSCore::instance();
+    ASSERT_TRUE(dds.initialize(16 * 1024 * 1024));
+
+    constexpr char topic[] = "rt://gateway/preexisting-topic";
+    const char historical_payload[] = "historical";
+    const char fresh_payload[] = "fresh";
+    auto publisher = dds.create_publisher(topic, true);
+    ASSERT_NE(publisher, nullptr);
+    ASSERT_TRUE(publisher->publish(historical_payload, sizeof(historical_payload)));
+
+    auto bus = std::make_shared<DdsGatewayLocalBus>();
+    auto endpoint = std::make_shared<FakeEndpoint>();
+    auto cfg = config(1, 101);
+    cfg.topic_scan_period_ms = 10;
+
+    {
+        DomainGateway gateway(cfg, bus);
+        ASSERT_TRUE(gateway.add_endpoint({"egress", endpoint, true}));
+        ASSERT_TRUE(gateway.start());
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        ASSERT_EQ(endpoint->sent_count(), 0u)
+            << "gateway replayed a message that existed before start";
+
+        ASSERT_TRUE(publisher->publish(fresh_payload, sizeof(fresh_payload)));
+        ASSERT_TRUE(wait_for_sent_count(endpoint, 1, std::chrono::seconds(1)));
+        gateway.stop();
+
+        ASSERT_EQ(endpoint->sent_count(), 1u);
+        GatewayEnvelope envelope;
+        const auto frame = endpoint->sent_frame(0);
+        ASSERT_TRUE(deserialize_gateway_envelope(frame.data(), frame.size(), envelope));
+        EXPECT_EQ(envelope.topic_name, topic);
+        const std::vector<uint8_t> expected_payload(
+            reinterpret_cast<const uint8_t*>(fresh_payload),
+            reinterpret_cast<const uint8_t*>(fresh_payload) + sizeof(fresh_payload));
+        EXPECT_EQ(envelope.payload, expected_payload);
+    }
+
+    bus.reset();
+    publisher.reset();
+}
+
+TEST_F(DdsGatewayLocalBusTest, LateDiscoveredTopicForwardsMessagePublishedAfterGatewayStart) {
+    auto& dds = DDSCore::instance();
+    ASSERT_TRUE(dds.initialize(16 * 1024 * 1024));
+
+    auto bus = std::make_shared<GatedDdsGatewayLocalBus>();
+    auto endpoint = std::make_shared<FakeEndpoint>();
+    auto cfg = config(1, 101);
+    cfg.topic_scan_period_ms = 1;
+
+    {
+        DomainGateway gateway(cfg, bus);
+        ASSERT_TRUE(gateway.add_endpoint({"egress", endpoint, true}));
+        ASSERT_TRUE(gateway.start());
+
+        constexpr char topic[] = "rt://gateway/late-topic";
+        const char payload[] = "published-before-discovery";
+        auto publisher = dds.create_publisher(topic, true);
+        const bool published = publisher != nullptr &&
+                               publisher->publish(payload, sizeof(payload));
+
+        // start() 的首次扫描已经完成；放行后台扫描前先完成发布，保证 observer
+        // 注册边界稳定落在首条消息之后。随后显式扫描，不依赖周期 sleep 的时序。
+        bus->allow_late_scans();
+        ASSERT_NE(publisher, nullptr);
+        ASSERT_TRUE(published);
+        gateway.scan_topics_once();
+
+        const bool forwarded = wait_for_sent_count(endpoint, 1, std::chrono::seconds(1));
+        gateway.stop();
+
+        ASSERT_TRUE(forwarded)
+            << "message published after gateway start but before topic discovery was skipped";
+        ASSERT_EQ(endpoint->sent_count(), 1u);
+        GatewayEnvelope envelope;
+        const auto frame = endpoint->sent_frame(0);
+        ASSERT_TRUE(deserialize_gateway_envelope(frame.data(), frame.size(), envelope));
+        EXPECT_EQ(envelope.topic_name, topic);
+        const std::vector<uint8_t> expected_payload(
+            reinterpret_cast<const uint8_t*>(payload),
+            reinterpret_cast<const uint8_t*>(payload) + sizeof(payload));
+        EXPECT_EQ(envelope.payload, expected_payload);
+    }
+
+    bus.reset();
+}
+
+TEST_F(DdsGatewayLocalBusTest, ConcurrentTopicCreatorsConstructOneRingBufferInstance) {
+    const pid_t child = fork();
+    ASSERT_GE(child, 0);
+
+    if (child == 0) {
+        auto& dds = DDSCore::instance();
+        if (!dds.initialize(16 * 1024 * 1024)) {
+            _exit(30);
+        }
+
+        std::mutex mutex;
+        std::condition_variable cv;
+        size_t entry_count = 0;
+        size_t construct_count = 0;
+        bool release_first_construct = false;
+        constexpr char topic[] = "rt://gateway/concurrent-topic-create";
+
+        DDSCore::set_topic_buffer_test_hook(
+            [&](const char* event, const std::string& event_topic) {
+                if (event_topic != topic) {
+                    return;
+                }
+                std::unique_lock<std::mutex> lock(mutex);
+                if (std::strcmp(event, "entry") == 0) {
+                    ++entry_count;
+                    cv.notify_all();
+                    return;
+                }
+                if (std::strcmp(event, "before_ring_buffer_construct") == 0) {
+                    ++construct_count;
+                    cv.notify_all();
+                    if (construct_count == 1) {
+                        cv.wait(lock, [&] { return release_first_construct; });
+                    }
+                }
+            });
+
+        std::shared_ptr<Publisher> publisher;
+        std::shared_ptr<Subscriber> observer;
+        signal(SIGALRM, SIG_DFL);
+        alarm(4);
+        std::thread publisher_thread([&] {
+            publisher = dds.create_publisher(topic, true);
+        });
+
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            if (!cv.wait_for(lock, std::chrono::seconds(1), [&] {
+                    return construct_count >= 1;
+                })) {
+                _exit(31);
+            }
+        }
+
+        std::thread observer_thread([&] {
+            observer = dds.create_observer(
+                topic, [](const LocalMessageView&) {}, 0);
+        });
+
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            if (!cv.wait_for(lock, std::chrono::seconds(1), [&] {
+                    return entry_count >= 2;
+                })) {
+                _exit(32);
+            }
+            cv.wait_for(lock, std::chrono::milliseconds(250), [&] {
+                return construct_count >= 2;
+            });
+            release_first_construct = true;
+        }
+        cv.notify_all();
+
+        publisher_thread.join();
+        observer_thread.join();
+        alarm(0);
+
+        if (publisher == nullptr || observer == nullptr) {
+            _exit(33);
+        }
+        _exit(construct_count == 1 ? 0 : 34);
+    }
+
+    int status = 0;
+    pid_t waited = -1;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited == -1 && errno == EINTR);
+
+    ASSERT_EQ(waited, child);
+    if (!WIFEXITED(status)) {
+        ASSERT_TRUE(WIFEXITED(status))
+            << "concurrent creator child terminated by signal " << WTERMSIG(status);
+        return;
+    }
+    EXPECT_EQ(WEXITSTATUS(status), 0)
+        << "concurrent creator child returned diagnostic code " << WEXITSTATUS(status);
+}
+
+TEST_F(DdsGatewayLocalBusTest, BeforeVisibleRejectsSameTopicObserverReentryWithoutBlocking) {
+    const pid_t child = fork();
+    ASSERT_GE(child, 0);
+
+    if (child == 0) {
+        auto& dds = DDSCore::instance();
+        if (!dds.initialize(16 * 1024 * 1024)) {
+            _exit(10);
+        }
+
+        int result = 0;
+        {
+            constexpr char topic[] = "rt://gateway/before-visible-reentry";
+            const char payload[] = "reentry";
+            DdsGatewayLocalBus bus;
+            std::shared_ptr<Subscriber> reentrant_observer;
+            bool callback_called = false;
+
+            signal(SIGALRM, SIG_DFL);
+            alarm(2);
+            const uint64_t sequence = bus.publish_topic(
+                topic,
+                payload,
+                sizeof(payload),
+                [&](uint64_t) {
+                    callback_called = true;
+                    reentrant_observer = dds.create_observer(
+                        topic, [](const LocalMessageView&) {});
+                });
+            alarm(0);
+
+            if (!callback_called) {
+                result = 11;
+            } else if (sequence == 0) {
+                result = 12;
+            } else if (reentrant_observer != nullptr) {
+                result = 13;
+            }
+
+            reentrant_observer.reset();
+            auto observer_after_callback = dds.create_observer(
+                topic, [](const LocalMessageView&) {});
+            if (result == 0 && observer_after_callback == nullptr) {
+                result = 14;
+            }
+            observer_after_callback.reset();
+        }
+
+        dds.shutdown();
+        _exit(result);
+    }
+
+    int status = 0;
+    pid_t waited = -1;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited == -1 && errno == EINTR);
+
+    ASSERT_EQ(waited, child);
+    if (!WIFEXITED(status)) {
+        ASSERT_TRUE(WIFEXITED(status))
+            << "isolated reentry child terminated by signal " << WTERMSIG(status);
+        return;
+    }
+    EXPECT_EQ(WEXITSTATUS(status), 0)
+        << "isolated reentry child returned diagnostic code " << WEXITSTATUS(status);
+}
+
+TEST_F(DdsGatewayLocalBusTest, BeforeVisibleRejectsNestedPublishWithoutBlocking) {
+    const pid_t child = fork();
+    ASSERT_GE(child, 0);
+
+    if (child == 0) {
+        auto& dds = DDSCore::instance();
+        if (!dds.initialize(16 * 1024 * 1024)) {
+            _exit(20);
+        }
+
+        constexpr char topic[] = "rt://gateway/before-visible-nested-publish";
+        const char outer_payload[] = "outer";
+        const char nested_payload[] = "nested";
+        auto publisher = dds.create_publisher(topic, true);
+        if (publisher == nullptr) {
+            dds.shutdown();
+            _exit(21);
+        }
+
+        bool callback_called = false;
+        bool nested_published = true;
+        signal(SIGALRM, SIG_DFL);
+        alarm(2);
+        const uint64_t sequence = publisher->publish_and_get_sequence(
+            outer_payload,
+            sizeof(outer_payload),
+            [&](uint64_t) {
+                callback_called = true;
+                nested_published = publisher->publish(
+                    nested_payload, sizeof(nested_payload));
+            });
+        alarm(0);
+
+        int result = 0;
+        if (!callback_called) {
+            result = 22;
+        } else if (sequence == 0) {
+            result = 23;
+        } else if (nested_published) {
+            result = 24;
+        }
+
+        publisher.reset();
+        dds.shutdown();
+        _exit(result);
+    }
+
+    int status = 0;
+    pid_t waited = -1;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited == -1 && errno == EINTR);
+
+    ASSERT_EQ(waited, child);
+    if (!WIFEXITED(status)) {
+        ASSERT_TRUE(WIFEXITED(status))
+            << "isolated nested publish child terminated by signal " << WTERMSIG(status);
+        return;
+    }
+    EXPECT_EQ(WEXITSTATUS(status), 0)
+        << "isolated nested publish child returned diagnostic code " << WEXITSTATUS(status);
+}
+
 TEST_F(DdsGatewayLocalBusTest, ListsTopicsAndPublishesWithSequence) {
     auto& dds = DDSCore::instance();
     ASSERT_TRUE(dds.initialize(16 * 1024 * 1024));
@@ -589,7 +996,7 @@ TEST_F(DdsGatewayLocalBusTest, SubscribeTopicReceivesLocalMessageView) {
             observed_sequence = message.sequence;
             observed_payload.assign(static_cast<const char*>(message.data), message.size - 1);
             received.store(true, std::memory_order_release);
-        }));
+        }, 0));
 
     const char payload[] = "observed";
     const uint64_t sequence = bus.publish_topic("rt://gateway/observe", payload, sizeof(payload));
@@ -621,7 +1028,7 @@ TEST_F(DdsGatewayLocalBusTest, SequenceHookRunsBeforeObserverCanSeeMessage) {
             observer_saw_hook.store(hook_called.load(std::memory_order_acquire),
                                     std::memory_order_release);
             received.store(true, std::memory_order_release);
-        }));
+        }, 0));
 
     const char payload[] = "hooked";
     const uint64_t sequence = bus.publish_topic(

@@ -86,6 +86,15 @@ public:
     bool subscribe_observer(LocalMessageCallback callback);
 
     /**
+     * @brief 从指定序列号之后开始观察消息
+     * @param callback 本地消息观察回调
+     * @param start_after_sequence 跳过不大于该序列号的消息；0 表示补读仍保留的消息
+     * @return 订阅成功返回true，失败返回false
+     */
+    bool subscribe_observer(LocalMessageCallback callback,
+                            uint64_t start_after_sequence);
+
+    /**
      * @brief 取消订阅，停止接收消息
      */
     void unsubscribe();

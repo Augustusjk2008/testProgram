@@ -18,6 +18,9 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "MB_DDF/DDS/RingBuffer.h"
 #include "MB_DDF/DDS/Message.h"
@@ -349,6 +352,160 @@ TEST_F(RingBufferTest, Unsubscribe) {
     // 重新注册同名订阅者（新ID）
     auto* sub2 = rb_->register_subscriber(2, "new_sub");
     ASSERT_NE(sub2, nullptr);
+}
+
+TEST_F(RingBufferTest, SameProcessSubscribersWithSameNameUseIndependentSlots) {
+    auto* first = rb_->register_subscriber(101, "same_process_name");
+    auto* second = rb_->register_subscriber(202, "same_process_name");
+
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    EXPECT_NE(first, second);
+    EXPECT_EQ(first->subscriber_id, 101u);
+    EXPECT_EQ(second->subscriber_id, 202u);
+    EXPECT_EQ(rb_->get_statistics().active_subscribers, 2u);
+
+    rb_->unregister_subscriber(first);
+    EXPECT_EQ(second->subscriber_id, 202u);
+    EXPECT_EQ(rb_->get_statistics().active_subscribers, 1u);
+    rb_->unregister_subscriber(second);
+}
+
+TEST(RingBufferProcessLifecycleTest, ReclaimsExitedOwnerWithoutReclaimingLiveIdleSubscribers) {
+    constexpr size_t kBufferSize = 64 * 1024;
+    constexpr size_t kMappingSize = kBufferSize + sizeof(sem_t);
+    static_assert(kBufferSize % alignof(sem_t) == 0);
+
+    void* mapping = mmap(nullptr,
+                         kMappingSize,
+                         PROT_READ | PROT_WRITE,
+                         MAP_SHARED | MAP_ANONYMOUS,
+                         -1,
+                         0);
+    ASSERT_NE(mapping, MAP_FAILED);
+
+    auto* shared_sem = reinterpret_cast<sem_t*>(
+        static_cast<uint8_t*>(mapping) + kBufferSize);
+    ASSERT_EQ(sem_init(shared_sem, 1, 1), 0);
+
+    {
+        RingBuffer ring_buffer(mapping, kBufferSize, shared_sem, true);
+
+        std::vector<std::pair<SubscriberState*, uint64_t>> live_subscribers;
+        auto* first_live = ring_buffer.register_subscriber(1, "live_parent_1");
+        ASSERT_NE(first_live, nullptr);
+        ASSERT_EQ(first_live->timestamp.load(std::memory_order_acquire), 0u);
+        live_subscribers.emplace_back(first_live, 1);
+
+        const pid_t child = fork();
+        ASSERT_GE(child, 0);
+        if (child == 0) {
+            auto* orphan = ring_buffer.register_subscriber(2, "orphan_child");
+            _exit(orphan != nullptr ? 0 : 10);
+        }
+
+        int child_status = 0;
+        ASSERT_EQ(waitpid(child, &child_status, 0), child);
+        ASSERT_TRUE(WIFEXITED(child_status));
+        ASSERT_EQ(WEXITSTATUS(child_status), 0);
+
+        for (uint64_t id = 3; id <= 64; ++id) {
+            auto* live = ring_buffer.register_subscriber(
+                id, "live_parent_" + std::to_string(id));
+            ASSERT_NE(live, nullptr);
+            ASSERT_EQ(live->timestamp.load(std::memory_order_acquire), 0u);
+            live_subscribers.emplace_back(live, id);
+        }
+
+        auto* replacement = ring_buffer.register_subscriber(65, "replacement_parent_65");
+        EXPECT_NE(replacement, nullptr);
+
+        if (replacement != nullptr) {
+            const auto stats = ring_buffer.get_statistics();
+            EXPECT_EQ(stats.active_subscribers, 64u);
+
+            bool found_orphan = false;
+            bool found_replacement = false;
+            for (const auto& [id, name] : stats.subscribers) {
+                (void)name;
+                found_orphan = found_orphan || id == 2;
+                found_replacement = found_replacement || id == 65;
+            }
+            EXPECT_FALSE(found_orphan);
+            EXPECT_TRUE(found_replacement);
+
+            for (const auto& [state, expected_id] : live_subscribers) {
+                ASSERT_NE(state, nullptr);
+                EXPECT_EQ(state->subscriber_id, expected_id);
+                EXPECT_EQ(state->timestamp.load(std::memory_order_acquire), 0u);
+            }
+        }
+
+        for (const auto& [state, id] : live_subscribers) {
+            (void)id;
+            ring_buffer.unregister_subscriber(state);
+        }
+        if (replacement != nullptr) {
+            ring_buffer.unregister_subscriber(replacement);
+        }
+    }
+
+    EXPECT_EQ(sem_destroy(shared_sem), 0);
+    EXPECT_EQ(munmap(mapping, kMappingSize), 0);
+}
+
+TEST(RingBufferProcessLifecycleTest, UnregisterOnlyClearsCallingProcessSlotForDuplicateId) {
+    constexpr size_t kBufferSize = 64 * 1024;
+    constexpr size_t kMappingSize = kBufferSize + sizeof(sem_t);
+    static_assert(kBufferSize % alignof(sem_t) == 0);
+
+    void* mapping = mmap(nullptr,
+                         kMappingSize,
+                         PROT_READ | PROT_WRITE,
+                         MAP_SHARED | MAP_ANONYMOUS,
+                         -1,
+                         0);
+    ASSERT_NE(mapping, MAP_FAILED);
+
+    auto* shared_sem = reinterpret_cast<sem_t*>(
+        static_cast<uint8_t*>(mapping) + kBufferSize);
+    ASSERT_EQ(sem_init(shared_sem, 1, 1), 0);
+
+    {
+        RingBuffer ring_buffer(mapping, kBufferSize, shared_sem, true);
+        constexpr uint64_t kDuplicateId = 77;
+        auto* parent_subscriber = ring_buffer.register_subscriber(
+            kDuplicateId, "duplicate_parent");
+        ASSERT_NE(parent_subscriber, nullptr);
+
+        const pid_t child = fork();
+        ASSERT_GE(child, 0);
+        if (child == 0) {
+            auto* child_subscriber = ring_buffer.register_subscriber(
+                kDuplicateId, "duplicate_child");
+            if (child_subscriber == nullptr || child_subscriber == parent_subscriber) {
+                _exit(10);
+            }
+
+            ring_buffer.unregister_subscriber(child_subscriber);
+            const bool parent_preserved =
+                parent_subscriber->subscriber_id == kDuplicateId;
+            const bool child_removed = child_subscriber->subscriber_id == 0;
+            _exit(parent_preserved && child_removed ? 0 : 11);
+        }
+
+        int child_status = 0;
+        ASSERT_EQ(waitpid(child, &child_status, 0), child);
+        ASSERT_TRUE(WIFEXITED(child_status));
+        EXPECT_EQ(WEXITSTATUS(child_status), 0);
+        EXPECT_EQ(parent_subscriber->subscriber_id, kDuplicateId);
+        EXPECT_EQ(parent_subscriber->owner_pid, static_cast<uint64_t>(getpid()));
+
+        ring_buffer.unregister_subscriber(parent_subscriber);
+    }
+
+    EXPECT_EQ(sem_destroy(shared_sem), 0);
+    EXPECT_EQ(munmap(mapping, kMappingSize), 0);
 }
 
 // ==============================

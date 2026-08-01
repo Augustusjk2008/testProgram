@@ -84,6 +84,12 @@ bool Subscriber::subscribe(MessageCallback callback) {
 }
 
 bool Subscriber::subscribe_observer(LocalMessageCallback callback) {
+    const uint64_t start_after_sequence = ring_buffer_ ? ring_buffer_->current_sequence() : 0U;
+    return subscribe_observer(std::move(callback), start_after_sequence);
+}
+
+bool Subscriber::subscribe_observer(LocalMessageCallback callback,
+                                    uint64_t start_after_sequence) {
     if (!callback) {
         LOG_ERROR << "Subscriber " << subscriber_id_ << " " << subscriber_name_
                   << " observer callback is null";
@@ -100,10 +106,8 @@ bool Subscriber::subscribe_observer(LocalMessageCallback callback) {
         return false;
     }
 
-    // Gateway observer 只桥接订阅建立后的新消息。若从 sequence=0 开始，Gateway
-    // 正常重启会把 RingBuffer 中的历史消息再次发往远端。
     subscriber_state_ = ring_buffer_->register_subscriber(
-        subscriber_id_, subscriber_name_, true);
+        subscriber_id_, subscriber_name_, start_after_sequence);
     if (!subscriber_state_) {
         LOG_DEBUG << "Failed to register observer subscriber " << subscriber_id_ << " "
                   << subscriber_name_;

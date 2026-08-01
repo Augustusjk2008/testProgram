@@ -63,8 +63,9 @@ bool DomainGateway::start() {
 
     activate_local_callbacks();
 
-    // 启动前先扫描一次，确保已经存在的Topic会立即被桥接。
-    scan_topics_once();
+    // 启动前先扫描一次。已有Topic以枚举快照序列为边界，只桥接快照后的消息；
+    // 这样既不重放历史，也不会丢失list_topics()到observer注册之间的并发发布。
+    scan_topics_once(true);
 
     {
         std::lock_guard<std::mutex> lock(endpoints_mutex_);
@@ -113,13 +114,31 @@ void DomainGateway::stop() {
             endpoint->receive_thread.join();
         }
     }
+
+    // 每次stopped -> running都是新的实时桥接会话。下一次启动前重新建立
+    // Topic快照边界，避免把停机期间创建Topic的历史当成实时消息转发。
+    {
+        std::lock_guard<std::mutex> scan_lock(scan_mutex_);
+        startup_scan_completed_ = false;
+        std::lock_guard<std::mutex> topics_lock(topics_mutex_);
+        pending_start_boundaries_.clear();
+    }
 }
 
 void DomainGateway::scan_topics_once() {
+    scan_topics_once(false);
+}
+
+void DomainGateway::scan_topics_once(bool complete_startup_scan) {
+    std::lock_guard<std::mutex> scan_lock(scan_mutex_);
     if (!local_bus_) {
+        if (complete_startup_scan) {
+            startup_scan_completed_ = true;
+        }
         return;
     }
 
+    const bool startup_phase = !startup_scan_completed_;
     const auto topics = local_bus_->list_topics();
     for (const auto& topic : topics) {
         // 空Topic无法路由；内部Topic用于网关控制或状态，不应被再次跨域传播。
@@ -127,13 +146,26 @@ void DomainGateway::scan_topics_once() {
             continue;
         }
 
+        uint64_t start_after_sequence = 0;
         {
             std::lock_guard<std::mutex> lock(topics_mutex_);
             // monitored_topics_同时承担去重和“已经建立观察订阅”的状态记录。
             if (monitored_topics_.find(topic.topic_name) != monitored_topics_.end()) {
                 continue;
             }
+            if (startup_phase) {
+                if (complete_startup_scan) {
+                    pending_start_boundaries_[topic.topic_name] = topic.current_sequence;
+                } else {
+                    pending_start_boundaries_.try_emplace(
+                        topic.topic_name, topic.current_sequence);
+                }
+            }
             monitored_topics_.insert(topic.topic_name);
+            const auto pending = pending_start_boundaries_.find(topic.topic_name);
+            if (pending != pending_start_boundaries_.end()) {
+                start_after_sequence = pending->second;
+            }
         }
 
         // observer可能比DomainGateway活得更久，只捕获共享门控，不捕获裸this。
@@ -142,14 +174,22 @@ void DomainGateway::scan_topics_once() {
             topic.topic_name,
             [gate](const LocalMessageView& message) {
                 DomainGateway::dispatch_local_message(gate, message);
-            });
+            },
+            start_after_sequence);
 
         if (!subscribed) {
             // 订阅失败时回滚monitored_topics_，允许后续扫描周期再次尝试。
             std::lock_guard<std::mutex> lock(topics_mutex_);
             monitored_topics_.erase(topic.topic_name);
             LOG_ERROR << "DomainGateway failed to subscribe topic: " << topic.topic_name;
+        } else {
+            std::lock_guard<std::mutex> lock(topics_mutex_);
+            pending_start_boundaries_.erase(topic.topic_name);
         }
+    }
+
+    if (complete_startup_scan) {
+        startup_scan_completed_ = true;
     }
 }
 
@@ -220,7 +260,7 @@ void DomainGateway::scan_loop() {
     while (running_.load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(period);
         if (running_.load(std::memory_order_acquire)) {
-            scan_topics_once();
+            scan_topics_once(false);
         }
     }
 }

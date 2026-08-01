@@ -50,7 +50,6 @@ try {
             "src\MB_DDF\Monitor",
             "src\MB_DDF\No8_Compatibility",
             "src\MB_DDF\PhysicalLayer",
-            "src\MB_DDF\Timer",
             "src\MB_DDF\Tools"
         )
         Invoke-NoMatchCheck "futex|SYS_futex|linux/futex|FUTEX_" @("src\MB_DDF\DDS")

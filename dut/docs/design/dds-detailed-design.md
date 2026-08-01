@@ -60,7 +60,7 @@ DDSCore
 ```text
 共享内存：/MB_DDF_V2_SHM
 信号量：  /MB_DDF_V2_SHM_sem
-版本：    0x00005000
+版本：    0x00005001
 默认大小：128 MiB
 最小大小：1 MiB
 ```
@@ -116,6 +116,20 @@ named semaphore 主要保护：
 
 每个 Topic 默认分配 1 MiB，按 64 字节对齐顺序放置。当前实现不回收 Topic
 区域，也不支持运行时改变单个 Topic 的 RingBuffer 大小。
+
+### 3.4 共享内存版本与共享库 ABI
+
+共享内存版本和动态库 ABI 是两套独立的兼容门禁：
+
+- `DDSCore::VERSION` 标识共享内存布局及字段语义。`SubscriberState` 启用
+  `owner_pid` 后版本已经升级，旧共享内存必须在所有相关进程退出后清理，不能由新旧
+  程序混用。
+- `libMB_DDF_v2` 当前项目版本为 2.0.0、公共 ABI 主版本为 2，构建产物使用
+  `SOVERSION 2`。ABI v1 客户端必须重新编译、重新链接，不能继续装载 ABI v2
+  动态库。
+
+动态库 ABI 升级不能替代共享内存版本检查；即使客户端已经重新链接，打开旧版本共享
+内存时仍会因 `DDSCore::VERSION` 不匹配而初始化失败。
 
 ## 4. TopicRegistry 设计
 
@@ -263,6 +277,12 @@ Publisher::publish
 `publish_fill()` 也在写锁内执行用户回调。回调抛异常、返回 0 或返回值大于容量时，
 写槽被取消。
 
+`publish_and_get_sequence()` 的 `before_visible` 回调同样在当前 Topic 的写锁内执行。
+该回调只能进行同步、短时的本地记账；若在其中重入订阅者注册、Topic 创建或任意需要
+RingBuffer 写锁的发布 API，入口会立即返回失败，不会再次等待同一写锁或全局注册
+信号量。调用方必须处理该失败结果，不得把这些 API 用作 `before_visible` 内的正常
+工作流。
+
 ### 5.5 订阅者状态
 
 每个 Topic 最多 64 个订阅者。`SubscriberState` 存在共享内存中，保存：
@@ -272,9 +292,27 @@ Publisher::publish
 - `timestamp`
 - `subscriber_id`
 - `subscriber_name`
+- `owner_pid`
 
 每个订阅者独立推进自己的序列号和读取位置。订阅和注销在全局 named semaphore
 保护下更新槽位。
+
+`owner_pid` 放在 `SubscriberState` 原有的尾部 padding 中。AArch64 Linux 与 SylixOS
+上的 `sizeof(SubscriberState)` 仍为 128 字节，原有字段的偏移也保持不变；但 padding
+从“未定义内容”变为进程所有权元数据，属于共享内存字段语义变化，因此仍需升级
+`DDSCore::VERSION`。
+
+注册时以调用进程的 `getpid()` 写入 `owner_pid`。只有同一 owner 的相同实体 ID 才复用
+原槽；名称不再作为活槽复用键，因此同进程、同 Topic 的同名 Subscriber 仍拥有独立
+读取槽。注销按共享槽地址精确定位并再次校验 owner，避免不同进程碰巧使用相同实体 ID
+时互相清槽。扫描已占用槽位时，仅当 `kill(owner_pid, 0)` 返回失败且
+`errno == ESRCH`，才把该 owner 判定为已经退出并回收槽位；探测成功、`EPERM` 或其他
+错误都按“仍存活或无法确认”处理，不得回收。PID 被其他进程复用时也只会保守地暂不
+回收，不会覆盖活跃订阅者。
+
+`timestamp` 仍表示最后成功读取消息的时间戳，不是心跳或租约。活跃但暂无消息的
+订阅者可以长期保持 `timestamp == 0`，所以槽位回收不能依据时间戳、读取序列或空闲
+时长。
 
 ### 5.6 读取策略
 
@@ -427,7 +465,7 @@ Adapter 将硬件层 `Timeout` 映射到 DDS 超时接口；硬件超时返回 0
 `DdsGatewayLocalBus` 把接口映射到：
 
 - `DDSCore::list_topics()`
-- `DDSCore::create_observer()`
+- `DDSCore::create_observer(topic, callback, start_after_sequence)`
 - `DDSCore::publish_and_get_sequence()`，并支持在序列号分配后、消息对 observer
   可见前执行同步回调。
 
@@ -437,12 +475,24 @@ Adapter 将硬件层 `Timeout` 映射到 DDS 超时接口；硬件超时返回 0
 
 ```text
 周期扫描 Topic
-  -> 为非 gateway:// Topic 创建 observer
+  -> 首次扫描已有 Topic：以 current_sequence 作为 observer 边界
+  -> 后续发现新 Topic：以 0 作为 observer 边界
+  -> 为非 gateway:// Topic 创建 observer(start_after_sequence)
   -> 收到 LocalMessageView
   -> 检查回灌抑制窗口
   -> 构造 GatewayEnvelope
   -> 向所有启用 ExternalEndpoint 发送
 ```
+
+网关启动时首先为当时已经存在的 Topic 保存 `current_sequence` 快照，并把它作为
+`start_after_sequence`，从而跳过启动前已经存在的历史消息。启动完成后的周期扫描若
+发现新建 Topic，则使用边界 0；这样 Topic 创建后、下一次扫描前已经发布的首批消息
+仍会被 observer 补读，不会落入 100 ms 扫描间隙。边界表达的是“跳过不大于该序列的
+消息”，不是断线存储转发保证；已被 RingBuffer 覆盖的消息仍无法恢复。
+
+启动扫描、后台扫描和手工扫描由同一 mutex 串行化。首次订阅暂态失败时保留该 Topic
+的启动快照，后续重试仍使用原边界；`stop()` 后再次 `start()` 会开启新的启动会话，
+对停机期间新建但尚未监控的 Topic 重新取快照，不回放停机期历史。
 
 observer 回调通过共享生命周期门控进入 `DomainGateway`。`stop()` 会先关闭门控并等待
 在途回调退出，再停止网关线程；`start()` 可重新打开门控并复用已有 Topic 观察订阅，
@@ -481,9 +531,14 @@ observer 回调通过共享生命周期门控进入 `DomainGateway`。`stop()` �
 - 零拷贝写槽和 `publish_fill` 回调持有跨进程写锁，不得执行阻塞 I/O。
 - callback/observer 和手工 read 不能混用。
 - `GatewayLocalBus::publish_topic()` 的序列号回调必须同步、短时、不可抛异常，并在消息
-  对 observer 可见前完成；外部实现需重新编译以匹配该接口。
+  对 observer 可见前完成；回调内重入订阅者注册、Topic 创建或嵌套发布会立即失败。
+- `GatewayLocalBus::subscribe_topic()` 具有显式起始序列边界，外部实现必须按
+  `start_after_sequence` 跳过边界及更早消息。
 - 原始结构体 payload 没有序列化和 schema 演进；跨程序必须保证 ABI、大小端和版本一致。
-- `DDSCore` 首次创建实体的进程内映射未加 mutex，应在应用初始化阶段串行完成。
+- 公共共享库 ABI 主版本为 2，ABI v1 客户端必须重新编译、重新链接。
+- `DDSCore` 的进程内 Topic/RingBuffer 映射由 mutex 保护，同 Topic 的并发实体创建只会
+  构造一个 RingBuffer 实例；`Gateway`、observer 和其他实体仍必须在
+  `DDSCore::shutdown()` 前析构。
 - 网关不分片，序列化后的信封超过端点 MTU 时直接发送失败。
 
 ## 11. 测试对应关系

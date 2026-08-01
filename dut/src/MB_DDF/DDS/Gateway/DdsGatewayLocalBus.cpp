@@ -15,9 +15,11 @@ std::vector<LocalTopicInfo> DdsGatewayLocalBus::list_topics() {
 }
 
 bool DdsGatewayLocalBus::subscribe_topic(const std::string& topic_name,
-                                         LocalMessageCallback callback) {
+                                         LocalMessageCallback callback,
+                                         uint64_t start_after_sequence) {
     // create_observer返回的Subscriber需要持续存活，否则底层观察线程会随对象析构停止。
-    auto subscriber = DDSCore::instance().create_observer(topic_name, std::move(callback));
+    auto subscriber = DDSCore::instance().create_observer(
+        topic_name, std::move(callback), start_after_sequence);
     if (!subscriber) {
         return false;
     }

@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 
 set(TEST_TARGET_NAME "MB_DDF_v2_Tests")
 set(HARDWARE_TEST_TARGET_NAME "MB_DDF_v2_HardwareTests")
+set(SHARED_LIBRARY_SMOKE_TARGET_NAME "MB_DDF_v2_SharedLibrarySmoke")
 option(ENABLE_HW_UNIT_TESTS "Enable hardware layer unit tests" OFF)
 option(ENABLE_HW_SMOKE_TESTS "Enable hardware layer smoke tests" OFF)
 foreach(_option ENABLE_HW_UNIT_TESTS ENABLE_HW_SMOKE_TESTS)
@@ -92,6 +93,22 @@ configure_mb_ddf_test_target(${HARDWARE_TEST_TARGET_NAME})
 enable_testing()
 add_test(NAME ${TEST_TARGET_NAME} COMMAND ${TEST_TARGET_NAME})
 add_test(NAME ${HARDWARE_TEST_TARGET_NAME} COMMAND ${HARDWARE_TEST_TARGET_NAME})
+
+if(TARGET ${TARGET_NAME}_shared)
+    add_executable(${SHARED_LIBRARY_SMOKE_TARGET_NAME}
+        ${CMAKE_CURRENT_SOURCE_DIR}/integration/shared_library_smoke.cpp
+    )
+    target_compile_features(${SHARED_LIBRARY_SMOKE_TARGET_NAME} PRIVATE cxx_std_20)
+    target_link_libraries(${SHARED_LIBRARY_SMOKE_TARGET_NAME} PRIVATE
+        ${TARGET_NAME}_shared
+    )
+    target_link_options(${SHARED_LIBRARY_SMOKE_TARGET_NAME} PRIVATE
+        -static-libstdc++
+        -static-libgcc
+    )
+    add_test(NAME ${SHARED_LIBRARY_SMOKE_TARGET_NAME}
+        COMMAND ${SHARED_LIBRARY_SMOKE_TARGET_NAME})
+endif()
 
 if(ENABLE_HW_UNIT_TESTS AND TARGET MB_DDF_HW)
     add_executable(MB_DDF_HW_Tests

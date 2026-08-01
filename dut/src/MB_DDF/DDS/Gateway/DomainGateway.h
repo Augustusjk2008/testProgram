@@ -22,6 +22,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -183,6 +184,9 @@ private:
     /// 周期性扫描本地域Topic的后台线程主循环。
     void scan_loop();
 
+    /// 扫描Topic；启动边界完成前使用枚举快照，之后的新Topic从保留历史起点观察。
+    void scan_topics_once(bool complete_startup_scan);
+
     /// 经共享门控安全分发本地观察回调。
     static void dispatch_local_message(const std::shared_ptr<LocalCallbackGate>& gate,
                                        const LocalMessageView& message);
@@ -228,8 +232,11 @@ private:
     std::mutex endpoints_mutex_;                 ///< 保护端点列表。
     std::vector<std::shared_ptr<EndpointState>> endpoints_; ///< 外部端点状态列表，槽位即端点索引。
 
-    std::mutex topics_mutex_;                    ///< 保护已订阅Topic集合。
+    std::mutex scan_mutex_;                      ///< 串行化启动扫描、后台扫描和手工扫描。
+    bool startup_scan_completed_{false};         ///< start()的启动边界枚举是否已经完成。
+    std::mutex topics_mutex_;                    ///< 保护Topic订阅状态。
     std::unordered_set<std::string> monitored_topics_; ///< 已建立观察订阅的本地Topic名称。
+    std::unordered_map<std::string, uint64_t> pending_start_boundaries_; ///< 启动Topic订阅重试边界。
 
     std::mutex suppression_mutex_; ///< 保护本地回灌抑制窗口。
     std::unordered_set<LocalSequenceKey, LocalSequenceKeyHash> suppressed_local_sequences_; ///< 可快速查询的抑制键集合。

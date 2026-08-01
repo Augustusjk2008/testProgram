@@ -23,6 +23,7 @@ struct LocalTopicInfo {
     uint32_t topic_id{0};        ///< DDS本地域内的Topic ID。
     std::string topic_name;      ///< Topic名称，网关按名称订阅和跨域发布。
     size_t ring_buffer_size{0};  ///< Topic对应环形缓冲区大小，当前网关只透传该元信息。
+    uint64_t current_sequence{0}; ///< 枚举Topic时已经可见的最新本地序列号。
 };
 
 /**
@@ -61,9 +62,12 @@ public:
      * @brief 订阅指定本地Topic并用回调观察后续消息。
      * @param topic_name 需要监控的Topic名称。
      * @param callback 收到本地消息时调用的回调。
+     * @param start_after_sequence 仅观察该序列号之后的消息；0表示从保留历史起点观察。
      * @return 成功建立观察返回true，失败返回false。
      */
-    virtual bool subscribe_topic(const std::string& topic_name, LocalMessageCallback callback) = 0;
+    virtual bool subscribe_topic(const std::string& topic_name,
+                                 LocalMessageCallback callback,
+                                 uint64_t start_after_sequence) = 0;
 
     /**
      * @brief 将远端收到的payload发布到本地Topic。

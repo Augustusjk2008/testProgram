@@ -79,6 +79,7 @@ ctest --test-dir build_vs_release -C Release --output-on-failure
 - 宿主与 DUT 使用独立构建树和入口。进入 `dut/` 后遵循局部 `AGENTS.md` 与 `README.md`。
 - Fake/Mock、Simulator、主机侧测试和交叉构建均不等于目标板、真实 PXI、DDS 舵机、DH 或其他物理台架验收。
 - 真实硬件写入、部署和长时运行只在隔离且经用户明确授权的环境执行。
+- 用户提出审查意见并要求“修复”或“修改”时，默认直接修改本地工作区中的源码、测试和文档；板端只用于部署验证，不能以板端临时改动替代本地修复。除非用户明确指定目标，不自动向其他同名本地源码树或板端回灌改动。
 
 ## CodeGraph
 

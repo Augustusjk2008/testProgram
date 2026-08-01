@@ -6,16 +6,48 @@
  */
 
 #include "MB_DDF/DDS/RingBuffer.h"
+#include "MB_DDF/DDS/BeforeVisibleContext.h"
 #include "MB_DDF/Debug/Logger.h"
 #include "MB_DDF/DDS/SemaphoreGuard.h"
 #include <algorithm>
 #include <cerrno>
+#include <csignal>
 #include <cstring>
+#include <limits>
 #include <semaphore.h>
 #include <stdexcept>
+#include <unistd.h>
 
 namespace MB_DDF {
 namespace DDS {
+
+namespace {
+
+uint64_t current_process_id() noexcept {
+    return static_cast<uint64_t>(static_cast<unsigned long>(::getpid()));
+}
+
+bool process_is_definitely_dead(uint64_t owner_pid) noexcept {
+    if (owner_pid == 0 ||
+        owner_pid > static_cast<uint64_t>(std::numeric_limits<pid_t>::max())) {
+        return false;
+    }
+
+    errno = 0;
+    const int result = ::kill(static_cast<pid_t>(owner_pid), 0);
+    return result == -1 && errno == ESRCH;
+}
+
+void clear_subscriber_state(SubscriberState& state) noexcept {
+    state.subscriber_id = 0;
+    state.owner_pid = 0;
+    state.read_pos.store(0, std::memory_order_release);
+    state.last_read_sequence.store(0, std::memory_order_release);
+    state.timestamp.store(0, std::memory_order_release);
+    state.subscriber_name[0] = '\0';
+}
+
+} // namespace
 
 RingBuffer::RingBuffer(void* buffer, size_t size, sem_t* sem, bool enable_checksum)
     : sem_(sem), enable_checksum_(enable_checksum) {
@@ -117,6 +149,10 @@ bool RingBuffer::reinitialize_sync_state_guarded(const char* reason) {
 }
 
 RingBuffer::WriteLock::WriteLock(RingBuffer* rb) : rb_(rb), locked_(false) {
+    if (Detail::before_visible_callback_active()) {
+        LOG_ERROR << "RingBuffer write rejected during before_visible callback";
+        return;
+    }
     if (rb_ && rb_->sync_) {
         locked_ = Sync::lock_mutex(rb_->sync_->write_mutex);
     }
@@ -294,12 +330,20 @@ void RingBuffer::remove_publisher() {
 SubscriberState* RingBuffer::register_subscriber(
     uint64_t subscriber_id,
     const std::string& subscriber_name) {
-    return register_subscriber(subscriber_id, subscriber_name, false);
+    return register_subscriber(subscriber_id, subscriber_name, 0U);
 }
 
 SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id,
                                                  const std::string& subscriber_name,
-                                                 bool start_from_latest) {
+                                                 uint64_t start_after_sequence) {
+    // before_visible 在本 Topic 写锁内执行。注册/Topic API 若在该回调中重入，
+    // Linux 会自锁，SylixOS 则因默认递归 mutex 继续执行，造成平台语义分叉。
+    // 在获取共享 semaphore 前统一快速失败。
+    if (Detail::before_visible_callback_active()) {
+        LOG_ERROR << "register_subscriber rejected during before_visible callback";
+        return nullptr;
+    }
+
     // 使用RAII守护对象保护订阅者注册
     SemaphoreGuard guard(sem_);
     if (!guard.acquired()) {
@@ -319,16 +363,20 @@ SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id,
     }
 
     SubscriberState* id_match = nullptr;
-    SubscriberState* name_match = nullptr;
     uint32_t free_index = SubscriberRegistry::MAX_SUBSCRIBERS;
+    uint32_t stale_index = SubscriberRegistry::MAX_SUBSCRIBERS;
+    const uint64_t owner_pid = current_process_id();
     for (uint32_t i = 0; i < SubscriberRegistry::MAX_SUBSCRIBERS; ++i) {
         auto& s = registry_->subscribers[i];
-        if (s.subscriber_id == subscriber_id) {
+        if (s.subscriber_id != 0 && s.owner_pid != owner_pid &&
+            stale_index == SubscriberRegistry::MAX_SUBSCRIBERS &&
+            process_is_definitely_dead(s.owner_pid)) {
+            stale_index = i;
+            continue;
+        }
+        if (s.subscriber_id == subscriber_id && s.owner_pid == owner_pid) {
             id_match = &s;
             break;
-        }
-        if (name_match == nullptr && std::strcmp(s.subscriber_name, subscriber_name.c_str()) == 0) {
-            name_match = &s;
         }
         if (free_index == SubscriberRegistry::MAX_SUBSCRIBERS && s.subscriber_id == 0) {
             free_index = i;
@@ -340,43 +388,32 @@ SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id,
         return id_match;
     }
 
-    // 普通业务订阅者保持原有“从历史起点读取”的语义；Gateway observer 使用
-    // start_from_latest，以注册瞬间可见的 current_sequence 作为边界，避免网关重启
-    // 后把共享 RingBuffer 中的历史消息再次发送到远端。
-    uint64_t initial_sequence = 0U;
-    size_t initial_read_pos = 0U;
-    if (start_from_latest) {
-        // 发布者在同一把 write_mutex 下依次提交 current_sequence 和 write_pos。
-        // 在这里获取写锁，既等待正在提交的消息完成，也保证两个字段来自同一个
-        // 已完成提交边界；锁释放后产生的消息会作为 observer 的新消息被读取。
-        auto snapshot_lock = acquire_write_lock();
-        if (!snapshot_lock.locked()) {
-            LOG_ERROR << "register_subscriber failed, latest snapshot write lock failed";
-            return nullptr;
-        }
-        initial_sequence = header_->current_sequence.load(std::memory_order_acquire);
-        initial_read_pos = header_->write_pos.load(std::memory_order_acquire);
-    }
+    // 起点由 Gateway 扫描时显式捕获，注册阶段不再获取 Topic 写锁。这样既能让
+    // 初始 Topic 跳过启动前历史，又能让稍后发现的新 Topic 补读扫描间隙消息。
+    const uint64_t initial_sequence = std::min(
+        start_after_sequence,
+        header_->current_sequence.load(std::memory_order_acquire));
 
     auto initialize_read_state = [&](SubscriberState& state) {
-        state.read_pos.store(initial_read_pos, std::memory_order_release);
+        state.read_pos.store(0, std::memory_order_release);
         state.last_read_sequence.store(initial_sequence, std::memory_order_release);
         state.timestamp.store(0, std::memory_order_release);
+        state.owner_pid = owner_pid;
     };
 
-    if (name_match) {
-        LOG_DEBUG << "register_subscriber " << subscriber_id << " " << subscriber_name << " (name unchanged)";
-        name_match->subscriber_id = subscriber_id;
-        initialize_read_state(*name_match);
-        return name_match;
-    }
-
-    if (free_index == SubscriberRegistry::MAX_SUBSCRIBERS) {
+    const uint32_t target_index =
+        stale_index != SubscriberRegistry::MAX_SUBSCRIBERS ? stale_index : free_index;
+    if (target_index == SubscriberRegistry::MAX_SUBSCRIBERS) {
         LOG_ERROR << "register_subscriber failed, no free subscriber slot";
         return nullptr;
     }
 
-    SubscriberState& new_sub = registry_->subscribers[free_index];
+    SubscriberState& new_sub = registry_->subscribers[target_index];
+    if (stale_index != SubscriberRegistry::MAX_SUBSCRIBERS) {
+        LOG_WARN << "register_subscriber reclaiming exited owner pid=" << new_sub.owner_pid
+                 << " subscriber_id=" << new_sub.subscriber_id;
+        clear_subscriber_state(new_sub);
+    }
     new_sub.subscriber_id = subscriber_id;
 
     size_t name_len = std::min(subscriber_name.length(), sizeof(new_sub.subscriber_name) - 1);
@@ -393,7 +430,7 @@ SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id,
 
     LOG_DEBUG << "register_subscriber " << subscriber_id << " " << subscriber_name
               << " start_sequence=" << initial_sequence;
-    return &registry_->subscribers[free_index];
+    return &registry_->subscribers[target_index];
 }
 
 void RingBuffer::unregister_subscriber(SubscriberState* subscriber) {
@@ -409,32 +446,40 @@ void RingBuffer::unregister_subscriber(SubscriberState* subscriber) {
         return;
     }
 
-    // subscriber 直接指向共享注册槽。清零槽位也会同步改变
-    // subscriber->subscriber_id，因此必须先保存 ID；ID=0 不能用于查找，否则会把
-    // 第一个空槽误判为当前订阅者。
-    const uint64_t subscriber_id = subscriber->subscriber_id;
-    if (subscriber_id == 0) {
-        LOG_WARN << "unregister_subscriber ignored zero subscriber_id";
-        return;
-    }
-
-    bool removed = false;
+    // 不同进程允许使用相同的实体 ID，因此不能仅按 subscriber_id 查找。
+    // subscriber 应直接指向本 RingBuffer 的共享注册槽；先按地址精确定位，再校验
+    // owner_pid，避免 fork 后的子进程或错误调用清掉其他活进程的槽。
+    SubscriberState* registered_subscriber = nullptr;
     for (uint32_t i = 0; i < SubscriberRegistry::MAX_SUBSCRIBERS; ++i) {
-        if (registry_->subscribers[i].subscriber_id == subscriber_id) {
-            registry_->subscribers[i].subscriber_id = 0;
-            registry_->subscribers[i].read_pos.store(0, std::memory_order_release);
-            registry_->subscribers[i].last_read_sequence.store(0, std::memory_order_release);
-            registry_->subscribers[i].timestamp.store(0, std::memory_order_release);
-            LOG_INFO << "unregister_subscriber " << subscriber_id << " "
-                     << registry_->subscribers[i].subscriber_name;
-            removed = true;
+        if (&registry_->subscribers[i] == subscriber) {
+            registered_subscriber = &registry_->subscribers[i];
             break;
         }
     }
 
-    if (!removed) {
-        LOG_WARN << "unregister_subscriber subscriber_id not found: " << subscriber_id;
+    if (registered_subscriber == nullptr) {
+        LOG_WARN << "unregister_subscriber ignored pointer outside subscriber registry";
+        return;
     }
+
+    const uint64_t subscriber_id = registered_subscriber->subscriber_id;
+    if (subscriber_id == 0) {
+        LOG_WARN << "unregister_subscriber ignored empty subscriber slot";
+        return;
+    }
+
+    const uint64_t owner_pid = current_process_id();
+    if (registered_subscriber->owner_pid != owner_pid) {
+        LOG_WARN << "unregister_subscriber ignored foreign owner pid="
+                 << registered_subscriber->owner_pid
+                 << " current_pid=" << owner_pid
+                 << " subscriber_id=" << subscriber_id;
+        return;
+    }
+
+    LOG_INFO << "unregister_subscriber " << subscriber_id << " "
+             << registered_subscriber->subscriber_name;
+    clear_subscriber_state(*registered_subscriber);
 
     uint32_t active = 0;
     for (uint32_t i = 0; i < SubscriberRegistry::MAX_SUBSCRIBERS; ++i) {
@@ -767,6 +812,7 @@ bool RingBuffer::commit_impl(
     // 必须严格早于current_sequence.store：observer既可能等待通知，也可能主动轮询。
     if (before_visible) {
         try {
+            Detail::BeforeVisibleCallbackScope callback_scope;
             before_visible(seq);
         } catch (const std::exception& e) {
             buffer_msg->header.magic = 0;

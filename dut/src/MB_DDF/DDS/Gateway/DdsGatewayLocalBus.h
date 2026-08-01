@@ -32,8 +32,10 @@ public:
     /// 通过DDSCore枚举本地域已经注册的Topic。
     std::vector<LocalTopicInfo> list_topics() override;
 
-    /// 创建内部观察订阅者，并保存Subscriber对象以维持订阅生命周期。
-    bool subscribe_topic(const std::string& topic_name, LocalMessageCallback callback) override;
+    /// 创建指定序列边界之后的内部观察订阅者，并保存Subscriber对象以维持订阅生命周期。
+    bool subscribe_topic(const std::string& topic_name,
+                         LocalMessageCallback callback,
+                         uint64_t start_after_sequence) override;
 
     /// 将网关收到的远端payload发布到本地域，并返回DDSCore分配的本地序列号。
     uint64_t publish_topic(

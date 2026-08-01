@@ -18,7 +18,9 @@
 #include "MB_DDF/DDS/Gateway/GatewayLocalBus.h" // Gateway内部本地总线类型
 
 #include <string>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -51,7 +53,13 @@ public:
     static DDSCore& instance();
 
     // 版本号，用于共享内存布局升级
-    static const uint32_t VERSION = 0x00005000;
+    static const uint32_t VERSION = 0x00005001;
+
+#ifdef MB_DDF_TEST_BUILD
+    using TopicBufferTestHook =
+        std::function<void(const char* event, const std::string& topic_name)>;
+    static void set_topic_buffer_test_hook(TopicBufferTestHook hook);
+#endif
     
     /**
      * @brief 创建指定Topic的发布者
@@ -188,7 +196,19 @@ public:
      * @return 订阅者智能指针，失败时返回nullptr
      */
     std::shared_ptr<Subscriber> create_observer(const std::string& topic_name,
-                                                const LocalMessageCallback& callback);
+                                                 const LocalMessageCallback& callback);
+
+    /**
+     * @brief 从指定本地序列号之后创建内部观察订阅者
+     * @param topic_name Topic名称
+     * @param callback 本地消息观察回调
+     * @param start_after_sequence 跳过不大于该序列号的消息；0 表示补读仍保留的消息
+     * @return 订阅者智能指针，失败时返回nullptr
+     */
+    std::shared_ptr<Subscriber> create_observer(
+        const std::string& topic_name,
+        const LocalMessageCallback& callback,
+        uint64_t start_after_sequence);
 
     /**
      * @brief 发布数据并返回本地序列号
@@ -236,7 +256,7 @@ private:
     std::unique_ptr<SharedMemoryManager> shm_manager_;          ///< 共享内存管理器
     std::unique_ptr<TopicRegistry> topic_registry_;             ///< Topic注册表管理器
     std::unordered_map<TopicMetadata*, std::unique_ptr<RingBuffer>> topic_buffers_; ///< TopicMetadata指针到RingBuffer指针的映射
-    // std::mutex topic_buffers_mutex_;                            ///< 保护topic_buffers_的互斥锁
+    mutable std::mutex topic_buffers_mutex_;                    ///< 保护topic_buffers_的互斥锁
     bool initialized_{false};                                   ///< 初始化状态标志
     
     /**
