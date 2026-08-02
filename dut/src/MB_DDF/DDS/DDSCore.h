@@ -19,7 +19,6 @@
 #include "MB_DDF/DDS/Gateway/GatewayLocalBus.h" // Gateway内部本地总线类型
 
 #include <string>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -56,12 +55,6 @@ public:
     // 版本号，用于共享内存布局升级
     static const uint32_t VERSION = 0x00005001;
 
-#ifdef MB_DDF_TEST_BUILD
-    using TopicBufferTestHook =
-        std::function<void(const char* event, const std::string& topic_name)>;
-    static void set_topic_buffer_test_hook(TopicBufferTestHook hook);
-#endif
-    
     /**
      * @brief 创建指定Topic的发布者
      * @param topic_name Topic名称

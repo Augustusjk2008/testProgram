@@ -16,7 +16,6 @@
 #include <fstream>
 #include <mutex>
 #include <string>
-#include <cstdlib>
 #include <unistd.h>
 #include <utility>
 
@@ -29,29 +28,6 @@ namespace DDS {
 
 // 定义静态成员变量
 const uint32_t DDSCore::VERSION;
-
-#ifdef MB_DDF_TEST_BUILD
-namespace {
-std::mutex topic_buffer_test_hook_mutex;
-DDSCore::TopicBufferTestHook topic_buffer_test_hook;
-
-void notify_topic_buffer_test_hook(const char* event, const std::string& topic_name) {
-    DDSCore::TopicBufferTestHook hook;
-    {
-        std::lock_guard<std::mutex> lock(topic_buffer_test_hook_mutex);
-        hook = topic_buffer_test_hook;
-    }
-    if (hook) {
-        hook(event, topic_name);
-    }
-}
-} // namespace
-
-void DDSCore::set_topic_buffer_test_hook(TopicBufferTestHook hook) {
-    std::lock_guard<std::mutex> lock(topic_buffer_test_hook_mutex);
-    topic_buffer_test_hook = std::move(hook);
-}
-#endif
 
 DDSCore& DDSCore::instance() {
     static DDSCore instance;
@@ -78,10 +54,6 @@ std::shared_ptr<Publisher> DDSCore::create_publisher_impl(
                   << topic_name;
         return nullptr;
     }
-
-#ifdef MB_DDF_TEST_BUILD
-    notify_topic_buffer_test_hook("entry", topic_name);
-#endif
 
     TopicBinding binding;
     {
@@ -147,10 +119,6 @@ std::shared_ptr<Subscriber> DDSCore::create_subscriber(
                   << topic_name;
         return nullptr;
     }
-
-#ifdef MB_DDF_TEST_BUILD
-    notify_topic_buffer_test_hook("entry", topic_name);
-#endif
 
     TopicBinding binding;
     {
@@ -327,10 +295,6 @@ std::shared_ptr<Subscriber> DDSCore::create_observer_impl(
         return nullptr;
     }
 
-#ifdef MB_DDF_TEST_BUILD
-    notify_topic_buffer_test_hook("entry", topic_name);
-#endif
-
     TopicBinding binding;
     {
         std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex_);
@@ -385,14 +349,6 @@ bool DDSCore::initialize(size_t shared_memory_size) {
 }
 
 bool DDSCore::initialize_locked(size_t shared_memory_size) {
-#ifdef MB_DDF_TEST_BUILD
-    const char* forced_fail = std::getenv("MB_DDF_TEST_FORCE_INIT_FAIL");
-    if (forced_fail && std::string(forced_fail) == "1") {
-        LOG_WARN << "DDSCore initialization forced to fail by MB_DDF_TEST_FORCE_INIT_FAIL";
-        return false;
-    }
-#endif
-
     if (runtime_state_ && runtime_state_->is_active()) {
         LOG_WARN << "already initialized, shared memory size: "
                  << runtime_state_->shm_manager->get_size();
@@ -509,9 +465,6 @@ bool DDSCore::bind_topic_locked(const std::string& topic_name,
                 static_cast<char*>(state->shm_manager->get_address()) +
                 metadata->ring_buffer_offset;
 
-#ifdef MB_DDF_TEST_BUILD
-            notify_topic_buffer_test_hook("before_ring_buffer_construct", topic_name);
-#endif
             auto ring_buffer = std::make_unique<RingBuffer>(
                 buffer_addr,
                 metadata->ring_buffer_size,
@@ -546,9 +499,6 @@ bool DDSCore::bind_topic_locked(const std::string& topic_name,
             static_cast<char*>(state->shm_manager->get_address()) +
             metadata->ring_buffer_offset;
 
-#ifdef MB_DDF_TEST_BUILD
-        notify_topic_buffer_test_hook("before_ring_buffer_construct", topic_name);
-#endif
         auto ring_buffer = std::make_unique<RingBuffer>(
             buffer_addr,
             metadata->ring_buffer_size,
