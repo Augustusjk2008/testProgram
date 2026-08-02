@@ -49,10 +49,30 @@ bool DomainGateway::start() {
         return false;
     }
 
-    // compare_exchange保证多次start()只有第一次真正启动线程。
-    bool expected = false;
-    if (!running_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+    // lifecycle_mutex_已经串行化状态切换，重复start()不重建会话。
+    if (running_.load(std::memory_order_acquire)) {
         return true;
+    }
+
+    // 手工scan_topics_once()允许在首次start()前建立观察订阅。无论这是首次启动、
+    // 失败重试还是stop()后的重启，都先永久关闭旧门并释放旧会话订阅；旧回调即使
+    // 延迟到新会话才执行，也只能看到已经关闭的旧门。
+    deactivate_local_callbacks_and_wait();
+    local_bus_->reset_subscriptions();
+    {
+        std::lock_guard<std::mutex> scan_lock(scan_mutex_);
+        startup_scan_completed_ = false;
+        std::lock_guard<std::mutex> topics_lock(topics_mutex_);
+        monitored_topics_.clear();
+        pending_start_boundaries_.clear();
+    }
+
+    // 空列表可能是有效快照，也可能表示DDSCore尚未初始化。只有适配器确认快照
+    // 有效时才能建立启动边界；否则本次start()明确失败且不启动任何线程。
+    std::vector<LocalTopicInfo> startup_topics;
+    if (!local_bus_->try_list_topics(startup_topics)) {
+        LOG_ERROR << "DomainGateway start failed, local Topic snapshot is unavailable";
+        return false;
     }
 
     if (config_.gateway_id == 0) {
@@ -65,7 +85,13 @@ bool DomainGateway::start() {
 
     // 启动前先扫描一次。已有Topic以枚举快照序列为边界，只桥接快照后的消息；
     // 这样既不重放历史，也不会丢失list_topics()到observer注册之间的并发发布。
-    scan_topics_once(true);
+    {
+        std::lock_guard<std::mutex> scan_lock(scan_mutex_);
+        subscribe_topics_snapshot_locked(startup_topics, true);
+    }
+
+    // 启动快照和观察订阅已经建立后才对外发布运行状态并创建后台线程。
+    running_.store(true, std::memory_order_release);
 
     {
         std::lock_guard<std::mutex> lock(endpoints_mutex_);
@@ -115,31 +141,48 @@ void DomainGateway::stop() {
         }
     }
 
+    // scan线程退出后不会再追加观察订阅。释放订阅可能等待Subscriber工作线程，
+    // 因此不能持有scan_mutex_或topics_mutex_调用。
+    if (local_bus_) {
+        local_bus_->reset_subscriptions();
+    }
+
     // 每次stopped -> running都是新的实时桥接会话。下一次启动前重新建立
     // Topic快照边界，避免把停机期间创建Topic的历史当成实时消息转发。
     {
         std::lock_guard<std::mutex> scan_lock(scan_mutex_);
         startup_scan_completed_ = false;
         std::lock_guard<std::mutex> topics_lock(topics_mutex_);
+        monitored_topics_.clear();
         pending_start_boundaries_.clear();
     }
 }
 
 void DomainGateway::scan_topics_once() {
-    scan_topics_once(false);
+    // 与start()/stop()串行化，防止手工扫描在会话清理期间追加订阅。
+    std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex_);
+    (void)scan_topics_once(false);
 }
 
-void DomainGateway::scan_topics_once(bool complete_startup_scan) {
+bool DomainGateway::scan_topics_once(bool complete_startup_scan) {
     std::lock_guard<std::mutex> scan_lock(scan_mutex_);
     if (!local_bus_) {
-        if (complete_startup_scan) {
-            startup_scan_completed_ = true;
-        }
-        return;
+        return false;
     }
 
+    std::vector<LocalTopicInfo> topics;
+    if (!local_bus_->try_list_topics(topics)) {
+        return false;
+    }
+
+    subscribe_topics_snapshot_locked(topics, complete_startup_scan);
+    return true;
+}
+
+void DomainGateway::subscribe_topics_snapshot_locked(
+    const std::vector<LocalTopicInfo>& topics,
+    bool complete_startup_scan) {
     const bool startup_phase = !startup_scan_completed_;
-    const auto topics = local_bus_->list_topics();
     for (const auto& topic : topics) {
         // 空Topic无法路由；内部Topic用于网关控制或状态，不应被再次跨域传播。
         if (topic.topic_name.empty() || is_internal_topic(topic.topic_name)) {
@@ -172,7 +215,12 @@ void DomainGateway::scan_topics_once(bool complete_startup_scan) {
         auto gate = callback_gate_;
         const bool subscribed = local_bus_->subscribe_topic(
             topic.topic_name,
-            [gate](const LocalMessageView& message) {
+            [gate, start_after_sequence](const LocalMessageView& message) {
+                // 显式边界是Gateway会话契约的一部分。适配器正常情况下会在底层
+                // observer中应用它；这里再次过滤，防止自定义/测试总线回放边界历史。
+                if (message.sequence <= start_after_sequence) {
+                    return;
+                }
                 DomainGateway::dispatch_local_message(gate, message);
             },
             start_after_sequence);
@@ -260,7 +308,7 @@ void DomainGateway::scan_loop() {
     while (running_.load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(period);
         if (running_.load(std::memory_order_acquire)) {
-            scan_topics_once(false);
+            (void)scan_topics_once(false);
         }
     }
 }
@@ -301,17 +349,23 @@ void DomainGateway::dispatch_local_message(const std::shared_ptr<LocalCallbackGa
 }
 
 void DomainGateway::activate_local_callbacks() {
-    std::lock_guard<std::mutex> lock(callback_gate_->mutex);
-    callback_gate_->owner = this;
-    callback_gate_->accepting = true;
+    auto gate = std::make_shared<LocalCallbackGate>();
+    gate->owner = this;
+    gate->accepting = true;
+    callback_gate_ = std::move(gate);
 }
 
 void DomainGateway::deactivate_local_callbacks_and_wait() {
-    std::unique_lock<std::mutex> lock(callback_gate_->mutex);
-    callback_gate_->accepting = false;
-    callback_gate_->owner = nullptr;
-    callback_gate_->idle_cv.wait(lock, [this] {
-        return callback_gate_->in_flight == 0;
+    auto gate = callback_gate_;
+    if (!gate) {
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock(gate->mutex);
+    gate->accepting = false;
+    gate->owner = nullptr;
+    gate->idle_cv.wait(lock, [&gate] {
+        return gate->in_flight == 0;
     });
 }
 

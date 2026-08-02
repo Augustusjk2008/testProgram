@@ -7,6 +7,7 @@
 
 #include "MB_DDF/DDS/Publisher.h"
 #include "MB_DDF/DDS/EntityId.h"
+#include "MB_DDF/DDS/RuntimeState.h"
 #include "MB_DDF/Debug/Logger.h"
 #include <cstring>
 #include <utility>
@@ -18,9 +19,21 @@ Publisher::Publisher(TopicMetadata* metadata,
                      RingBuffer* ring_buffer,
                      const std::string& publisher_name,
                      ExternalEndpointRef external_io)
+    : Publisher(metadata,
+                ring_buffer,
+                publisher_name,
+                std::move(external_io),
+                nullptr) {}
+
+Publisher::Publisher(TopicMetadata* metadata,
+                     RingBuffer* ring_buffer,
+                     const std::string& publisher_name,
+                     ExternalEndpointRef external_io,
+                     std::shared_ptr<RuntimeState> runtime_state)
     : metadata_(metadata),
       ring_buffer_(ring_buffer),
       external_io_(std::move(external_io)),
+      runtime_state_(std::move(runtime_state)),
       publisher_name_(publisher_name) {
     // 构造函数直接绑定metadata，不需要判断topic是否存在。
     // ID 生成不依赖 random_device，兼容缺少非确定性熵源的 SylixOS BSP。
@@ -43,7 +56,20 @@ Publisher::WritableMessage::WritableMessage(
     TopicMetadata* metadata,
     const RingBuffer::ReserveToken& token,
     std::unique_ptr<RingBuffer::WriteLock> lock)
-    : rb_(rb), metadata_(metadata), token_(token), committed_(false), lock_(std::move(lock)) {}
+    : WritableMessage(rb, metadata, token, std::move(lock), nullptr) {}
+
+Publisher::WritableMessage::WritableMessage(
+    RingBuffer* rb,
+    TopicMetadata* metadata,
+    const RingBuffer::ReserveToken& token,
+    std::unique_ptr<RingBuffer::WriteLock> lock,
+    std::shared_ptr<RuntimeState> runtime_state)
+    : rb_(rb),
+      metadata_(metadata),
+      token_(token),
+      committed_(false),
+      lock_(std::move(lock)),
+      runtime_state_(std::move(runtime_state)) {}
 
 Publisher::WritableMessage::~WritableMessage() {
     if (!committed_ && token_.valid && rb_) {
@@ -57,7 +83,8 @@ Publisher::WritableMessage::WritableMessage(WritableMessage&& other) noexcept
       metadata_(other.metadata_),
       token_(other.token_),
       committed_(other.committed_),
-      lock_(std::move(other.lock_)) {
+      lock_(std::move(other.lock_)),
+      runtime_state_(std::move(other.runtime_state_)) {
     other.rb_ = nullptr;
     other.metadata_ = nullptr;
     other.token_.valid = false;
@@ -79,6 +106,7 @@ Publisher::WritableMessage& Publisher::WritableMessage::operator=(WritableMessag
     token_ = other.token_;
     committed_ = other.committed_;
     lock_ = std::move(other.lock_);
+    runtime_state_ = std::move(other.runtime_state_);
 
     other.rb_ = nullptr;
     other.metadata_ = nullptr;
@@ -122,7 +150,7 @@ bool Publisher::WritableMessage::valid() const {
 }
 
 Publisher::WritableMessage Publisher::begin_message(size_t max_size) {
-    if (ring_buffer_ == nullptr) {
+    if (ring_buffer_ == nullptr || !local_runtime_active()) {
         return WritableMessage(nullptr, nullptr, RingBuffer::ReserveToken(), nullptr);
     }
 
@@ -135,11 +163,13 @@ Publisher::WritableMessage Publisher::begin_message(size_t max_size) {
     if (!token.valid) {
         lock.reset();
     }
-    return WritableMessage(ring_buffer_, metadata_, token, std::move(lock));
+    return WritableMessage(
+        ring_buffer_, metadata_, token, std::move(lock), runtime_state_);
 }
 
 bool Publisher::publish_fill(size_t max_size, const std::function<size_t(void* buffer, size_t capacity)>& fill) {
-    if (ring_buffer_ == nullptr || metadata_ == nullptr || !fill) {
+    if (ring_buffer_ == nullptr || metadata_ == nullptr || !fill ||
+        !local_runtime_active()) {
         LOG_ERROR << "Publisher " << publisher_name_ << " publish_fill invalid parameters";
         return false;
     }
@@ -184,7 +214,7 @@ bool Publisher::publish(const void* data, size_t size) {
         return external_io_->send(static_cast<const uint8_t*>(data), size);
     }
 
-    if (ring_buffer_ == nullptr) {
+    if (ring_buffer_ == nullptr || !local_runtime_active()) {
         return false;
     }
     
@@ -200,7 +230,8 @@ uint64_t Publisher::publish_and_get_sequence(
     const void* data,
     size_t size,
     const std::function<void(uint64_t)>& before_visible) {
-    if (external_io_ != nullptr || ring_buffer_ == nullptr) {
+    if (external_io_ != nullptr || ring_buffer_ == nullptr ||
+        !local_runtime_active()) {
         return 0;
     }
 
@@ -216,14 +247,14 @@ bool Publisher::write(const void* data, size_t size) {
 }
 
 uint32_t Publisher::get_topic_id() const {
-    if (metadata_ != nullptr) {
+    if (metadata_ != nullptr && local_runtime_active()) {
         return metadata_->topic_id;
     }
     return 0; // metadata为空时返回0
 }
 
 std::string Publisher::get_topic_name() const {
-    if (metadata_ != nullptr) {
+    if (metadata_ != nullptr && local_runtime_active()) {
         return std::string(metadata_->topic_name);
     }
     return ""; // metadata为空时返回空字符串
@@ -235,6 +266,14 @@ uint64_t Publisher::get_id() const {
 
 std::string Publisher::get_name() const {
     return publisher_name_;
+}
+
+bool Publisher::is_runtime_active() const {
+    return external_io_ != nullptr || local_runtime_active();
+}
+
+bool Publisher::local_runtime_active() const {
+    return runtime_state_ == nullptr || runtime_state_->is_active();
 }
 
 } // namespace DDS

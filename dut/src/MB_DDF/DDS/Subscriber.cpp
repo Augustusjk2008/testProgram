@@ -9,6 +9,7 @@
 #include "MB_DDF/DDS/Subscriber.h"
 #include "MB_DDF/DDS/EntityId.h"
 #include "MB_DDF/DDS/RingBuffer.h"
+#include "MB_DDF/DDS/RuntimeState.h"
 #include "MB_DDF/DDS/Message.h"
 #include "MB_DDF/Debug/Logger.h"
 #include <chrono>
@@ -25,10 +26,22 @@ Subscriber::Subscriber(TopicMetadata* metadata,
                        RingBuffer* ring_buffer,
                        const std::string& subscriber_name,
                        ExternalEndpointRef external_io)
+    : Subscriber(metadata,
+                 ring_buffer,
+                 subscriber_name,
+                 std::move(external_io),
+                 nullptr) {}
+
+Subscriber::Subscriber(TopicMetadata* metadata,
+                       RingBuffer* ring_buffer,
+                       const std::string& subscriber_name,
+                       ExternalEndpointRef external_io,
+                       std::shared_ptr<RuntimeState> runtime_state)
     : metadata_(metadata), ring_buffer_(ring_buffer), callback_(nullptr),
       observer_callback_(nullptr),
       subscribed_(false), running_(false), worker_thread_(),
       external_io_(std::move(external_io)),
+      runtime_state_(std::move(runtime_state)),
       subscriber_name_(subscriber_name) {
     // ID 必须跨进程唯一；SylixOS 的 random_device 可能在每个进程返回相同序列。
     subscriber_id_ = generate_entity_id();
@@ -55,7 +68,7 @@ bool Subscriber::subscribe(MessageCallback callback) {
     }
     
     if (external_io_ == nullptr) {
-        if (ring_buffer_ == nullptr) {
+        if (ring_buffer_ == nullptr || !local_runtime_active()) {
             LOG_ERROR << "Subscriber " << subscriber_id_ << " " << subscriber_name_ << " ring buffer is null";
             return false;
         }
@@ -84,6 +97,9 @@ bool Subscriber::subscribe(MessageCallback callback) {
 }
 
 bool Subscriber::subscribe_observer(LocalMessageCallback callback) {
+    if (!local_runtime_active()) {
+        return false;
+    }
     const uint64_t start_after_sequence = ring_buffer_ ? ring_buffer_->current_sequence() : 0U;
     return subscribe_observer(std::move(callback), start_after_sequence);
 }
@@ -100,13 +116,14 @@ bool Subscriber::subscribe_observer(LocalMessageCallback callback,
                   << " already subscribed";
         return false;
     }
-    if (external_io_ != nullptr || ring_buffer_ == nullptr || metadata_ == nullptr) {
+    if (external_io_ != nullptr || ring_buffer_ == nullptr || metadata_ == nullptr ||
+        !local_runtime_active()) {
         LOG_ERROR << "Subscriber " << subscriber_id_ << " " << subscriber_name_
                   << " observer requires local ring buffer";
         return false;
     }
 
-    subscriber_state_ = ring_buffer_->register_subscriber(
+    subscriber_state_ = ring_buffer_->register_subscriber_after_sequence(
         subscriber_id_, subscriber_name_, start_after_sequence);
     if (!subscriber_state_) {
         LOG_DEBUG << "Failed to register observer subscriber " << subscriber_id_ << " "
@@ -157,7 +174,8 @@ void Subscriber::unsubscribe() {
 }
 
 void Subscriber::worker_loop() { 
-    while (running_.load()) {
+    while (running_.load() &&
+           (external_io_ != nullptr || local_runtime_active())) {
         if (external_io_ != nullptr) {
             const int32_t n = external_io_->receive(
                 receive_buffer_.data(),
@@ -174,7 +192,8 @@ void Subscriber::worker_loop() {
         }
 
         bool handled_message = false;
-        while (running_.load() && ring_buffer_->get_unread_count(subscriber_state_) > 0) {
+        while (running_.load() && local_runtime_active() &&
+               ring_buffer_->get_unread_count(subscriber_state_) > 0) {
             Message* msg = nullptr;
             bool read_ok = ring_buffer_->read_next(subscriber_state_, msg);
             if (!read_ok) {
@@ -210,7 +229,7 @@ void Subscriber::worker_loop() {
             }
         }
 
-        if (!handled_message) {
+        if (!handled_message && running_.load() && local_runtime_active()) {
             // 等待通知以避免忙等待
             if (!ring_buffer_->wait_for_message(subscriber_state_, 100)) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -220,6 +239,10 @@ void Subscriber::worker_loop() {
 }
 
 bool Subscriber::bind_to_cpu(int cpu_id, int priority, int policy) {
+    if (external_io_ == nullptr && !local_runtime_active()) {
+        return false;
+    }
+
     // 获取系统CPU核心数
     int num_cpus = sysconf(_SC_NPROCESSORS_ONLN);
     if (cpu_id < 0 || cpu_id >= num_cpus) {
@@ -278,7 +301,7 @@ bool Subscriber::bind_to_cpu(int cpu_id, int priority, int policy) {
 }
 
 size_t Subscriber::read_next(void* data, size_t size) {
-    if (!subscribed_.load()) {
+    if (!subscribed_.load() || !local_runtime_active()) {
         return 0; // 未订阅
     }
     
@@ -299,7 +322,7 @@ size_t Subscriber::read_next(void* data, size_t size) {
 }
 
 size_t Subscriber::read_latest(void* data, size_t size) {
-    if (!subscribed_.load()) {
+    if (!subscribed_.load() || !local_runtime_active()) {
         return 0; // 未订阅
     }
     
@@ -332,7 +355,7 @@ size_t Subscriber::poll(void* data, size_t size, bool latest) {
         const int32_t ret = external_io_->receive(static_cast<uint8_t*>(data), size);
         return ret > 0 ? static_cast<size_t>(ret) : 0;
     }
-    if (ring_buffer_ == nullptr || subscriber_state_ == nullptr) {
+    if (!local_runtime_active() || ring_buffer_ == nullptr || subscriber_state_ == nullptr) {
         return 0;
     }
     if (ring_buffer_->get_unread_count(subscriber_state_) == 0) {
@@ -358,7 +381,7 @@ int32_t Subscriber::read_blocking(void* data, size_t size, uint32_t timeout_us, 
         return external_io_->receive(static_cast<uint8_t*>(data), size, timeout_us);
     }
 
-    if (ring_buffer_ == nullptr || subscriber_state_ == nullptr) {
+    if (!local_runtime_active() || ring_buffer_ == nullptr || subscriber_state_ == nullptr) {
         return 0;
     }
 
@@ -389,6 +412,14 @@ int32_t Subscriber::read(void* data,
 
 int32_t Subscriber::read(void* data, size_t size, uint32_t timeout_us) {
     return read_blocking(data, size, timeout_us, true);
+}
+
+bool Subscriber::is_runtime_active() const {
+    return external_io_ != nullptr || local_runtime_active();
+}
+
+bool Subscriber::local_runtime_active() const {
+    return runtime_state_ == nullptr || runtime_state_->is_active();
 }
 
 } // namespace DDS

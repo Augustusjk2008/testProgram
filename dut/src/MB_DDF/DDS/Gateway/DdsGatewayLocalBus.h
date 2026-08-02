@@ -27,10 +27,16 @@ class Publisher;
 class DdsGatewayLocalBus : public GatewayLocalBus {
 public:
     DdsGatewayLocalBus() = default;
-    ~DdsGatewayLocalBus() override = default;
+    ~DdsGatewayLocalBus() override;
 
     /// 通过DDSCore枚举本地域已经注册的Topic。
     std::vector<LocalTopicInfo> list_topics() override;
+
+    /// 原子地区分未初始化状态与有效的空 Topic 快照。
+    bool try_list_topics(std::vector<LocalTopicInfo>& topics) override;
+
+    /// 释放当前 Gateway 会话建立的全部 observer。
+    void reset_subscriptions() override;
 
     /// 创建指定序列边界之后的内部观察订阅者，并保存Subscriber对象以维持订阅生命周期。
     bool subscribe_topic(const std::string& topic_name,
@@ -46,9 +52,9 @@ public:
 
 private:
     /**
-     * Gateway 回灌远端消息时，每个 Topic 只创建一个 Publisher。Publisher 内只保存
-     * DDSCore 管理的 RingBuffer/TopicMetadata 非拥有指针，所以本对象必须先于
-     * DDSCore::shutdown() 析构；DomainGateway 的演示生命周期遵守这一顺序。
+     * Gateway 回灌远端消息时，每个 Topic 只缓存一个 Publisher。Publisher 持有创建
+     * 它的 RuntimeState；shutdown 后旧 epoch 会变为 inactive，并在显式重新初始化后
+     * 由 publish_topic() 替换。
      */
     std::mutex publishers_mutex_;
     std::unordered_map<std::string, std::shared_ptr<Publisher>> publishers_;

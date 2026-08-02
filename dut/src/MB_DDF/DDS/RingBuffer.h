@@ -196,15 +196,27 @@ public:
                                          const std::string& subscriber_name);
 
     /**
+     * @brief 按旧接口语义注册订阅者
+     * @param subscriber_id 订阅者唯一标识符
+     * @param subscriber_name 订阅者名称
+     * @param start_from_latest true 时跳过注册快照前已经存在的消息
+     * @return 注册成功返回订阅者状态结构体指针，失败返回nullptr
+     */
+    SubscriberState* register_subscriber(uint64_t subscriber_id,
+                                         const std::string& subscriber_name,
+                                         bool start_from_latest);
+
+    /**
      * @brief 从指定序列号之后注册订阅者
      * @param subscriber_id 订阅者唯一标识符
      * @param subscriber_name 订阅者名称
      * @param start_after_sequence 跳过不大于该序列号的消息；0 表示从仍保留的最早消息开始
      * @return 注册成功返回订阅者状态结构体指针，失败返回nullptr
      */
-    SubscriberState* register_subscriber(uint64_t subscriber_id,
-                                         const std::string& subscriber_name,
-                                         uint64_t start_after_sequence);
+    SubscriberState* register_subscriber_after_sequence(
+        uint64_t subscriber_id,
+        const std::string& subscriber_name,
+        uint64_t start_after_sequence);
 
     /// 返回当前已经发布可见的最新序列号。
     uint64_t current_sequence() const {

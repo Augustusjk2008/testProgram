@@ -59,6 +59,27 @@ public:
     virtual std::vector<LocalTopicInfo> list_topics() = 0;
 
     /**
+     * @brief 尝试取得一份有效的Topic快照。
+     * @param topics 成功时接收当前Topic快照；有效的空快照同样返回true。
+     * @return 本地总线可用且快照有效时返回true；尚未初始化等不可用状态返回false。
+     *
+     * 默认实现保留现有派生类行为。需要区分“有效空快照”和“本地总线不可用”的
+     * 适配器应覆盖本函数。
+     */
+    virtual bool try_list_topics(std::vector<LocalTopicInfo>& topics) {
+        topics = list_topics();
+        return true;
+    }
+
+    /**
+     * @brief 释放当前网关会话建立的本地观察订阅。
+     *
+     * 默认实现为空，保留不管理订阅对象的测试或自定义总线兼容性。持有观察订阅者的
+     * 适配器应覆盖本函数，并确保返回后旧会话不再产生新的有效回调。
+     */
+    virtual void reset_subscriptions() {}
+
+    /**
      * @brief 订阅指定本地Topic并用回调观察后续消息。
      * @param topic_name 需要监控的Topic名称。
      * @param callback 收到本地消息时调用的回调。

@@ -13,6 +13,7 @@
 #include "MB_DDF/DDS/TopicRegistry.h" // Topic注册表管理
 #include "MB_DDF/DDS/SharedMemory.h" // 共享内存管理器
 #include "MB_DDF/DDS/RingBuffer.h" // 环形缓冲区
+#include "MB_DDF/DDS/RuntimeState.h" // 单次初始化的资源 epoch
 #include "MB_DDF/DDS/Publisher.h" // 发布者
 #include "MB_DDF/DDS/Subscriber.h" // 订阅者
 #include "MB_DDF/DDS/Gateway/GatewayLocalBus.h" // Gateway内部本地总线类型
@@ -190,6 +191,16 @@ public:
     std::vector<LocalTopicInfo> list_topics() const;
 
     /**
+     * @brief 在同一生命周期临界区内检查初始化状态并枚举 Topic。
+     * @param topics 成功时接收快照，失败时清空
+     * @return 当前存在活动 RuntimeState 时返回 true
+     */
+    bool try_list_topics(std::vector<LocalTopicInfo>& topics) const;
+
+    /// 当前 DDSCore 是否存在活动的 RuntimeState。
+    bool is_initialized() const;
+
+    /**
      * @brief 创建携带本地序列号的内部观察订阅者
      * @param topic_name Topic名称
      * @param callback 本地消息观察回调
@@ -245,6 +256,8 @@ public:
     void shutdown();
 
 private:
+    friend class DdsGatewayLocalBus;
+
     DDSCore() = default;
     ~DDSCore() = default;
     
@@ -252,27 +265,39 @@ private:
     DDSCore(const DDSCore&) = delete;
     DDSCore& operator=(const DDSCore&) = delete;
 
-    std::string process_name_;                                  ///< 进程名称
-    std::unique_ptr<SharedMemoryManager> shm_manager_;          ///< 共享内存管理器
-    std::unique_ptr<TopicRegistry> topic_registry_;             ///< Topic注册表管理器
-    std::unordered_map<TopicMetadata*, std::unique_ptr<RingBuffer>> topic_buffers_; ///< TopicMetadata指针到RingBuffer指针的映射
-    mutable std::mutex topic_buffers_mutex_;                    ///< 保护topic_buffers_的互斥锁
-    bool initialized_{false};                                   ///< 初始化状态标志
-    
-    /**
-     * @brief 获取或创建指定Topic的环形缓冲区
-     * @param topic_name Topic名称
-     * @param enable_checksum 是否启用校验和
-     * @return 环形缓冲区指针，失败时返回nullptr
-     */
-    RingBuffer* create_or_get_topic_buffer(const std::string& topic_name, bool enable_checksum);
-    
-    /**
-     * @brief 通过Topic名称查找topic_buffers_中存在的TopicMetadata
-     * @param topic_name Topic名称
-     * @return TopicMetadata指针，未找到时返回nullptr
-     */
-    TopicMetadata* find_topic(const std::string& topic_name);
+    struct TopicBinding {
+        std::shared_ptr<RuntimeState> runtime_state;
+        TopicMetadata* metadata{nullptr};
+        RingBuffer* ring_buffer{nullptr};
+    };
+
+    mutable std::mutex lifecycle_mutex_;                ///< 串行化运行期安装、摘除和实体绑定。
+    std::shared_ptr<RuntimeState> runtime_state_;        ///< 当前活动的进程内资源 epoch。
+
+    bool initialize_locked(size_t shared_memory_size);
+    bool bind_topic_locked(const std::string& topic_name,
+                           bool enable_checksum,
+                           bool initialize_if_needed,
+                           TopicBinding& binding);
+
+    std::shared_ptr<Publisher> create_publisher_impl(
+        const std::string& topic_name,
+        bool enable_checksum,
+        bool initialize_if_needed);
+    std::shared_ptr<Publisher> create_publisher_if_initialized(
+        const std::string& topic_name,
+        bool enable_checksum);
+
+    std::shared_ptr<Subscriber> create_observer_impl(
+        const std::string& topic_name,
+        const LocalMessageCallback& callback,
+        uint64_t start_after_sequence,
+        bool capture_current_sequence,
+        bool initialize_if_needed);
+    std::shared_ptr<Subscriber> create_observer_if_initialized(
+        const std::string& topic_name,
+        const LocalMessageCallback& callback,
+        uint64_t start_after_sequence);
     
     /**
      * @brief 获取当前进程名称

@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <string>
 #include <functional>
+#include <memory>
 #include <thread>
 #include <atomic>
 #include <cstdint>
@@ -25,6 +26,8 @@
 
 namespace MB_DDF {
 namespace DDS {
+
+struct RuntimeState;
 
 /**
  * @typedef MessageCallback
@@ -65,6 +68,17 @@ public:
                RingBuffer* ring_buffer,
                const std::string& subscriber_name = "",
                ExternalEndpointRef external_io = nullptr);
+
+    /**
+     * @brief 构造由 DDSCore 运行期资源托管的订阅者。
+     *
+     * 原四参数构造符号保留给直接管理 RingBuffer 的旧调用方。
+     */
+    Subscriber(TopicMetadata* metadata,
+               RingBuffer* ring_buffer,
+               const std::string& subscriber_name,
+               ExternalEndpointRef external_io,
+               std::shared_ptr<RuntimeState> runtime_state);
     
     /**
      * @brief 析构函数，自动取消订阅并清理资源
@@ -104,6 +118,9 @@ public:
      * @return 正在订阅返回true，否则返回false
      */
     bool is_subscribed() const { return subscribed_.load(); }
+
+    /// 当前订阅者绑定的 DDSCore epoch 是否仍接受新的本地操作。
+    bool is_runtime_active() const;
 
     /**
      * @brief 绑定订阅者工作线程到指定CPU核心
@@ -179,6 +196,8 @@ public:
     }
 
 private:
+    bool local_runtime_active() const;
+
     TopicMetadata* metadata_;       ///< Topic元数据指针
     RingBuffer* ring_buffer_;       ///< 环形缓冲区指针
     MessageCallback callback_;      ///< 消息回调函数
@@ -187,6 +206,7 @@ private:
     std::atomic<bool> running_;     ///< 工作线程运行状态标志
     std::thread worker_thread_;     ///< 消息接收工作线程
     ExternalEndpointRef external_io_; ///< 外部端点对象
+    std::shared_ptr<RuntimeState> runtime_state_; ///< 保持 DDSCore epoch 资源存活。
     std::vector<uint8_t> receive_buffer_; ///< 外部端点接收缓冲区
 
     // 自身信息

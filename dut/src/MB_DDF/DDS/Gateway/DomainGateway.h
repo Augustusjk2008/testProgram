@@ -119,7 +119,7 @@ private:
         std::condition_variable idle_cv;
         DomainGateway* owner{nullptr};
         size_t in_flight{0};
-        bool accepting{true};
+        bool accepting{false};
     };
 
     /**
@@ -184,14 +184,18 @@ private:
     /// 周期性扫描本地域Topic的后台线程主循环。
     void scan_loop();
 
-    /// 扫描Topic；启动边界完成前使用枚举快照，之后的新Topic从保留历史起点观察。
-    void scan_topics_once(bool complete_startup_scan);
+    /// 扫描Topic；快照不可用时返回false且不推进启动边界状态。
+    bool scan_topics_once(bool complete_startup_scan);
+
+    /// 在持有scan_mutex_时订阅给定快照中的Topic。
+    void subscribe_topics_snapshot_locked(const std::vector<LocalTopicInfo>& topics,
+                                          bool complete_startup_scan);
 
     /// 经共享门控安全分发本地观察回调。
     static void dispatch_local_message(const std::shared_ptr<LocalCallbackGate>& gate,
                                        const LocalMessageView& message);
 
-    /// 打开本地回调入口，用于构造后及stop()后的重新启动。
+    /// 为一次新的start()会话创建并打开全新的本地回调入口。
     void activate_local_callbacks();
 
     /// 关闭本地回调入口并等待已经进入的回调全部退出。

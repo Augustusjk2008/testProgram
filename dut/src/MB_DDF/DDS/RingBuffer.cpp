@@ -330,12 +330,40 @@ void RingBuffer::remove_publisher() {
 SubscriberState* RingBuffer::register_subscriber(
     uint64_t subscriber_id,
     const std::string& subscriber_name) {
-    return register_subscriber(subscriber_id, subscriber_name, 0U);
+    return register_subscriber_after_sequence(
+        subscriber_id, subscriber_name, uint64_t{0});
 }
 
-SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id,
-                                                 const std::string& subscriber_name,
-                                                 uint64_t start_after_sequence) {
+SubscriberState* RingBuffer::register_subscriber(
+    uint64_t subscriber_id,
+    const std::string& subscriber_name,
+    bool start_from_latest) {
+    if (!start_from_latest) {
+        return register_subscriber_after_sequence(
+            subscriber_id, subscriber_name, uint64_t{0});
+    }
+
+    uint64_t start_after_sequence = 0;
+    {
+        // 保留旧 bool 接口的快照语义：先等待正在提交的写入完成，再捕获当前
+        // 可见序列。快照后释放写锁，避免在后续注册时形成 write_mutex ->
+        // 全局 semaphore 的持锁链；期间新提交的消息仍会由显式边界路径补读。
+        auto snapshot_lock = acquire_write_lock();
+        if (!snapshot_lock.locked()) {
+            LOG_ERROR << "register_subscriber failed, latest snapshot write lock failed";
+            return nullptr;
+        }
+        start_after_sequence = header_->current_sequence.load(std::memory_order_acquire);
+    }
+
+    return register_subscriber_after_sequence(
+        subscriber_id, subscriber_name, start_after_sequence);
+}
+
+SubscriberState* RingBuffer::register_subscriber_after_sequence(
+    uint64_t subscriber_id,
+    const std::string& subscriber_name,
+    uint64_t start_after_sequence) {
     // before_visible 在本 Topic 写锁内执行。注册/Topic API 若在该回调中重入，
     // Linux 会自锁，SylixOS 则因默认递归 mutex 继续执行，造成平台语义分叉。
     // 在获取共享 semaphore 前统一快速失败。
@@ -383,23 +411,75 @@ SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id,
         }
     }
 
-    if (id_match) {
-        LOG_DEBUG << "register_subscriber " << subscriber_id << " " << subscriber_name << " (id unchanged)";
-        return id_match;
+    // 起点由 Gateway 扫描时显式捕获，数值边界注册阶段不获取 Topic 写锁。只考虑
+    // current_sequence 快照内已经正式可见的消息；before_visible 中已经写好消息头但
+    // 尚未推进 current_sequence 的消息不属于本次扫描，稍后会作为新消息被读取。
+    const uint64_t visible_sequence =
+        header_->current_sequence.load(std::memory_order_acquire);
+    uint64_t initial_sequence = std::max(start_after_sequence, visible_sequence);
+    size_t initial_read_pos =
+        header_->write_pos.load(std::memory_order_acquire) % capacity_;
+
+    bool retained_message_found = false;
+    uint64_t earliest_retained_sequence = 0;
+    size_t earliest_retained_pos = initial_read_pos;
+    if (start_after_sequence < visible_sequence) {
+        for (size_t pos = 0; pos < capacity_; pos += ALIGNMENT) {
+            if (capacity_ - pos < sizeof(MessageHeader)) {
+                break;
+            }
+            Message* msg = read_message_at(pos);
+            // 扫描会经过载荷中的对齐字节。先验证头部及连续区间边界，避免把载荷
+            // 中偶然出现的 magic 当成消息后按伪造 data_size 越界计算校验和。
+            if (msg == nullptr || msg->header.magic != MessageHeader::MAGIC_NUMBER ||
+                msg->header.data_size > capacity_ - pos - sizeof(MessageHeader)) {
+                continue;
+            }
+            if (!validate_message(msg)) {
+                continue;
+            }
+
+            const uint64_t sequence = msg->header.sequence;
+            if (sequence <= start_after_sequence || sequence > visible_sequence) {
+                continue;
+            }
+            if (!retained_message_found || sequence < earliest_retained_sequence) {
+                retained_message_found = true;
+                earliest_retained_sequence = sequence;
+                earliest_retained_pos = pos;
+            }
+        }
     }
 
-    // 起点由 Gateway 扫描时显式捕获，注册阶段不再获取 Topic 写锁。这样既能让
-    // 初始 Topic 跳过启动前历史，又能让稍后发现的新 Topic 补读扫描间隙消息。
-    const uint64_t initial_sequence = std::min(
-        start_after_sequence,
-        header_->current_sequence.load(std::memory_order_acquire));
+    if (retained_message_found) {
+        // sequence 严格大于 start_after_sequence，因此减一不会下溢。
+        initial_sequence = earliest_retained_sequence - 1U;
+        initial_read_pos = earliest_retained_pos;
+    }
 
     auto initialize_read_state = [&](SubscriberState& state) {
-        state.read_pos.store(0, std::memory_order_release);
+        state.read_pos.store(initial_read_pos, std::memory_order_release);
         state.last_read_sequence.store(initial_sequence, std::memory_order_release);
         state.timestamp.store(0, std::memory_order_release);
         state.owner_pid = owner_pid;
     };
+
+    auto update_subscriber_name = [&](SubscriberState& state) {
+        const size_t name_len =
+            std::min(subscriber_name.length(), sizeof(state.subscriber_name) - 1);
+        std::strncpy(state.subscriber_name, subscriber_name.c_str(), name_len);
+        state.subscriber_name[name_len] = '\0';
+    };
+
+    if (id_match) {
+        // 保留旧接口的幂等返回行为，但每次成功注册都必须兑现本次请求的起点。
+        // read_pos 先于 last_read_sequence 发布，避免活跃读取者观察到新边界和旧位置。
+        update_subscriber_name(*id_match);
+        initialize_read_state(*id_match);
+        LOG_DEBUG << "register_subscriber " << subscriber_id << " " << subscriber_name
+                  << " start_sequence=" << initial_sequence << " (id reused)";
+        return id_match;
+    }
 
     const uint32_t target_index =
         stale_index != SubscriberRegistry::MAX_SUBSCRIBERS ? stale_index : free_index;
@@ -415,11 +495,7 @@ SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id,
         clear_subscriber_state(new_sub);
     }
     new_sub.subscriber_id = subscriber_id;
-
-    size_t name_len = std::min(subscriber_name.length(), sizeof(new_sub.subscriber_name) - 1);
-    std::strncpy(new_sub.subscriber_name, subscriber_name.c_str(), name_len);
-    new_sub.subscriber_name[name_len] = '\0';
-
+    update_subscriber_name(new_sub);
     initialize_read_state(new_sub);
 
     uint32_t active = 0;
@@ -434,6 +510,10 @@ SubscriberState* RingBuffer::register_subscriber(uint64_t subscriber_id,
 }
 
 void RingBuffer::unregister_subscriber(SubscriberState* subscriber) {
+    if (Detail::before_visible_callback_active()) {
+        LOG_ERROR << "unregister_subscriber rejected during before_visible callback";
+        return;
+    }
     // 使用RAII守护对象保护订阅者注销
     SemaphoreGuard guard(sem_);
     if (!guard.acquired()) {
@@ -489,16 +569,20 @@ void RingBuffer::unregister_subscriber(SubscriberState* subscriber) {
 }
 
 bool RingBuffer::wait_for_message(SubscriberState* subscriber, uint32_t timeout_ms) {
+    if (Detail::before_visible_callback_active()) {
+        LOG_ERROR << "wait_for_message rejected during before_visible callback";
+        return false;
+    }
     if (subscriber == nullptr) {
         LOG_ERROR << "wait_for_message failed, subscriber is nullptr";
         return false;
     }
 
     auto has_message = [&]() {
-        const uint64_t expected_seq =
-            subscriber->last_read_sequence.load(std::memory_order_acquire) + 1;
+        const uint64_t last_read_sequence =
+            subscriber->last_read_sequence.load(std::memory_order_acquire);
         const uint64_t current_seq = header_->current_sequence.load(std::memory_order_acquire);
-        return current_seq >= expected_seq;
+        return current_seq > last_read_sequence;
     };
 
     if (has_message()) {
@@ -714,6 +798,10 @@ bool RingBuffer::is_checksum_enabled() const {
 // 写槽预留（零拷贝支持）
 RingBuffer::ReserveToken RingBuffer::reserve(size_t max_size, size_t alignment) {
     ReserveToken token;
+    if (Detail::before_visible_callback_active()) {
+        LOG_ERROR << "reserve rejected during before_visible callback";
+        return token;
+    }
     if (max_size + sizeof(MessageHeader) > capacity_) {
         LOG_ERROR << "reserve failed, requested size too large";
         return token; // invalid
@@ -778,6 +866,10 @@ bool RingBuffer::commit_impl(
     const std::function<void(uint64_t)>& before_visible) {
     if (out_sequence != nullptr) {
         *out_sequence = 0;
+    }
+    if (Detail::before_visible_callback_active()) {
+        LOG_ERROR << "commit rejected during before_visible callback";
+        return false;
     }
     if (!token.valid || token.msg == nullptr) {
         LOG_ERROR << "commit failed, invalid token";
@@ -844,6 +936,10 @@ bool RingBuffer::commit_impl(
 
 // 新增：放弃写槽（不推进写指针）
 void RingBuffer::abort(const ReserveToken& token) {
+    if (Detail::before_visible_callback_active()) {
+        LOG_ERROR << "abort rejected during before_visible callback";
+        return;
+    }
     if (!token.valid || token.msg == nullptr) {
         return;
     }

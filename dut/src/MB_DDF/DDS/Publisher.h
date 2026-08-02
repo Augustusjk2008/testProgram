@@ -21,6 +21,8 @@
 namespace MB_DDF {
 namespace DDS {
 
+struct RuntimeState;
+
 /**
  * @class Publisher
  * @brief 消息发布者类
@@ -40,6 +42,18 @@ public:
               RingBuffer* ring_buffer,
               const std::string& publisher_name = "",
               ExternalEndpointRef external_io = nullptr);
+
+    /**
+     * @brief 构造由 DDSCore 运行期资源托管的发布者。
+     *
+     * 保留原四参数构造符号供直接管理 RingBuffer 的旧调用方使用；DDSCore 使用该
+     * 重载把实体绑定到创建它的 RuntimeState epoch。
+     */
+    Publisher(TopicMetadata* metadata,
+              RingBuffer* ring_buffer,
+              const std::string& publisher_name,
+              ExternalEndpointRef external_io,
+              std::shared_ptr<RuntimeState> runtime_state);
     
     /**
      * @brief 析构函数，清理资源
@@ -53,6 +67,9 @@ public:
     public:
         WritableMessage(RingBuffer* rb, TopicMetadata* metadata, const RingBuffer::ReserveToken& token,
                         std::unique_ptr<RingBuffer::WriteLock> lock);
+        WritableMessage(RingBuffer* rb, TopicMetadata* metadata, const RingBuffer::ReserveToken& token,
+                        std::unique_ptr<RingBuffer::WriteLock> lock,
+                        std::shared_ptr<RuntimeState> runtime_state);
         ~WritableMessage();
 
         WritableMessage(WritableMessage&& other) noexcept;
@@ -71,6 +88,7 @@ public:
         RingBuffer::ReserveToken token_;
         bool committed_;
         std::unique_ptr<RingBuffer::WriteLock> lock_;
+        std::shared_ptr<RuntimeState> runtime_state_;
     };
 
     /**
@@ -146,10 +164,20 @@ public:
      */
     std::string get_name() const;
 
+    /**
+     * @brief 当前发布者是否仍绑定到可接受新操作的 DDSCore epoch。
+     *
+     * 外部端点发布者和使用旧构造函数直接创建的非托管发布者始终返回 true。
+     */
+    bool is_runtime_active() const;
+
 private:
+    bool local_runtime_active() const;
+
     TopicMetadata* metadata_;    ///< Topic元数据指针
     RingBuffer* ring_buffer_;    ///< 环形缓冲区指针
     ExternalEndpointRef external_io_; ///< 外部端点对象
+    std::shared_ptr<RuntimeState> runtime_state_; ///< 保持 DDSCore epoch 资源存活。
 
     // 自身信息
     uint64_t publisher_id_;        ///< 唯一的发布者ID
