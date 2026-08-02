@@ -68,9 +68,12 @@ DDSCore
 第一个成功创建共享内存的进程决定其大小。后续进程必须使用相同大小，否则
 `SharedMemoryManager` 初始化失败。
 
-`shutdown()` 只执行 `munmap`、`close` 和 `sem_close`，不会执行
-`shm_unlink` 或 `sem_unlink`。因此 Topic、序列号和旧消息可在所有进程退出后继续
-保留，直到系统重启或显式删除 `/dev/shm` 中的对象。
+`shutdown()` 在进程内生命周期锁下把当前 `RuntimeState` 标记为 inactive 并从
+`DDSCore` 摘除。若没有实体或写槽继续持有该 epoch，资源会在 `shutdown()` 返回前释放；
+否则延后到最后一个持有者析构。释放顺序为 RingBuffer 包装对象、TopicRegistry、
+SharedMemoryManager，最后执行 `munmap`、`close` 和 `sem_close`。该过程不会执行
+`shm_unlink` 或 `sem_unlink`，因此 Topic、序列号和旧消息可在所有进程退出后继续保留，
+直到系统重启或显式删除 `/dev/shm` 中的对象。
 
 ### 3.2 创建与打开流程
 
@@ -169,18 +172,24 @@ Topic 名限制在 63 字符以内，避免名称截断和潜在冲突。
 ### 4.3 注册流程
 
 ```text
-create_publisher/create_subscriber
-  -> create_or_get_topic_buffer
-     -> TopicRegistry::get_topic_metadata(name)
-        ├─ 已存在：映射该 Topic 的 RingBuffer
-        └─ 不存在：
-           -> register_topic(name, 1 MiB)
-           -> 顺序计算 ring_buffer_offset
-           -> 检查共享内存剩余容量
-           -> 写入元数据并递增 topic_count
+create_publisher/create_subscriber/create_observer
+  -> 对应的 *_impl
+     -> lifecycle_mutex_
+        -> bind_topic_locked
+           -> 按需初始化 RuntimeState
+           -> TopicRegistry::get_topic_metadata(name)
+              ├─ 已存在：复用或构造本进程 RingBuffer 包装对象
+              └─ 不存在：
+                 -> register_topic(name, 1 MiB)
+                 -> 顺序计算 ring_buffer_offset
+                 -> 检查共享内存剩余容量
+                 -> 写入元数据并递增 topic_count
+                 -> 构造本进程 RingBuffer 包装对象
+           -> 返回持有 RuntimeState 的 TopicBinding
 ```
 
 同名 Topic 重复注册会返回已有元数据，不会再次分配空间。
+生产网关使用的 `*_if_initialized` 路径只绑定已有活动 epoch，不会隐式初始化 DDS。
 
 ## 5. RingBuffer 设计
 
@@ -366,41 +375,46 @@ if (!dds.initialize()) {
 }
 ```
 
-重复调用 `initialize()` 会直接返回成功。创建 Publisher/Subscriber 前如果尚未
-初始化，`create_or_get_topic_buffer()` 也会尝试使用默认大小自动初始化。
+重复调用 `initialize()` 会直接返回成功。普通 Publisher/Subscriber/observer 创建路径
+若发现 DDS 尚未初始化，会通过 `bind_topic_locked()` 使用默认大小自动初始化；生产网关
+使用的 `*_if_initialized` 路径不会自动初始化。
 
 ### 6.2 进程内对象关系
 
 ```text
 DDSCore
+  owns shared_ptr<RuntimeState> current epoch
+
+RuntimeState
   owns SharedMemoryManager
   owns TopicRegistry
   owns unordered_map<TopicMetadata*, unique_ptr<RingBuffer>>
 
-Publisher/Subscriber
-  non-owning -> TopicMetadata
-  non-owning -> RingBuffer
+Publisher/Subscriber/WritableMessage
+  shared ownership -> creating RuntimeState epoch
+  non-owning within that epoch -> TopicMetadata/RingBuffer
 ```
 
-因此必须保证 Publisher/Subscriber 在 `DDSCore::shutdown()` 前停止使用。Demo
-通过 `DDSShutdownGuard` 确保退出 `main` 时统一关闭。
+每次成功初始化都会安装一个新的资源 epoch。`active` 只表示该 epoch 是否继续接受新的
+本地操作；旧 epoch 被关闭后不会把既有实体转绑到后续 epoch。实体持有的共享所有权保证
+`shutdown()` 与在途操作并发时内部指针仍有效，但也会把旧映射和信号量的本地资源寿命
+延长到最后一个持有者释放。
 
 ### 6.3 关闭
 
 `shutdown()` 顺序：
 
-1. 清空本进程的 RingBuffer 包装对象。
-2. 销毁 TopicRegistry。
-3. 解除共享内存映射并关闭信号量。
-4. 清空进程名。
-5. 重置初始化状态。
+1. 在 `lifecycle_mutex_` 下把当前 epoch 标记为 inactive。
+2. 从 `DDSCore` 摘除当前 `RuntimeState`，允许后续初始化安装新 epoch。
+3. 在最后一个共享持有者释放时，依次销毁 RingBuffer 包装对象和 TopicRegistry，再解除
+   共享内存映射并关闭信号量。
 
 `Subscriber` 析构时会自动 `unsubscribe()`：停止回调线程、通知唤醒、`join`，
 再释放共享订阅者槽位。
 
-`DDSCore` 的 `topic_buffers_` 当前没有进程内 mutex。应用应在初始化和首次创建
-实体阶段串行调用 `create_publisher/create_subscriber`；不要让多个本地线程并发
-修改该映射。
+`lifecycle_mutex_` 串行化 epoch 的安装、摘除、Topic 绑定和有效 Topic 快照。
+`RuntimeState::topic_buffers` 没有独立 mutex，但只在该生命周期临界区内访问；同一进程
+并发创建同名 Topic 实体只会构造一个 RingBuffer 包装对象。
 
 ## 7. Publisher 与 Subscriber
 
@@ -464,9 +478,11 @@ Adapter 将硬件层 `Timeout` 映射到 DDS 超时接口；硬件超时返回 0
 `DomainGateway` 不直接绑定 `DDSCore`，而依赖 `GatewayLocalBus`。生产实现
 `DdsGatewayLocalBus` 把接口映射到：
 
-- `DDSCore::list_topics()`
-- `DDSCore::create_observer(topic, callback, start_after_sequence)`
-- `DDSCore::publish_and_get_sequence()`，并支持在序列号分配后、消息对 observer
+- `DDSCore::try_list_topics()`，区分有效空快照与 DDS 未初始化/不可用状态。
+- `DDSCore::create_observer_if_initialized(topic, callback, start_after_sequence)`，按边界创建
+  observer 且不隐式初始化 DDS。
+- 通过 `DDSCore::create_publisher_if_initialized()` 缓存本地 Publisher，再调用
+  `Publisher::publish_and_get_sequence()`；它支持在序列号分配后、消息对 observer
   可见前执行同步回调。
 
 这种设计允许使用 fake local bus 做网关单元测试。
@@ -495,8 +511,10 @@ Adapter 将硬件层 `Timeout` 映射到 DDS 超时接口；硬件超时返回 0
 对停机期间新建但尚未监控的 Topic 重新取快照，不回放停机期历史。
 
 observer 回调通过共享生命周期门控进入 `DomainGateway`。`stop()` 会先关闭门控并等待
-在途回调退出，再停止网关线程；`start()` 可重新打开门控并复用已有 Topic 观察订阅，
-不会重复订阅或在停止后继续外发。
+在途回调退出，再停止并 join 网关线程，随后调用 `reset_subscriptions()` 释放本次会话的
+全部 observer，并清空 Topic 监控和启动边界。下一次 `start()` 会先清理旧门和旧
+observer，再按新快照重建订阅；只有运行中的重复 `start()` 才直接返回且不重建会话。
+Publisher 缓存不随 `stop()` 清空，旧 epoch Publisher 会在后续发布时因 inactive 被替换。
 
 `GatewayEnvelope` 固定头长 54 字节，包含：
 
@@ -537,8 +555,8 @@ observer 回调通过共享生命周期门控进入 `DomainGateway`。`stop()` �
 - 原始结构体 payload 没有序列化和 schema 演进；跨程序必须保证 ABI、大小端和版本一致。
 - 公共共享库 ABI 主版本为 2，ABI v1 客户端必须重新编译、重新链接。
 - `DDSCore` 的进程内 Topic/RingBuffer 映射由 mutex 保护，同 Topic 的并发实体创建只会
-  构造一个 RingBuffer 实例；`Gateway`、observer 和其他实体仍必须在
-  `DDSCore::shutdown()` 前析构。
+  构造一个 RingBuffer 实例。实体可在 `shutdown()` 后安全收尾析构，但旧 epoch 的本地
+  资源会保留到最后一个实体或写槽释放；网关仍应先 `stop()` 以尽早释放 observer。
 - 网关不分片，序列化后的信封超过端点 MTU 时直接发送失败。
 
 ## 11. 测试对应关系

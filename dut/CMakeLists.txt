@@ -127,6 +127,7 @@ set(DDS_PUBLIC_HEADERS
     src/MB_DDF/DDS/ProcessSharedSync.h
     src/MB_DDF/DDS/Publisher.h
     src/MB_DDF/DDS/RingBuffer.h
+    src/MB_DDF/DDS/RuntimeState.h
     src/MB_DDF/DDS/SemaphoreGuard.h
     src/MB_DDF/DDS/SharedMemory.h
     src/MB_DDF/DDS/Subscriber.h

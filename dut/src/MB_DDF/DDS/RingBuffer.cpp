@@ -706,7 +706,7 @@ SubscriberState* RingBuffer::find_subscriber(uint64_t subscriber_id) const {
 }
 
 Message* RingBuffer::read_message_at(size_t pos) const {
-    if (pos >= capacity_) {
+    if (pos >= capacity_ || capacity_ - pos < sizeof(MessageHeader)) {
         return nullptr;
     }
     
@@ -717,18 +717,25 @@ bool RingBuffer::validate_message(const Message* message) const {
     if (message == nullptr) {
         return false;
     }
-    
-    // 验证Message
-    if (!message->is_valid(enable_checksum_)) {
+
+    const auto data_begin = reinterpret_cast<uintptr_t>(data_);
+    const auto message_begin = reinterpret_cast<uintptr_t>(message);
+    if (message_begin < data_begin) {
         return false;
     }
-    
-    // 验证数据大小合理性
-    if (message->header.data_size > capacity_) {
+
+    const size_t pos = static_cast<size_t>(message_begin - data_begin);
+    if (pos >= capacity_ || capacity_ - pos < sizeof(MessageHeader)) {
         return false;
     }
-    
-    return true;
+
+    const size_t remaining_payload = capacity_ - pos - sizeof(MessageHeader);
+    if (message->header.magic != MessageHeader::MAGIC_NUMBER ||
+        message->header.data_size > remaining_payload) {
+        return false;
+    }
+
+    return message->is_valid(enable_checksum_);
 }
 
 bool RingBuffer::find_next_valid_message(size_t start_pos, size_t& out_pos) const {

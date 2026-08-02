@@ -508,6 +508,113 @@ TEST(RingBufferProcessLifecycleTest, UnregisterOnlyClearsCallingProcessSlotForDu
     EXPECT_EQ(munmap(mapping, kMappingSize), 0);
 }
 
+TEST(RingBufferBoundaryTest, LatestSubscriberSkipsShortTailGapAfterWrap) {
+    const pid_t child = fork();
+    ASSERT_GE(child, 0);
+
+    if (child == 0) {
+        const long page_size_value = sysconf(_SC_PAGESIZE);
+        if (page_size_value <= 0) {
+            _exit(10);
+        }
+
+        const size_t page_size = static_cast<size_t>(page_size_value);
+        const size_t minimum_buffer_size = 64U * 1024U;
+        const size_t buffer_size =
+            ((minimum_buffer_size + page_size - 1U) / page_size) * page_size;
+        const size_t mapping_size = buffer_size + page_size;
+        void* mapping = mmap(nullptr,
+                             mapping_size,
+                             PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS,
+                             -1,
+                             0);
+        if (mapping == MAP_FAILED) {
+            _exit(11);
+        }
+
+        auto* guard_page = static_cast<uint8_t*>(mapping) + buffer_size;
+        if (mprotect(guard_page, page_size, PROT_NONE) != 0) {
+            _exit(12);
+        }
+
+        sem_t sem;
+        if (sem_init(&sem, 0, 1) != 0) {
+            _exit(13);
+        }
+
+        int result = 0;
+        {
+            RingBuffer ring_buffer(mapping, buffer_size, &sem, true);
+            const size_t capacity = ring_buffer.available_space();
+            if (capacity <= sizeof(MessageHeader) + 8U) {
+                result = 14;
+            } else {
+                std::vector<uint8_t> full_payload(
+                    capacity - sizeof(MessageHeader), 0x5AU);
+                const uint32_t stale_magic = MessageHeader::MAGIC_NUMBER;
+                std::memcpy(full_payload.data() + full_payload.size() - 8U,
+                            &stale_magic,
+                            sizeof(stale_magic));
+
+                if (!ring_buffer.publish_message(
+                        full_payload.data(), full_payload.size())) {
+                    result = 15;
+                }
+
+                std::vector<uint8_t> leave_short_tail(
+                    capacity - sizeof(MessageHeader) - 8U, 0xA5U);
+                if (result == 0 &&
+                    !ring_buffer.publish_message(
+                        leave_short_tail.data(), leave_short_tail.size())) {
+                    result = 16;
+                }
+
+                SubscriberState* subscriber = nullptr;
+                if (result == 0) {
+                    subscriber = ring_buffer.register_subscriber(
+                        7001U, "latest_tail_boundary", true);
+                    if (subscriber == nullptr) {
+                        result = 17;
+                    }
+                }
+
+                const uint8_t expected_payload = 0x3CU;
+                if (result == 0 &&
+                    !ring_buffer.publish_message(
+                        &expected_payload, sizeof(expected_payload))) {
+                    result = 18;
+                }
+
+                Message* message = nullptr;
+                if (result == 0 &&
+                    (!ring_buffer.read_next(subscriber, message) ||
+                     message == nullptr ||
+                     message->msg_data_size() != sizeof(expected_payload) ||
+                     *static_cast<const uint8_t*>(message->get_data()) !=
+                         expected_payload)) {
+                    result = 19;
+                }
+
+                if (subscriber != nullptr) {
+                    ring_buffer.unregister_subscriber(subscriber);
+                }
+            }
+        }
+
+        sem_destroy(&sem);
+        munmap(mapping, mapping_size);
+        _exit(result);
+    }
+
+    int status = 0;
+    ASSERT_EQ(waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFEXITED(status))
+        << "boundary child terminated by signal " << WTERMSIG(status);
+    EXPECT_EQ(WEXITSTATUS(status), 0)
+        << "boundary child returned diagnostic code " << WEXITSTATUS(status);
+}
+
 // ==============================
 // 多线程压力测试
 // ==============================

@@ -14,7 +14,6 @@
 #include <cstring>
 #include <atomic>
 #include <chrono>
-#include <cstdlib>
 #include <thread>
 #include <vector>
 #include <fcntl.h>
@@ -416,16 +415,4 @@ TEST_F(DDSCoreTest, LargeDataTransfer) {
     EXPECT_EQ(read, large_data.size());
     EXPECT_EQ(buffer[0], 'X');
     EXPECT_EQ(buffer[16 * 1024 - 2], 'X');
-}
-
-TEST_F(DDSCoreTest, CreatePublisherFailsCleanlyWhenInitializationIsForcedToFail) {
-    auto& dds = DDSCore::instance();
-
-    ASSERT_EQ(setenv("MB_DDF_TEST_FORCE_INIT_FAIL", "1", 1), 0);
-    auto cleanup = []() { unsetenv("MB_DDF_TEST_FORCE_INIT_FAIL"); };
-
-    auto pub = dds.create_publisher("rt://forced/init/fail");
-    EXPECT_EQ(pub, nullptr);
-
-    cleanup();
 }

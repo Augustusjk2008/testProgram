@@ -542,33 +542,30 @@ function Configure-And-Build-Library(
         return
     }
 
-    # Find and display library files
-    $libCandidates = @(
-        (Join-Path $buildDir ("lib" + $ProjectName + ".a")),
-        (Join-Path $buildDir ("lib" + $ProjectName + ".so")),
-        (Join-Path (Join-Path $buildDir "lib") ("lib" + $ProjectName + ".a")),
-        (Join-Path (Join-Path $buildDir "lib") ("lib" + $ProjectName + ".so")),
-        (Join-Path (Join-Path $buildDir $config) ("lib" + $ProjectName + ".a")),
-        (Join-Path (Join-Path $buildDir $config) ("lib" + $ProjectName + ".so"))
+    # Install the static archive plus every shared-library link/version. Copy-Item
+    # may dereference Linux symlinks on Windows, so each name is copied explicitly.
+    $libraryBaseName = "lib" + $ProjectName
+    $librarySearchDirs = @(
+        $buildDir,
+        (Join-Path $buildDir "lib"),
+        (Join-Path $buildDir $config)
     )
-
     $foundLibs = @()
-    foreach ($candidate in $libCandidates) {
-        if ($candidate -and (Test-Path $candidate)) {
-            $foundLibs += $candidate
+    foreach ($librarySearchDir in $librarySearchDirs) {
+        if (-not (Test-Path $librarySearchDir)) {
+            continue
         }
-    }
 
-    if ($foundLibs.Count -eq 0) {
-        $found = Get-ChildItem -Path $buildDir -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { -not $_.PSIsContainer -and ($_.Name -like "*.a" -or $_.Name -like "*.so") } |
-            Select-Object -First 10
-        if ($found) {
-            foreach ($lib in $found) {
-                $foundLibs += $lib.FullName
+        $matchedLibs = Get-ChildItem -LiteralPath $librarySearchDir -Force -ErrorAction SilentlyContinue |
+            Where-Object {
+                -not $_.PSIsContainer -and
+                ($_.Name -eq ($libraryBaseName + ".a") -or $_.Name -like ($libraryBaseName + ".so*"))
             }
+        foreach ($lib in $matchedLibs) {
+            $foundLibs += $lib.FullName
         }
     }
+    $foundLibs = @($foundLibs | Select-Object -Unique)
 
     if ($foundLibs.Count -gt 0) {
         Write-Host ""
@@ -623,9 +620,11 @@ function Configure-And-Build-Library(
 
     # Display installed files
     if (Test-Path $installLibsDir) {
-        $installedLibs = @(Get-ChildItem -Path $installLibsDir -Filter "*.a" -ErrorAction SilentlyContinue)
-        $installedSos = @(Get-ChildItem -Path $installLibsDir -Filter "*.so" -ErrorAction SilentlyContinue)
-        $allLibs = $installedLibs + $installedSos
+        $allLibs = @(Get-ChildItem -LiteralPath $installLibsDir -Force -ErrorAction SilentlyContinue |
+            Where-Object {
+                -not $_.PSIsContainer -and
+                ($_.Name -eq ($libraryBaseName + ".a") -or $_.Name -like ($libraryBaseName + ".so*"))
+            })
         if ($allLibs.Count -gt 0) {
             Write-Host ""
             Write-Host "Installed libraries:"
