@@ -99,7 +99,8 @@ TEST_F(DDSCoreTest, InitializeFailsOnVersionMismatch) {
     ASSERT_NE(addr, MAP_FAILED);
     auto* header = static_cast<TopicRegistryHeader*>(addr);
     header->magic_number = 0x4C444453;
-    header->version = 0x00000001;
+    EXPECT_EQ(DDSCore::VERSION, 0x00005002u);
+    header->version = 0x00005001;
     munmap(addr, shm_size);
     close(fd);
 
@@ -185,8 +186,9 @@ TEST_F(DDSCoreTest, DataWriteAndRead) {
 
     // 发布数据
     const char* msg = "Hello DDSCore!";
-    size_t written = dds.data_write(pub, msg, strlen(msg) + 1);
-    EXPECT_GT(written, 0);
+    const size_t message_size = strlen(msg) + 1;
+    size_t written = dds.data_write(pub, msg, message_size);
+    EXPECT_EQ(written, message_size);
 
     // 读取数据
     char buffer[256] = {0};

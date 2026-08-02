@@ -47,7 +47,7 @@ DDSCore
 | `Publisher` | 普通发布、零拷贝发布、外部端点发送 |
 | `Subscriber` | 轮询、阻塞读、回调线程、外部端点接收 |
 | `Message` | 消息头、时间戳、CRC32 和有效性检查 |
-| `ProcessSharedSync` | 进程共享 robust mutex 和 condition variable |
+| `ProcessSharedSync` | Linux 使用进程共享 robust mutex/condition；SylixOS 使用 named semaphore 与序列轮询 |
 | `ExternalEndpoint` | 外部字节链路的最小收发接口 |
 | `DomainGateway` | Topic 扫描、跨域封装、TTL、去重与回灌抑制 |
 
@@ -60,7 +60,7 @@ DDSCore
 ```text
 共享内存：/MB_DDF_V2_SHM
 信号量：  /MB_DDF_V2_SHM_sem
-版本：    0x00005001
+版本：    0x00005002
 默认大小：128 MiB
 最小大小：1 MiB
 ```
@@ -84,7 +84,7 @@ DDSCore::initialize
      -> shm_open(O_CREAT | O_EXCL)
         ├─ 新对象：ftruncate + 映射后清零
         └─ 已存在：检查现有大小必须一致
-     -> mmap(MAP_SHARED | MAP_POPULATE)
+     -> mmap（Linux 使用 MAP_SHARED | MAP_POPULATE，SylixOS 使用 MAP_SHARED）
      -> 释放初始化文件锁
      -> sem_open("/MB_DDF_V2_SHM_sem")
   -> TopicRegistry
@@ -98,7 +98,13 @@ named semaphore 主要保护：
 - TopicRegistry 首次初始化和 Topic 注册。
 - RingBuffer 首次初始化。
 - 订阅者槽位注册/注销。
-- 进程共享同步对象异常后的重建。
+- SylixOS 下的 RingBuffer 写入串行化。
+- Linux 进程共享同步对象异常后的重建。
+
+打开已存在的 named semaphore 时不会根据当前值推断持有者死亡，也不会在固定超时后
+强制 `sem_post`。这避免把合法长临界区误判为死锁；代价是进程若持有该 semaphore 时
+异常退出，需要停止所有 DDS 使用者后清理共享内存和对应 named semaphore，不能在线
+自动恢复。
 
 ### 3.3 总体内存布局
 
@@ -124,9 +130,9 @@ named semaphore 主要保护：
 
 共享内存版本和动态库 ABI 是两套独立的兼容门禁：
 
-- `DDSCore::VERSION` 标识共享内存布局及字段语义。`SubscriberState` 启用
-  `owner_pid` 后版本已经升级，旧共享内存必须在所有相关进程退出后清理，不能由新旧
-  程序混用。
+- `DDSCore::VERSION` 标识共享内存布局、同步方式及字段语义。当前版本为
+  `0x00005002`；`0x00005001` 及更早共享内存必须在所有相关进程退出后清理，不能由
+  新旧程序混用，也不存在自动迁移路径。
 - `libMB_DDF_v2` 当前项目版本为 2.0.0、公共 ABI 主版本为 2，构建产物使用
   `SOVERSION 2`。ABI v1 客户端必须重新编译、重新链接，不能继续装载 ABI v2
   动态库。
@@ -165,9 +171,7 @@ ring_buffer_size
 - 名称必须符合 `domain://address`。
 - 域和地址都不能为空。
 - 元数据只能保存 63 个字符和结尾 `\0`。
-
-名称校验当前没有显式拒绝超过 63 个字符的输入，注册时会截断。因此业务层应把
-Topic 名限制在 63 字符以内，避免名称截断和潜在冲突。
+- 名称长度不得超过 63 字符，也不得包含嵌入的 `\0`；不合法输入直接拒绝，不会截断。
 
 ### 4.3 注册流程
 
@@ -249,7 +253,7 @@ MessageHeader + payload + 8 字节对齐填充
 ```text
 Publisher::publish
   -> RingBuffer::publish_message
-     -> 获取 write_mutex
+     -> 获取写锁（Linux 为 write_mutex，SylixOS 为全局 named semaphore）
      -> reserve
      -> memcpy payload
      -> commit
@@ -259,8 +263,9 @@ Publisher::publish
         -> notify_subscribers
 ```
 
-`write_mutex` 是 `PTHREAD_PROCESS_SHARED` 的 robust mutex。因此同一 Topic 的
-多个进程和多个发布者会被串行化，提交顺序就是序列号顺序。
+Linux 下 `write_mutex` 是 `PTHREAD_PROCESS_SHARED` 的 robust mutex；SylixOS 的 pthread
+同步对象不能满足创建进程退出后的跨进程寿命要求，因此写锁改用全局 named semaphore。
+两种平台都会串行化同一 Topic 的多个进程和多个发布者，提交顺序就是序列号顺序。
 
 写入点到达尾部且剩余连续空间不足时，从数据区起点重新写入。RingBuffer
 始终允许覆盖：
@@ -341,7 +346,7 @@ observer callback，`poll/read` 会返回 0。
 
 ### 5.7 通知机制
 
-每个 RingBuffer 有独立的：
+Linux 下每个 RingBuffer 有独立的：
 
 - robust `write_mutex`
 - robust `notify_mutex`
@@ -349,7 +354,7 @@ observer callback，`poll/read` 会返回 0。
 - 通知代数 `generation`
 - 等待者计数 `waiter_count`
 
-提交消息后：
+Linux 提交消息后：
 
 1. 增加 `notification_count` 和 `generation`。
 2. 没有等待者时直接返回。
@@ -361,6 +366,11 @@ observer callback，`poll/read` 会返回 0。
 robust mutex 所有者异常退出时，后续进程会尝试 `pthread_mutex_consistent` 恢复。
 同步状态魔数或 mutex 探测失败时，RingBuffer 会在 named semaphore 保护下重建
 同步对象。
+
+SylixOS 保留相同的 `RingSyncState` 字节布局，但不初始化或使用其中的 pthread mutex/cond：
+写入通过全局 named semaphore 串行化，等待新消息时每 1 ms 检查序列号，发布只更新通知
+计数而不广播 condition。SylixOS 禁止运行期重建这组同步对象。该分支与 Linux 的等待、
+故障恢复和性能特征不同，不能用 Linux 回归结果替代 SylixOS 验证。
 
 ## 6. DDSCore 生命周期与对象所有权
 
@@ -425,6 +435,8 @@ Publisher/Subscriber/WritableMessage
 1. 共享内存模式：持有 Topic 元数据和 RingBuffer 指针。
 2. 外部端点模式：持有 `ExternalEndpointRef`，`publish()` 直接调用 `send()`。
 
+兼容入口 `DDSCore::data_write()` 成功时返回完整请求字节数，失败时返回 0。
+
 外部端点模式没有 TopicRegistry/RingBuffer，因此：
 
 - `get_topic_id()` 返回 0。
@@ -471,6 +483,10 @@ auto reader = dds.create_reader("external://rx", endpoint);
 Adapter 将硬件层 `Timeout` 映射到 DDS 超时接口；硬件超时返回 0，其他错误返回
 `-1`。
 
+`ExternalEndpoint` 必须保持完整帧边界：`send()` 不接受超过 `mtu()` 的帧，`receive()`
+正返回值必须位于 `[1, capacity]`，流式链路必须在 Adapter 内完成组帧。`mtu()` 必须稳定、
+非零且不超过 16 MiB；带超时接收必须有界返回，并允许与同端点的串行发送并发执行。
+
 ## 9. 跨域网关
 
 ### 9.1 组成
@@ -486,6 +502,10 @@ Adapter 将硬件层 `Timeout` 映射到 DDS 超时接口；硬件超时返回 0
   可见前执行同步回调。
 
 这种设计允许使用 fake local bus 做网关单元测试。
+
+`DomainGatewayConfig::domain_id` 必须非零，否则 `start()` 失败。添加端点时会拒绝零 MTU、
+超过 16 MiB 或超出 `int32_t` 接收返回范围的 MTU；接收阶段若端点报告的字节数大于提供的
+buffer capacity，该帧直接丢弃，不进入信封解析或本地回灌。
 
 ### 9.2 本地消息外发
 
@@ -543,9 +563,10 @@ Publisher 缓存不随 `stop()` 清空，旧 epoch Publisher 会在后续发布�
 
 - 共享内存对象不会自动删除，升级版本、改变大小或测试异常退出后可能需要手工清理。
 - Topic 和单 Topic RingBuffer 大小固定，不支持删除、扩容或压缩。
-- Topic 名超过 63 字符会被截断，调用方必须主动限制。
+- Topic 名超过 63 字符或包含嵌入 `\0` 时直接拒绝，不会截断。
 - RingBuffer 是覆盖式实时缓冲区，不提供消息持久化和“至少一次”交付。
-- 同 Topic 多发布者由写 mutex 串行化，不是完全无锁实现。
+- 同 Topic 多发布者由平台写锁串行化（Linux 为 robust mutex，SylixOS 为 named semaphore），
+  不是完全无锁实现。
 - 零拷贝写槽和 `publish_fill` 回调持有跨进程写锁，不得执行阻塞 I/O。
 - callback/observer 和手工 read 不能混用。
 - `GatewayLocalBus::publish_topic()` 的序列号回调必须同步、短时、不可抛异常，并在消息
@@ -557,7 +578,8 @@ Publisher 缓存不随 `stop()` 清空，旧 epoch Publisher 会在后续发布�
 - `DDSCore` 的进程内 Topic/RingBuffer 映射由 mutex 保护，同 Topic 的并发实体创建只会
   构造一个 RingBuffer 实例。实体可在 `shutdown()` 后安全收尾析构，但旧 epoch 的本地
   资源会保留到最后一个实体或写槽释放；网关仍应先 `stop()` 以尽早释放 observer。
-- 网关不分片，序列化后的信封超过端点 MTU 时直接发送失败。
+- 网关要求非零且不超过 16 MiB 的稳定端点 MTU；不分片，序列化后的信封超过 MTU 时
+  直接发送失败，端点超范围返回也会被拒绝。
 
 ## 11. 测试对应关系
 

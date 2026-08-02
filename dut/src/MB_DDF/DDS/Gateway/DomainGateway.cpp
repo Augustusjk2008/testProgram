@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <exception>
+#include <limits>
 #include <utility>
 
 namespace MB_DDF {
@@ -31,6 +33,16 @@ bool DomainGateway::add_endpoint(const GatewayEndpointConfig& endpoint) {
         LOG_ERROR << "DomainGateway add_endpoint failed, endpoint is null";
         return false;
     }
+    const size_t endpoint_mtu = endpoint.endpoint->mtu();
+    const size_t maximum_mtu = std::min(
+        DOMAIN_GATEWAY_MAX_ENDPOINT_MTU,
+        static_cast<size_t>(std::numeric_limits<int32_t>::max()));
+    if (endpoint_mtu == 0 ||
+        endpoint_mtu > maximum_mtu) {
+        LOG_ERROR << "DomainGateway add_endpoint failed, invalid endpoint mtu: "
+                  << endpoint_mtu << ", maximum=" << maximum_mtu;
+        return false;
+    }
     if (running_.load(std::memory_order_acquire)) {
         LOG_ERROR << "DomainGateway add_endpoint failed, gateway is running";
         return false;
@@ -43,6 +55,10 @@ bool DomainGateway::add_endpoint(const GatewayEndpointConfig& endpoint) {
 
 bool DomainGateway::start() {
     std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex_);
+    if (config_.domain_id == 0) {
+        LOG_ERROR << "DomainGateway start failed, domain_id must be non-zero";
+        return false;
+    }
     // local_bus_是网关访问本地域DDS的唯一入口，缺失时无法扫描、订阅或发布。
     if (!local_bus_) {
         LOG_ERROR << "DomainGateway start failed, local bus is null";
@@ -247,11 +263,25 @@ void DomainGateway::poll_once(size_t ep_slot) {
         return;
     }
 
-    // 使用端点MTU作为接收缓冲区容量；MTU为0表示端点未给出上限，这里至少保留1字节。
+    // MTU 是完整外部帧的非零上限；add_endpoint 已校验，运行期仍防御不稳定实现。
     const size_t mtu = endpoint->config.endpoint->mtu();
-    const size_t capacity = mtu == 0 ? 1 : mtu;
+    const size_t maximum_mtu = std::min(
+        DOMAIN_GATEWAY_MAX_ENDPOINT_MTU,
+        static_cast<size_t>(std::numeric_limits<int32_t>::max()));
+    if (mtu == 0 || mtu > maximum_mtu) {
+        LOG_ERROR << "DomainGateway endpoint reported invalid mtu at receive time: " << mtu;
+        return;
+    }
+    const size_t capacity = mtu;
     if (endpoint->receive_buffer.size() != capacity) {
-        endpoint->receive_buffer.resize(capacity);
+        try {
+            endpoint->receive_buffer.resize(capacity);
+        } catch (const std::exception& e) {
+            LOG_ERROR << "DomainGateway receive buffer allocation failed, endpoint="
+                      << endpoint->config.name << ", mtu=" << mtu
+                      << ", error=" << e.what();
+            return;
+        }
     }
 
     // 接收超时使用10ms，便于stop()设置运行标志后线程能较快退出。
@@ -260,6 +290,12 @@ void DomainGateway::poll_once(size_t ep_slot) {
         endpoint->receive_buffer.size(),
         static_cast<uint32_t>(10000));
     if (received <= 0) {
+        return;
+    }
+    if (static_cast<size_t>(received) > endpoint->receive_buffer.size()) {
+        LOG_ERROR << "DomainGateway endpoint returned more bytes than receive capacity, endpoint="
+                  << endpoint->config.name << ", received=" << received
+                  << ", capacity=" << endpoint->receive_buffer.size();
         return;
     }
 
@@ -463,9 +499,13 @@ bool DomainGateway::send_to_endpoint(EndpointState& endpoint,
         return false;
     }
 
-    // 外部端点声明MTU时，网关不拆包；超长信封直接失败并记录日志。
+    // 网关不拆包；端点必须提供稳定的非零MTU，超长信封直接失败。
     const size_t mtu = endpoint.config.endpoint->mtu();
-    if (mtu != 0 && buffer.size() > mtu) {
+    const size_t maximum_mtu = std::min(
+        DOMAIN_GATEWAY_MAX_ENDPOINT_MTU,
+        static_cast<size_t>(std::numeric_limits<int32_t>::max()));
+    if (mtu == 0 || mtu > maximum_mtu ||
+        buffer.size() > mtu) {
         LOG_ERROR << "DomainGateway envelope exceeds endpoint mtu, endpoint="
                   << endpoint.config.name << ", size=" << buffer.size()
                   << ", mtu=" << mtu;

@@ -30,6 +30,8 @@
 namespace MB_DDF {
 namespace DDS {
 
+inline constexpr size_t DOMAIN_GATEWAY_MAX_ENDPOINT_MTU = 16U * 1024U * 1024U;
+
 /**
  * @brief 单个DDS域网关的运行配置。
  */

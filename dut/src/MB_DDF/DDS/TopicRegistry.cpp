@@ -22,10 +22,19 @@ namespace DDS {
 class DDSCore;
 
 TopicRegistry::TopicRegistry(void* shm_base_addr, size_t shm_size, SharedMemoryManager* shm_manager)
-    : shm_base_addr_(shm_base_addr), shm_size_(shm_size), shm_manager_(shm_manager) {
+    : shm_base_addr_(shm_base_addr), shm_size_(shm_size), shm_manager_(shm_manager),
+      header_(nullptr), metadata_array_(nullptr) {
     
     static const uint32_t MAGIC_NUMBER = 0x4C444453; // "LDDS"
     
+    if (shm_base_addr_ == nullptr || shm_base_addr_ == MAP_FAILED ||
+        shm_size_ < DATA_OFFSET || shm_manager_ == nullptr ||
+        shm_manager_->get_semaphore() == nullptr ||
+        shm_manager_->get_semaphore() == SEM_FAILED) {
+        LOG_ERROR << "TopicRegistry received invalid shared-memory resources";
+        return;
+    }
+
     // 初始化共享内存中的注册表头部
     header_ = static_cast<TopicRegistryHeader*>(shm_base_addr_);
     
@@ -233,8 +242,13 @@ std::vector<TopicMetadata*> TopicRegistry::get_all_topics() const {
 }
 
 bool TopicRegistry::is_valid_topic_name(const std::string& name) {
-    // 检查名称是否为空
-    if (name.empty()) {
+    // 元数据使用固定 64 字节数组保存名称；必须为结尾的 NUL 留出一个字节。
+    if (name.empty() || name.size() >= sizeof(TopicMetadata::topic_name)) {
+        LOG_DEBUG << "Invalid topic name length: " << name.size();
+        return false;
+    }
+    if (name.find('\0') != std::string::npos) {
+        LOG_DEBUG << "Invalid topic name: embedded NUL";
         return false;
     }
     

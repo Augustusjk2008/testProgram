@@ -159,6 +159,36 @@ TEST(SharedMemoryTest, GetSemaphore) {
     shm_unlink(shm_name);
 }
 
+TEST(SharedMemoryTest, OpeningExistingDoesNotResetOwnedSemaphore) {
+    const char* shm_name = "/test_shm_owned_semaphore";
+    const char* sem_name = "/test_shm_owned_semaphore_sem";
+    const size_t shm_size = 64 * 1024;
+
+    shm_unlink(shm_name);
+    sem_unlink(sem_name);
+
+    {
+        SharedMemoryManager owner(shm_name, shm_size);
+        ASSERT_NE(owner.get_address(), nullptr);
+        ASSERT_NE(owner.get_semaphore(), nullptr);
+        ASSERT_NE(owner.get_semaphore(), SEM_FAILED);
+        ASSERT_EQ(sem_wait(owner.get_semaphore()), 0);
+
+        SharedMemoryManager observer(shm_name, shm_size);
+        ASSERT_NE(observer.get_address(), nullptr);
+        ASSERT_NE(observer.get_semaphore(), nullptr);
+        ASSERT_NE(observer.get_semaphore(), SEM_FAILED);
+
+        int value = -1;
+        ASSERT_EQ(sem_getvalue(owner.get_semaphore(), &value), 0);
+        EXPECT_EQ(value, 0);
+        EXPECT_EQ(sem_post(owner.get_semaphore()), 0);
+    }
+
+    shm_unlink(shm_name);
+    sem_unlink(sem_name);
+}
+
 // ==============================
 // 多次创建
 // ==============================

@@ -5,7 +5,7 @@
  * @author Jiangkai
  * 
  * 实现DDSCore（数据分发服务）的主要接口，支持发布者-订阅者模式的消息传递。
- * 基于共享内存和无锁环形缓冲区实现高性能的进程间通信。
+ * 基于共享内存和进程共享同步的环形缓冲区实现进程间通信。
  */
 
 #include "MB_DDF/DDS/DDSCore.h"
@@ -180,7 +180,7 @@ size_t DDSCore::data_write(std::shared_ptr<Publisher> publisher, const void* dat
         LOG_ERROR << "failed to write data, publisher is null";
         return 0;
     }
-    return publisher->write(data, size);
+    return publisher->write(data, size) ? size : 0;
 }
 
 size_t DDSCore::data_read(std::shared_ptr<Subscriber> subscriber, void* data, size_t size) {
@@ -368,7 +368,9 @@ bool DDSCore::initialize_locked(size_t shared_memory_size) {
             MB_DDF_SHARED_MEMORY_NAME, shared_memory_size);
 
         if (!state->shm_manager || !state->shm_manager->get_address() ||
-            state->shm_manager->get_address() == MAP_FAILED) {
+            state->shm_manager->get_address() == MAP_FAILED ||
+            !state->shm_manager->get_semaphore() ||
+            state->shm_manager->get_semaphore() == SEM_FAILED) {
             LOG_ERROR << "Failed to create shared memory manager";
             return false;
         }

@@ -15,8 +15,8 @@ namespace DDS {
 class SemaphoreGuard {
 public:
     explicit SemaphoreGuard(sem_t* sem) : sem_(sem), acquired_(false) {
-        if (sem_ == nullptr) {
-            LOG_ERROR << "SemaphoreGuard construct failed: sem is nullptr";
+        if (sem_ == nullptr || sem_ == SEM_FAILED) {
+            LOG_ERROR << "SemaphoreGuard construct failed: invalid semaphore";
             return;
         }
         int sem_value = -1;

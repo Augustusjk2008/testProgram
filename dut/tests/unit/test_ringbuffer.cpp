@@ -14,6 +14,7 @@
 #include <semaphore.h>
 #include <cstring>
 #include <cstdlib>
+#include <limits>
 #include <vector>
 #include <thread>
 #include <atomic>
@@ -352,6 +353,18 @@ TEST_F(RingBufferTest, Unsubscribe) {
     // 重新注册同名订阅者（新ID）
     auto* sub2 = rb_->register_subscriber(2, "new_sub");
     ASSERT_NE(sub2, nullptr);
+}
+
+TEST_F(RingBufferTest, RejectsNullNonEmptyPayload) {
+    EXPECT_FALSE(rb_->publish_message(nullptr, 1));
+    EXPECT_EQ(rb_->current_sequence(), 0u);
+}
+
+TEST_F(RingBufferTest, RejectsOverflowSizedPayloadBeforeLocking) {
+    const uint8_t byte = 0x5A;
+    EXPECT_FALSE(rb_->publish_message(
+        &byte, std::numeric_limits<size_t>::max()));
+    EXPECT_EQ(rb_->current_sequence(), 0u);
 }
 
 TEST_F(RingBufferTest, SameProcessSubscribersWithSameNameUseIndependentSlots) {

@@ -1,10 +1,10 @@
 /**
  * @file RingBuffer.h
- * @brief 无锁环形缓冲区实现
+ * @brief 进程共享同步环形缓冲区
  * @date 2025-08-03
  * @author Jiangkai
  * 
- * 提供高性能的无锁环形缓冲区实现，支持单生产者多消费者模式。
+ * 提供覆盖式共享内存环形缓冲区，支持多发布者和多订阅者。
  * 基于原子操作和内存屏障确保多进程安全，适用于高频消息传递场景。
  * 直接集成Message结构，避免序列号重复，支持消息损坏检测。
  */
@@ -77,7 +77,7 @@ struct alignas(64) RingHeader {
 
 /**
  * @class RingBuffer
- * @brief 无锁环形缓冲区类，支持单生产者多消费者模式
+ * @brief 使用进程共享同步的覆盖式环形缓冲区
  * 
  * 基于共享内存的环形缓冲区，直接存储Message结构，避免序列号重复。
  * 支持多进程安全访问，订阅者自管理读取进度，提供消息损坏检测功能。
@@ -230,7 +230,7 @@ public:
     void unregister_subscriber(SubscriberState* subscriber);
     
     /**
-     * @brief 等待新消息通知（基于POSIX进程共享条件变量）
+     * @brief 等待新消息（Linux condition；SylixOS 序列轮询）
      * @param subscriber 输入参数，订阅者状态结构体指针，包含读取位置和最后读取序列号
      * @param timeout_ms 超时时间（毫秒），0表示无限等待
      * @return 有新消息返回true，超时返回false

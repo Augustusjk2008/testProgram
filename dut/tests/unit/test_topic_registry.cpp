@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <cstring>
 #include <cstdlib>
+#include <string>
 
 #include "MB_DDF/DDS/TopicRegistry.h"
 #include "MB_DDF/DDS/SharedMemory.h"
@@ -160,6 +161,24 @@ TEST_F(TopicRegistryTest, InvalidTopicNameFormat) {
     EXPECT_FALSE(registry_->is_valid_topic_name("://topic"));    // 空domain
     EXPECT_FALSE(registry_->is_valid_topic_name("domain://"));   // 空path
     EXPECT_FALSE(registry_->is_valid_topic_name("test/topic1")); // 缺少://
+}
+
+TEST_F(TopicRegistryTest, TopicNameLengthBoundary) {
+    const std::string maximum_name = "d://" + std::string(59, 'a');
+    const std::string oversized_name = "d://" + std::string(60, 'b');
+
+    ASSERT_EQ(maximum_name.size(), 63u);
+    ASSERT_EQ(oversized_name.size(), 64u);
+    EXPECT_TRUE(registry_->is_valid_topic_name(maximum_name));
+    EXPECT_FALSE(registry_->is_valid_topic_name(oversized_name));
+    EXPECT_NE(registry_->register_topic(maximum_name, 16 * 1024), nullptr);
+    EXPECT_EQ(registry_->register_topic(oversized_name, 16 * 1024), nullptr);
+}
+
+TEST_F(TopicRegistryTest, RejectsEmbeddedNullInTopicName) {
+    const std::string embedded_null("d\0x://name", 10);
+    EXPECT_FALSE(registry_->is_valid_topic_name(embedded_null));
+    EXPECT_EQ(registry_->register_topic(embedded_null, 16 * 1024), nullptr);
 }
 
 // ==============================

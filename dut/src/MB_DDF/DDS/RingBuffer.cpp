@@ -1,6 +1,6 @@
 /**
  * @file RingBuffer.cpp
- * @brief 无锁环形缓冲区实现
+ * @brief 进程共享同步环形缓冲区实现
  * @date 2025-08-03
  * @author Jiangkai
  */
@@ -118,6 +118,19 @@ RingBuffer::RingBuffer(void* buffer, size_t size, sem_t* sem, bool enable_checks
 bool RingBuffer::initialize_sync_state() {
     new (sync_) RingSyncState();
 
+#if defined(SYLIXOS)
+    // SylixOS accepts PTHREAD_PROCESS_SHARED attributes but its pthread mutex
+    // and condition implementations retain process-owned kernel handles. The
+    // creator exiting invalidates those handles in every remaining process.
+    // Keep the shared layout stable, but use the global named semaphore for
+    // writes and sequence polling for waits instead of initializing handles
+    // that cannot satisfy the required lifetime contract.
+    sync_->clock_kind = static_cast<uint32_t>(Sync::ClockKind::Realtime);
+    sync_->generation.store(0, std::memory_order_release);
+    sync_->waiter_count.store(0, std::memory_order_release);
+    sync_->magic = RingSyncState::MAGIC;
+    return true;
+#else
     Sync::ClockKind clock_kind = Sync::ClockKind::Monotonic;
     if (!Sync::init_process_shared_mutex(sync_->write_mutex, true) ||
         !Sync::init_process_shared_mutex(sync_->notify_mutex, true) ||
@@ -130,14 +143,27 @@ bool RingBuffer::initialize_sync_state() {
     sync_->waiter_count.store(0, std::memory_order_release);
     sync_->magic = RingSyncState::MAGIC;
     return true;
+#endif
 }
 
 bool RingBuffer::sync_state_usable() {
+#if defined(SYLIXOS)
+    return sync_->magic == RingSyncState::MAGIC;
+#else
     return Sync::mutex_is_usable(sync_->write_mutex) &&
            Sync::mutex_is_usable(sync_->notify_mutex);
+#endif
 }
 
 bool RingBuffer::reinitialize_sync_state_guarded(const char* reason) {
+#if defined(SYLIXOS)
+    // Runtime replacement cannot be made safe while other processes may be
+    // publishing or waiting. The SylixOS backend never consumes these pthread
+    // objects, so there is nothing to repair here.
+    LOG_ERROR << "RingBuffer runtime sync reinitialization disabled on SylixOS: "
+              << reason;
+    return false;
+#else
     SemaphoreGuard guard(sem_);
     if (!guard.acquired()) {
         LOG_ERROR << "RingBuffer sync reinit failed, semaphore acquire failed";
@@ -146,22 +172,47 @@ bool RingBuffer::reinitialize_sync_state_guarded(const char* reason) {
 
     LOG_WARN << "RingBuffer sync state invalid, reinitializing: " << reason;
     return initialize_sync_state();
+#endif
 }
 
-RingBuffer::WriteLock::WriteLock(RingBuffer* rb) : rb_(rb), locked_(false) {
+RingBuffer::WriteLock::WriteLock(RingBuffer* rb)
+    : rb_(rb), locked_(false) {
     if (Detail::before_visible_callback_active()) {
         LOG_ERROR << "RingBuffer write rejected during before_visible callback";
         return;
     }
     if (rb_ && rb_->sync_) {
+#if defined(SYLIXOS)
+        if (rb_->sem_ == nullptr || rb_->sem_ == SEM_FAILED) {
+            LOG_ERROR << "RingBuffer write lock has an invalid named semaphore";
+            return;
+        }
+        int rc = 0;
+        do {
+            rc = ::sem_wait(rb_->sem_);
+        } while (rc != 0 && errno == EINTR);
+        if (rc == 0) {
+            locked_ = true;
+        } else {
+            LOG_ERROR << "RingBuffer named semaphore wait failed: " << strerror(errno);
+        }
+#else
         locked_ = Sync::lock_mutex(rb_->sync_->write_mutex);
+#endif
     }
 }
 
 RingBuffer::WriteLock::~WriteLock() {
+#if defined(SYLIXOS)
+    if (locked_ && rb_ && rb_->sem_ != nullptr && rb_->sem_ != SEM_FAILED &&
+        ::sem_post(rb_->sem_) != 0) {
+        LOG_ERROR << "RingBuffer named semaphore post failed: " << strerror(errno);
+    }
+#else
     if (locked_ && rb_ && rb_->sync_) {
         Sync::unlock_mutex(rb_->sync_->write_mutex);
     }
+#endif
 }
 
 RingBuffer::WriteLock RingBuffer::acquire_write_lock() {
@@ -204,8 +255,14 @@ bool RingBuffer::publish_message(
         *out_sequence = 0;
     }
 
-    // 校验请求大小是否合理（需包含消息头）
-    if (size + sizeof(MessageHeader) > capacity_) {
+    if (data == nullptr && size > 0) {
+        LOG_ERROR << "publish_message failed, data is null for a non-empty payload";
+        return false;
+    }
+
+    // 使用减法式边界检查，避免 size + header 在极端输入下回绕。
+    if (capacity_ < sizeof(MessageHeader) ||
+        size > capacity_ - sizeof(MessageHeader)) {
         LOG_ERROR << "publish_message failed, message too large for ring capacity";
         return false;
     }
@@ -589,6 +646,24 @@ bool RingBuffer::wait_for_message(SubscriberState* subscriber, uint32_t timeout_
         return true;
     }
 
+#if defined(SYLIXOS)
+    // SylixOS pthread condition variables are process-owned even when the
+    // process-shared attribute is requested. Polling preserves bounded wait
+    // behavior and remains valid when the Topic creator exits normally.
+    if (timeout_ms == 0) {
+        while (!has_message()) {
+            ::usleep(1000U);
+        }
+        return true;
+    }
+
+    uint32_t waited_ms = 0;
+    while (!has_message() && waited_ms < timeout_ms) {
+        ::usleep(1000U);
+        ++waited_ms;
+    }
+    return has_message();
+#else
     if (sync_->magic != RingSyncState::MAGIC || !sync_state_usable()) {
         reinitialize_sync_state_guarded("wait_for_message startup probe failed");
         return false;
@@ -641,6 +716,7 @@ bool RingBuffer::wait_for_message(SubscriberState* subscriber, uint32_t timeout_
         Sync::unlock_mutex(sync_->notify_mutex);
     }
     return result;
+#endif
 }
 
 bool RingBuffer::empty() const {
@@ -757,6 +833,9 @@ void RingBuffer::notify_subscribers() {
     header_->notification_count.fetch_add(1, std::memory_order_acq_rel);
     sync_->generation.fetch_add(1, std::memory_order_acq_rel);
 
+#if defined(SYLIXOS)
+    return;
+#else
     const uint32_t waiters = sync_->waiter_count.load(std::memory_order_acquire);
     if (waiters == 0) {
         return;
@@ -771,6 +850,7 @@ void RingBuffer::notify_subscribers() {
     if (rc != 0) {
         LOG_ERROR << "pthread_cond_broadcast failed: " << strerror(rc);
     }
+#endif
 }
 
 size_t RingBuffer::calculate_message_total_size(size_t data_size) {
@@ -809,7 +889,8 @@ RingBuffer::ReserveToken RingBuffer::reserve(size_t max_size, size_t alignment) 
         LOG_ERROR << "reserve rejected during before_visible callback";
         return token;
     }
-    if (max_size + sizeof(MessageHeader) > capacity_) {
+    if (capacity_ < sizeof(MessageHeader) ||
+        max_size > capacity_ - sizeof(MessageHeader)) {
         LOG_ERROR << "reserve failed, requested size too large";
         return token; // invalid
     }

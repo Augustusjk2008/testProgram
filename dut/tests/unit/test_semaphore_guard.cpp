@@ -58,6 +58,11 @@ TEST(SemaphoreGuardTest, NullSemaphore) {
     // 应该安全析构，不崩溃
 }
 
+TEST(SemaphoreGuardTest, FailedSemaphoreHandle) {
+    SemaphoreGuard guard(SEM_FAILED);
+    EXPECT_FALSE(guard.acquired());
+}
+
 // ==============================
 // 移动语义
 // ==============================

@@ -16,7 +16,10 @@ bool init_process_shared_mutex(pthread_mutex_t& mutex, bool robust) {
 
     bool ok = pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED) == 0;
 #if defined(SYLIXOS)
-    // SylixOS provides process-shared mutexes, but not the POSIX robust-mutex API.
+    // RingBuffer does not use SylixOS pthread mutexes for cross-process
+    // synchronization: the BSP ignores the process-shared lifetime contract.
+    // Keep this helper compatible for process-local callers; robust APIs are
+    // unavailable on this platform.
     (void)robust;
 #else
     if (ok && robust) {

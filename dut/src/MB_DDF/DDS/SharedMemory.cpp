@@ -199,69 +199,6 @@ bool SharedMemoryManager::create_or_open_semaphore() {
         return false;
     }
 
-    // 检测信号量状态并处理潜在死锁
-    int sem_value;
-    if (sem_getvalue(shm_sem_, &sem_value) == -1) {
-        LOG_ERROR << "sem_getvalue failed: " << strerror(errno);
-        return false;
-    }
-
-    // 如果信号量被锁定（值为0），检查是否死锁
-    if (sem_value == 0) {
-        // 使用文件锁确保恢复操作的原子性
-        std::string lock_path = "/tmp/" + sem_name + ".lock";
-        int lock_fd = open(lock_path.c_str(), O_CREAT | O_RDWR, 0666);
-        if (lock_fd == -1) {
-            LOG_ERROR << "Failed to create lock file: " << strerror(errno);
-            return false;
-        }
-
-        // 获取独占锁，防止多个进程同时执行恢复操作
-        if (flock(lock_fd, LOCK_EX) == -1) {
-            LOG_ERROR << "Failed to acquire file lock: " << strerror(errno);
-            close(lock_fd);
-            return false;
-        }
-
-        // 再次检查信号量状态（可能已被其他进程恢复）
-        sem_getvalue(shm_sem_, &sem_value);
-        if (sem_value == 0) {
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_nsec += 100 * 1000000; // 100ms超时
-            
-            // 处理纳秒溢出
-            if (ts.tv_nsec >= 1000000000) {
-                ts.tv_sec += 1;
-                ts.tv_nsec -= 1000000000;
-            }
-
-            // 尝试带超时的等待
-            if (sem_timedwait(shm_sem_, &ts) == -1) {
-                if (errno == ETIMEDOUT) {
-                    LOG_WARN << "Semaphore appears deadlocked. Resetting...";
-                    
-                    // 强制释放信号量
-                    if (sem_post(shm_sem_) == -1) {
-                        LOG_ERROR << "Failed to reset semaphore: " << strerror(errno);
-                    } else {
-                        LOG_INFO << "Semaphore reset successfully";
-                    }
-                } else {
-                    LOG_ERROR << "sem_timedwait error: " << strerror(errno);
-                }
-            } else {
-                // 成功获取信号量，立即释放
-                sem_post(shm_sem_);
-            }
-        }
-
-        // 释放文件锁并清理
-        flock(lock_fd, LOCK_UN);
-        close(lock_fd);
-        unlink(lock_path.c_str());
-    }
-
     LOG_DEBUG << "Semaphore \"" << sem_name << "\" created or opened";
     return true;
 }

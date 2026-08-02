@@ -5,7 +5,7 @@
  * @author Jiangkai
  * 
  * 提供DDSCore（数据分发服务）的主要接口，支持发布者-订阅者模式的消息传递。
- * 基于共享内存和无锁环形缓冲区实现高性能的进程间通信。
+ * 基于共享内存和进程共享同步的环形缓冲区实现进程间通信。
  */
 
 #pragma once
@@ -53,7 +53,7 @@ public:
     static DDSCore& instance();
 
     // 版本号，用于共享内存布局升级
-    static const uint32_t VERSION = 0x00005001;
+    static const uint32_t VERSION = 0x00005002;
 
     /**
      * @brief 创建指定Topic的发布者

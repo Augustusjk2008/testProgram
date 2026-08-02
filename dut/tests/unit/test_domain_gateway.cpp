@@ -198,7 +198,9 @@ public:
         if (copy_size > 0) {
             std::memcpy(data, frame.data(), copy_size);
         }
-        return static_cast<int32_t>(copy_size);
+        return override_receive_result
+            ? receive_result
+            : static_cast<int32_t>(copy_size);
     }
 
     int32_t receive(uint8_t* data, size_t capacity, uint32_t timeout_us) override {
@@ -249,6 +251,8 @@ public:
 
     bool send_ok{true};
     size_t mtu_value{4096};
+    bool override_receive_result{false};
+    int32_t receive_result{0};
     std::weak_ptr<FakeEndpoint> peer_endpoint;
 
 private:
@@ -314,6 +318,52 @@ bool wait_for_sent_count(const std::shared_ptr<FakeEndpoint>& endpoint,
 }
 
 } // namespace
+
+TEST(DomainGatewayTest, RejectsInvalidEndpointMtu) {
+    auto bus = std::make_shared<FakeLocalBus>(std::vector<LocalTopicInfo>{});
+    DomainGateway gateway(config(1, 101), bus);
+
+    GatewayEndpointConfig endpoint_config;
+    endpoint_config.name = "invalid-mtu";
+    endpoint_config.endpoint = std::make_shared<FakeEndpoint>();
+
+    auto endpoint = std::static_pointer_cast<FakeEndpoint>(endpoint_config.endpoint);
+    endpoint->mtu_value = 0;
+    EXPECT_FALSE(gateway.add_endpoint(endpoint_config));
+
+    endpoint->mtu_value = DOMAIN_GATEWAY_MAX_ENDPOINT_MTU + 1;
+    EXPECT_FALSE(gateway.add_endpoint(endpoint_config));
+}
+
+TEST(DomainGatewayTest, StartRejectsZeroDomainId) {
+    auto bus = std::make_shared<FakeLocalBus>(std::vector<LocalTopicInfo>{});
+    DomainGateway gateway(config(0, 101), bus);
+    EXPECT_FALSE(gateway.start());
+}
+
+TEST(DomainGatewayTest, RejectsReceiveResultLargerThanEndpointMtu) {
+    auto bus = std::make_shared<FakeLocalBus>(std::vector<LocalTopicInfo>{});
+    DomainGateway gateway(config(1, 101), bus);
+    auto endpoint = std::make_shared<FakeEndpoint>();
+
+    GatewayEnvelope envelope = make_remote_envelope(
+        2, 2, 202, 1, 1, "x", {});
+    const auto frame = serialize_gateway_envelope(envelope);
+    ASSERT_GT(frame.size(), sizeof(GatewayEnvelopeHeader));
+
+    endpoint->mtu_value = sizeof(GatewayEnvelopeHeader);
+    endpoint->push_rx(frame);
+    endpoint->override_receive_result = true;
+    endpoint->receive_result = static_cast<int32_t>(frame.size());
+
+    GatewayEndpointConfig endpoint_config;
+    endpoint_config.name = "oversized-receive";
+    endpoint_config.endpoint = endpoint;
+    ASSERT_TRUE(gateway.add_endpoint(endpoint_config));
+
+    gateway.poll_once(0);
+    EXPECT_TRUE(bus->published.empty());
+}
 
 TEST(DomainGatewayTest, ScanTopicsSubscribesNormalTopicsOnly) {
     auto bus = std::make_shared<FakeLocalBus>(std::vector<LocalTopicInfo>{
