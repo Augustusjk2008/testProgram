@@ -27,7 +27,7 @@
       "id": "start_web",
       "label": "启动 Web",
       "icon": "Terminal",
-      "windowsCommand": "start \"H:\\WorkSpace\\QtWorkspace\\testProgram\\front\\dist\\index.html\"; .\\hwtest.ps1 -Ui web -WebPort 18765 -Control CONTROL_SERIAL -Port COM3",
+      "windowsCommand": "start \"H:\\WorkSpace\\QtWorkspace\\testProgram\\front\\dist\\index.html\"; .\\hwtest.ps1 -Ui web -WebPort 18765",
       "linuxCommand": "",
       "macosCommand": "",
       "cwd": ".",

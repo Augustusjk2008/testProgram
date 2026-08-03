@@ -66,6 +66,7 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 set(TARGET_NAME "${PROJECT_NAME}")
 
 option(BUILD_LIBRARY "Build library instead of executable" OFF)
+option(BUILD_SOURCE_DEBUG "Recursively build MB_DDF, MB_DDF_DEBUG, and MB_DDF_HW for source debugging" OFF)
 option(BUILD_HARDWARE_LAYER "Build MB_DDF hardware layer" OFF)
 option(BUILD_HW_DDS_ADAPTER "Build DDS adapter for MB_DDF_HW" ON)
 option(ENABLE_TESTS "Enable test build (requires Google Test)" OFF)
@@ -91,12 +92,25 @@ if(NOT MB_DDF_APP_MODE IN_LIST _valid_app_modes)
 endif()
 
 # Executable images own their complete hardware composition. Library builds remain DDS-only.
+if(BUILD_SOURCE_DEBUG AND BUILD_LIBRARY)
+    message(FATAL_ERROR "BUILD_SOURCE_DEBUG cannot be combined with BUILD_LIBRARY.")
+endif()
+if(BUILD_SOURCE_DEBUG AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message(FATAL_ERROR "BUILD_SOURCE_DEBUG is a Debug-only composition.")
+endif()
 if(NOT BUILD_LIBRARY)
-    set(BUILD_HARDWARE_LAYER ON CACHE BOOL "Build MB_DDF hardware layer" FORCE)
-    if(MB_DDF_APP_MODE STREQUAL "DEMO" OR ENABLE_TESTS)
-        set(BUILD_HW_DDS_ADAPTER ON CACHE BOOL "Build DDS adapter for MB_DDF_HW" FORCE)
-    else()
+    if(BUILD_SOURCE_DEBUG)
+        # Every MB_DDF_HW implementation is compiled directly into the debug
+        # executable below, so do not also add/link the normal hardware targets.
+        set(BUILD_HARDWARE_LAYER OFF CACHE BOOL "Build MB_DDF hardware layer" FORCE)
         set(BUILD_HW_DDS_ADAPTER OFF CACHE BOOL "Build DDS adapter for MB_DDF_HW" FORCE)
+    else()
+        set(BUILD_HARDWARE_LAYER ON CACHE BOOL "Build MB_DDF hardware layer" FORCE)
+        if(MB_DDF_APP_MODE STREQUAL "DEMO" OR ENABLE_TESTS)
+            set(BUILD_HW_DDS_ADAPTER ON CACHE BOOL "Build DDS adapter for MB_DDF_HW" FORCE)
+        else()
+            set(BUILD_HW_DDS_ADAPTER OFF CACHE BOOL "Build DDS adapter for MB_DDF_HW" FORCE)
+        endif()
     endif()
 endif()
 
@@ -219,13 +233,62 @@ if(BUILD_LIBRARY)
     )
     configure_dds_target(${TARGET_NAME}_shared PUBLIC)
 else()
-    set(APP_SOURCES src/main.cpp)
-    if(MB_DDF_APP_MODE STREQUAL "ECHO")
-        list(APPEND APP_SOURCES src/MB_DDF_HW_Test/ComEchoRunner.cpp)
-    elseif(MB_DDF_APP_MODE STREQUAL "HW_TEST")
-        list(APPEND APP_SOURCES ${DDS_CORE_SOURCES} ${HW_TEST_SOURCES})
-    elseif(MB_DDF_APP_MODE STREQUAL "DEMO")
-        list(APPEND APP_SOURCES ${DDS_CORE_SOURCES} ${DDS_DEMO_SOURCES})
+    if(BUILD_SOURCE_DEBUG)
+        # This opt-in target deliberately follows newly added C++ files. Normal
+        # product/library images keep using the explicit source lists above.
+        file(GLOB_RECURSE SOURCE_DEBUG_FILES
+            LIST_DIRECTORIES false
+            CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF/*.cc"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF/*.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF/*.cxx"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF/*.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF/*.hh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF/*.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF/*.hxx"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF/*.inl"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF/*.ipp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF/*.tpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_DEBUG/*.cc"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_DEBUG/*.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_DEBUG/*.cxx"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_DEBUG/*.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_DEBUG/*.hh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_DEBUG/*.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_DEBUG/*.hxx"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_DEBUG/*.inl"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_DEBUG/*.ipp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_DEBUG/*.tpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_HW/*.cc"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_HW/*.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_HW/*.cxx"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_HW/*.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_HW/*.hh"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_HW/*.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_HW/*.hxx"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_HW/*.inl"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_HW/*.ipp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/MB_DDF_HW/*.tpp"
+        )
+        list(SORT SOURCE_DEBUG_FILES)
+        list(LENGTH SOURCE_DEBUG_FILES SOURCE_DEBUG_FILE_COUNT)
+        message(STATUS
+            "Source debug mode recursively collected ${SOURCE_DEBUG_FILE_COUNT} files from "
+            "src/MB_DDF, src/MB_DDF_DEBUG, and src/MB_DDF_HW.")
+        set(APP_SOURCES
+            src/main.cpp
+            src/MB_DDF_HW_Test/ComEchoRunner.cpp
+            ${SOURCE_DEBUG_FILES}
+        )
+    else()
+        set(APP_SOURCES src/main.cpp)
+        if(MB_DDF_APP_MODE STREQUAL "ECHO")
+            list(APPEND APP_SOURCES src/MB_DDF_HW_Test/ComEchoRunner.cpp)
+        elseif(MB_DDF_APP_MODE STREQUAL "HW_TEST")
+            list(APPEND APP_SOURCES ${DDS_CORE_SOURCES} ${HW_TEST_SOURCES})
+        elseif(MB_DDF_APP_MODE STREQUAL "DEMO")
+            list(APPEND APP_SOURCES ${DDS_CORE_SOURCES} ${DDS_DEMO_SOURCES})
+        endif()
     endif()
     add_executable(${TARGET_NAME} ${APP_SOURCES})
     configure_dds_target(${TARGET_NAME} PRIVATE)

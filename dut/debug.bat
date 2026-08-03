@@ -15,6 +15,13 @@ if %ERRORLEVEL% NEQ 0 (
 
 rem Invoke PowerShell with Bypass policy
 set "PS_ARGS="
+if /I "%~1"=="source_debug" (
+    rem Recursively build the local source-debug composition and start gdbserver.
+    echo Recursive source-debug image enabled.
+    set "PS_ARGS=-SourceDebug"
+    shift
+    goto arg_loop
+)
 if /I "%~1"=="com3_echo" (
     rem Build, deploy and run the isolated COM3 payload echo image.
     echo COM3 echo image enabled.

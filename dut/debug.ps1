@@ -7,6 +7,7 @@ param(
     [string] $Password = "",
     [switch] $ForegroundGdbserver,
     [switch] $Run,
+    [switch] $SourceDebug,
     [switch] $FullHardware,
     [switch] $Com3Echo,
     [switch] $HardwareTest,
@@ -25,10 +26,11 @@ if ($Com3Echo -and -not $Run) {
 if ($HardwareTest -and -not $Run) {
     throw "-HardwareTest requires -Run."
 }
-if (($Com3Echo -and $HardwareTest) -or
+if (($SourceDebug -and ($Com3Echo -or $HardwareTest -or $FullHardware)) -or
+    ($Com3Echo -and $HardwareTest) -or
     ($Com3Echo -and $FullHardware) -or
     ($HardwareTest -and $FullHardware)) {
-    throw "-Com3Echo, -HardwareTest, and -FullHardware are mutually exclusive."
+    throw "-SourceDebug, -Com3Echo, -HardwareTest, and -FullHardware are mutually exclusive."
 }
 if ($SpiFlashTestAddress -and -not $FullHardware) {
     throw "-SpiFlashTestAddress requires -Run -FullHardware."
@@ -560,7 +562,15 @@ if ($Run) {
 $buildProfile = "echo"
 $buildAction = $buildConfig.ToLower()
 $appMode = "ECHO"
-if ($FullHardware) {
+if ($SourceDebug) {
+    # The recursive source-debug image is intentionally Debug-only, including
+    # when -Run is used to execute it directly on the target.
+    $buildConfig = "Debug"
+    $buildProfile = "source_debug"
+    $buildAction = "source_debug"
+    $appMode = "SOURCE_DEBUG (ECHO entry)"
+}
+elseif ($FullHardware) {
     $buildProfile = "demo"
     $buildAction = "hw_" + $buildConfig.ToLower()
     $appMode = "DEMO"

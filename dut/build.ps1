@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("clean", "debug", "release", "lib_debug", "lib_release", "dds_tests", "hw_debug", "hw_release", "hw_test_debug", "hw_test_release", "hw_tests", "help")]
+    [ValidateSet("clean", "debug", "release", "source_debug", "lib_debug", "lib_release", "dds_tests", "hw_debug", "hw_release", "hw_test_debug", "hw_test_release", "hw_tests", "help")]
     [string] $Action = "help",
 
     [string] $ProjectName = "MB_DDF_v2",
@@ -23,6 +23,7 @@ function Show-Help {
     Write-Host "  powershell -ExecutionPolicy Bypass -File .\build.ps1 clean"
     Write-Host "  powershell -ExecutionPolicy Bypass -File .\build.ps1 debug"
     Write-Host "  powershell -ExecutionPolicy Bypass -File .\build.ps1 release"
+    Write-Host "  powershell -ExecutionPolicy Bypass -File .\build.ps1 source_debug"
     Write-Host "  powershell -ExecutionPolicy Bypass -File .\build.ps1 lib_debug"
     Write-Host "  powershell -ExecutionPolicy Bypass -File .\build.ps1 lib_release"
     Write-Host "  powershell -ExecutionPolicy Bypass -File .\build.ps1 dds_tests"
@@ -265,13 +266,14 @@ function Clean-Build([string] $projectRoot) {
 function Configure-And-Build(
     [string] $projectRoot,
     [ValidateSet("Debug", "Release")] [string] $config,
-    [ValidateSet("echo", "hw_test", "demo", "tests")] [string] $buildProfile,
+    [ValidateSet("echo", "source_debug", "hw_test", "demo", "tests")] [string] $buildProfile,
     [ValidateSet("ECHO", "HW_TEST", "DEMO")] [string] $appMode,
     [ValidateSet("ON", "OFF")] [string] $buildHardwareLayer,
     [ValidateSet("ON", "OFF")] [string] $buildHwDdsAdapter,
     [ValidateSet("ON", "OFF")] [string] $enableTests,
     [ValidateSet("ON", "OFF")] [string] $enableHwUnitTests,
-    [ValidateSet("ON", "OFF")] [string] $enableHwSmokeTests
+    [ValidateSet("ON", "OFF")] [string] $enableHwSmokeTests,
+    [ValidateSet("ON", "OFF")] [string] $buildSourceDebug = "OFF"
 ) {
     $resolvedToolchainBin = Resolve-ToolchainBinDir
     $resolvedSysroot = Resolve-OriginSysroot
@@ -344,6 +346,7 @@ function Configure-And-Build(
         "-DCROSS_C_COMPILER=$gcc",
         "-DCROSS_CXX_COMPILER=$gpp",
         "-DBUILD_LIBRARY=OFF",
+        "-DBUILD_SOURCE_DEBUG=$buildSourceDebug",
         "-DMB_DDF_APP_MODE=$appMode",
         "-DBUILD_HARDWARE_LAYER=$buildHardwareLayer",
         "-DBUILD_HW_DDS_ADAPTER=$buildHwDdsAdapter",
@@ -653,6 +656,10 @@ switch ($Action) {
     }
     "release" {
         Configure-And-Build -projectRoot $projectRoot -config "Release" -buildProfile "echo" -appMode "ECHO" -buildHardwareLayer "ON" -buildHwDdsAdapter "OFF" -enableTests "OFF" -enableHwUnitTests "OFF" -enableHwSmokeTests "OFF"
+        exit 0
+    }
+    "source_debug" {
+        Configure-And-Build -projectRoot $projectRoot -config "Debug" -buildProfile "source_debug" -appMode "ECHO" -buildHardwareLayer "OFF" -buildHwDdsAdapter "OFF" -enableTests "OFF" -enableHwUnitTests "OFF" -enableHwSmokeTests "OFF" -buildSourceDebug "ON"
         exit 0
     }
     "lib_debug" {

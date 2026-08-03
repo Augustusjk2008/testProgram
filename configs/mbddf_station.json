@@ -1,46 +1,94 @@
 {
-  "schemaVersion": "1",
-  "control": {
-    "resourceId": "CONTROL_SERIAL"
-  },
-  "devices": {
-    "ni6259_stimulus": {
-      "physicalDeviceName": "CONFIGURE_ME",
-      "serialNumber": "CONFIGURE_ME"
+    "control": {
+        "resourceId": "CONTROL_SERIAL"
     },
-    "ni6733_fixture": {
-      "physicalDeviceName": "CONFIGURE_ME",
-      "serialNumber": "CONFIGURE_ME"
-    }
-  },
-  "resources": {
-    "CONTROL_SERIAL": {
-      "portName": "COM_CHANGE_ME",
-      "baudRate": 614400,
-      "dataBits": 8,
-      "parity": "Even",
-      "stopBits": 1,
-      "flowControl": "None"
+    "devices": {
+        "ni6259_stimulus": {
+            "physicalDeviceName": "CONFIGURE_ME",
+            "serialNumber": "CONFIGURE_ME"
+        },
+        "ni6733_fixture": {
+            "physicalDeviceName": "CONFIGURE_ME",
+            "serialNumber": "CONFIGURE_ME"
+        }
     },
-    "BUS_ECHO_COM1": { "portName": "COM_CHANGE_ME_BUS_ECHO_COM1", "baudRate": 614400 },
-    "BUS_ECHO_COM2": { "portName": "COM_CHANGE_ME_BUS_ECHO_COM2", "baudRate": 614400 },
-    "BUS_ECHO_COM4": { "portName": "COM_CHANGE_ME_BUS_ECHO_COM4", "baudRate": 614400 },
-    "DUT_DI3_STIM": { "portNumber": 0, "lineNumber": 0 },
-    "DUT_DI1_STIM": { "portNumber": 0, "lineNumber": 1 },
-    "DUT_DI2_STIM": { "portNumber": 0, "lineNumber": 2 },
-    "DUT_TX_ENABLE_SENSE": { "portNumber": 0, "lineNumber": 3 },
-    "DUT_ATTENUATOR_SENSE": { "portNumber": 0, "lineNumber": 4 },
-    "HELM_PWM1_SENSE": { "physicalIndex": 0 },
-    "HELM_PWM2_SENSE": { "physicalIndex": 1 },
-    "HELM_PWM3_SENSE": { "physicalIndex": 2 },
-    "HELM_PWM4_SENSE": { "physicalIndex": 3 },
-    "HELM_DIR1_SENSE": { "physicalIndex": 4 },
-    "HELM_DIR2_SENSE": { "physicalIndex": 5 },
-    "HELM_DIR3_SENSE": { "physicalIndex": 6 },
-    "HELM_DIR4_SENSE": { "physicalIndex": 7 },
-    "HELM_FK1_STIM": { "physicalIndex": 0 },
-    "HELM_FK2_STIM": { "physicalIndex": 1 },
-    "HELM_FK3_STIM": { "physicalIndex": 2 },
-    "HELM_FK4_STIM": { "physicalIndex": 3 }
-  }
+    "resources": {
+        "BUS_ECHO_COM1": {
+            "baudRate": 614400,
+            "portName": "COM_CHANGE_ME_BUS_ECHO_COM1"
+        },
+        "BUS_ECHO_COM2": {
+            "baudRate": 614400,
+            "portName": "COM_CHANGE_ME_BUS_ECHO_COM2"
+        },
+        "BUS_ECHO_COM4": {
+            "baudRate": 614400,
+            "portName": "COM_CHANGE_ME_BUS_ECHO_COM4"
+        },
+        "CONTROL_SERIAL": {
+            "baudRate": 614400,
+            "dataBits": 8,
+            "flowControl": "None",
+            "parity": "Even",
+            "portName": "COM3",
+            "stopBits": 1
+        },
+        "DUT_ATTENUATOR_SENSE": {
+            "lineNumber": 4,
+            "portNumber": 0
+        },
+        "DUT_DI1_STIM": {
+            "lineNumber": 1,
+            "portNumber": 0
+        },
+        "DUT_DI2_STIM": {
+            "lineNumber": 2,
+            "portNumber": 0
+        },
+        "DUT_DI3_STIM": {
+            "lineNumber": 0,
+            "portNumber": 0
+        },
+        "DUT_TX_ENABLE_SENSE": {
+            "lineNumber": 3,
+            "portNumber": 0
+        },
+        "HELM_DIR1_SENSE": {
+            "physicalIndex": 4
+        },
+        "HELM_DIR2_SENSE": {
+            "physicalIndex": 5
+        },
+        "HELM_DIR3_SENSE": {
+            "physicalIndex": 6
+        },
+        "HELM_DIR4_SENSE": {
+            "physicalIndex": 7
+        },
+        "HELM_FK1_STIM": {
+            "physicalIndex": 0
+        },
+        "HELM_FK2_STIM": {
+            "physicalIndex": 1
+        },
+        "HELM_FK3_STIM": {
+            "physicalIndex": 2
+        },
+        "HELM_FK4_STIM": {
+            "physicalIndex": 3
+        },
+        "HELM_PWM1_SENSE": {
+            "physicalIndex": 0
+        },
+        "HELM_PWM2_SENSE": {
+            "physicalIndex": 1
+        },
+        "HELM_PWM3_SENSE": {
+            "physicalIndex": 2
+        },
+        "HELM_PWM4_SENSE": {
+            "physicalIndex": 3
+        }
+    },
+    "schemaVersion": "1"
 }

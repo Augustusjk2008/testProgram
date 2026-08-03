@@ -118,6 +118,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 help
 | `clean` | 清理 | 删除 `build`，清除 gdbserver 上传标记 |
 | `debug` | COM3 回显，Debug | `build\aarch64\echo\Debug\MB_DDF_v2` |
 | `release` | COM3 回显，Release | `build\aarch64\echo\Release\MB_DDF_v2` |
+| `source_debug` | 递归源码调试，Debug | `build\aarch64\source_debug\Debug\MB_DDF_v2` |
 | `lib_debug` | DDS 静态/动态库，Debug | `install\libs`、`install\include` |
 | `lib_release` | DDS 静态/动态库，Release | `install\libs`、`install\include` |
 | `dds_tests` | DDS-only 测试，Debug | `build\aarch64\tests\Debug\tests\MB_DDF_v2_Tests` 等 |
@@ -133,6 +134,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 help
 .\build.ps1 clean
 .\build.ps1 debug
 .\build.ps1 release
+.\build.ps1 source_debug
 .\build.ps1 lib_debug
 .\build.ps1 lib_release
 .\build.ps1 dds_tests
@@ -151,6 +153,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 help
 | 变量 | 含义 |
 |---|---|
 | `MB_DDF_APP_MODE` | 应用画像，只允许 `ECHO`、`HW_TEST`、`DEMO` |
+| `BUILD_SOURCE_DEBUG` | 仅供 `source_debug` 使用，递归构建源码调试组合 |
 | `ENABLE_TESTS` | 构建测试 |
 | `BUILD_HARDWARE_LAYER` | 构建 `MB_DDF_HW` |
 | `BUILD_HW_DDS_ADAPTER` | 构建硬件 DDS Adapter |
@@ -161,6 +164,12 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 help
 硬件层和 Adapter。CMake 会按单一 `MB_DDF_APP_MODE` 归一这些组合，非法画像值会直接
 失败，不能通过运行时环境变量切换入口。
 
+`source_debug` 是独立的 Debug-only 构建组合，入口仍为 `src/main.cpp` 的 ECHO 分支。
+它通过 `CONFIGURE_DEPENDS` 递归收集 `src/MB_DDF/`、`src/MB_DDF_DEBUG/` 和
+`src/MB_DDF_HW/` 中的常见 C++ 源码与头文件；后续在这些目录新增文件无需修改清单，
+再次构建时 CMake 会自动重新配置。该组合把硬件层实现直接编入可执行文件，不会改变
+日常 ECHO、HW_TEST、DEMO 或库目标的显式源码清单。
+
 ### 4.3 构建输出
 
 主要目录：
@@ -168,6 +177,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 help
 ```text
 build/aarch64/echo/Debug/
 build/aarch64/echo/Release/
+build/aarch64/source_debug/Debug/
 build/aarch64/hw_test/Debug/
 build/aarch64/hw_test/Release/
 build/aarch64/demo/Debug/
@@ -363,6 +373,7 @@ DDS Core 仅供舵机连续实测 bridge 使用，同一构建另产出用户独
 ```powershell
 .\debug.ps1 -RemoteHost 192.168.1.50
 .\debug.ps1 -RemoteGdbPort 2345
+.\debug.ps1 -SourceDebug
 .\debug.ps1 -ForegroundGdbserver
 .\debug.ps1 -DryRun
 ```
@@ -384,6 +395,7 @@ DDS Core 仅供舵机连续实测 bridge 使用，同一构建另产出用户独
 
 ```powershell
 .\debug.bat
+.\debug.bat source_debug
 .\debug.bat run
 .\debug.bat com3_echo
 .\debug.bat hw_test_run
@@ -393,6 +405,11 @@ DDS Core 仅供舵机连续实测 bridge 使用，同一构建另产出用户独
 `run`/`com3_echo` 使用 ECHO Release 画像，`hw_test_run` 使用 HW_TEST Release
 画像，`hw_run` 使用 DEMO Release 画像并在目标板启用全硬件能力流程。未带子命令时
 使用 ECHO Debug 画像进入 gdbserver 调试流程。
+
+`-SourceDebug`（或 `debug.bat source_debug`）选择递归源码调试组合并保持 Debug 配置，
+默认部署后启动 gdbserver；需要跳过 gdbserver、直接运行 `src/main.cpp` 入口时使用
+`.\debug.ps1 -SourceDebug -Run`。该参数与 `-Com3Echo`、`-HardwareTest`、
+`-FullHardware` 互斥。
 
 ### 7.2 VS Code 检查项
 
