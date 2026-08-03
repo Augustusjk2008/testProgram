@@ -13,3 +13,5 @@ __pycache__/
 .pytest_cache/
 ~$*.xlsx
 AGENTS.md
+
+src/MB_DDF_DEBUG/*
