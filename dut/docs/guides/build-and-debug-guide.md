@@ -164,11 +164,16 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1 help
 硬件层和 Adapter。CMake 会按单一 `MB_DDF_APP_MODE` 归一这些组合，非法画像值会直接
 失败，不能通过运行时环境变量切换入口。
 
-`source_debug` 是独立的 Debug-only 构建组合，入口仍为 `src/main.cpp` 的 ECHO 分支。
+`source_debug` 是独立的 Debug-only 构建组合，入口为 `src/main.cpp` 的导引头调试分支。
 它通过 `CONFIGURE_DEPENDS` 递归收集 `src/MB_DDF/`、`src/MB_DDF_DEBUG/` 和
 `src/MB_DDF_HW/` 中的常见 C++ 源码与头文件；后续在这些目录新增文件无需修改清单，
 再次构建时 CMake 会自动重新配置。该组合把硬件层实现直接编入可执行文件，不会改变
 日常 ECHO、HW_TEST、DEMO 或库目标的显式源码清单。
+
+导引头调试入口会初始化 COM1，启动后先发送一帧 A，持续接收 B 帧并在每四帧后回发
+一帧 A。每个有效 B 帧通过 `SelfDescribingLog` 立即追加并刷新到当前工作目录的
+`dyt_frame_b.sdlog`；已有同模式文件会继续追加。该入口包含真实串口收发，只能在已隔离且
+明确允许 COM1 写入的目标板运行。
 
 ### 4.3 构建输出
 
@@ -330,6 +335,7 @@ DDS Core 仅供舵机连续实测 bridge 使用，同一构建另产出用户独
 - `MB_DDF_v2_Tests`：DDS 单元/集成测试。
 - `MB_DDF_v2_HardwareTests`：目标板 POSIX、IPC、压力和性能测试。
 - `MB_DDF_HW_Tests`：硬件层、产品协议和硬件测试服务单元测试。
+- `MB_DDF_DytDebug_Tests`：导引头帧收发节奏、COM1 配置投影和自描述日志单元测试。
 - `MB_DDF_HW_Smoke`：默认只读的真实 XDMA smoke。
 
 这里的 `MB_DDF_v2_HardwareTests` 是“在目标板运行的 DDS 实机测试”，不等同于
@@ -340,6 +346,7 @@ DDS Core 仅供舵机连续实测 bridge 使用，同一构建另产出用户独
 ```powershell
 .\build.ps1 hw_tests
 .\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Tests
+.\tests\test-deploy.ps1 -TestBinaryName MB_DDF_DytDebug_Tests
 .\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Smoke
 .\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Tests `
   -TestFilter 'ProductProtocol*:*HardwareTestService*'

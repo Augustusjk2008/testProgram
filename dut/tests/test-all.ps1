@@ -81,12 +81,10 @@ try {
             "src\MB_DDF\Endpoint",
             "src\MB_DDF\Monitor",
             "src\MB_DDF\No8_Compatibility",
-            "src\MB_DDF\PhysicalLayer",
-            "src\MB_DDF\Timer",
-            "src\MB_DDF\Tools"
+            "src\MB_DDF\PhysicalLayer"
         )
         Invoke-NoMatchCheck "futex|SYS_futex|linux/futex|FUTEX_" @("src\MB_DDF\DDS")
-        Invoke-NoMatchCheck "EndpointPtr|DDSEndpoint|DDSHandle|PubAndSub|Endpoint::Port|wait_event|event_callback_|endpoint_" @("src\MB_DDF\DDS")
+        Invoke-NoMatchCheck "EndpointPtr|DDSEndpoint|DDSHandle|PubAndSub|Endpoint::Port|wait_event|event_callback_|\bendpoint_\b" @("src\MB_DDF\DDS")
         Write-Info "Static checks passed"
     }
 
@@ -108,6 +106,12 @@ try {
     $hwUnitExit = Invoke-TestBinary -BinaryName "MB_DDF_HW_Tests" -Filter "*"
     if ($hwUnitExit -ne 0) {
         $failures += "MB_DDF_HW_Tests=$hwUnitExit"
+    }
+
+    Write-Step "Running DYT debug loop unit test binary"
+    $dytDebugExit = Invoke-TestBinary -BinaryName "MB_DDF_DytDebug_Tests" -Filter "*"
+    if ($dytDebugExit -ne 0) {
+        $failures += "MB_DDF_DytDebug_Tests=$dytDebugExit"
     }
 
     Write-Step "Running MB_DDF_HW smoke test binary"

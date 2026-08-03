@@ -41,6 +41,7 @@
     .\test-deploy.ps1 -TestFilter "Message*"
     .\test-deploy.ps1 -RemoteHost 192.168.1.29
     .\test-deploy.ps1 -TestBinaryName MB_DDF_v2_HardwareTests
+    .\test-deploy.ps1 -TestBinaryName MB_DDF_DytDebug_Tests
     .\test-deploy.ps1 -BuildOnly
     .\test-deploy.ps1 -SaveResults
     .\test-deploy.ps1 -SaveResults -WithCoverage
@@ -125,7 +126,9 @@ if (-not (Test-Path $BuildScript)) {
 # DDS-only 与 MB_DDF_HW 测试共享 tests 目录，但每次都用完整显式参数重新配置；
 # DDS-only 不应被协议生成器、硬件层或 Adapter 依赖阻塞。
 $BuildAction = "dds_tests"
-if ($TestBinaryName -eq "MB_DDF_HW_Tests" -or $TestBinaryName -eq "MB_DDF_HW_Smoke") {
+if ($TestBinaryName -eq "MB_DDF_HW_Tests" -or
+    $TestBinaryName -eq "MB_DDF_HW_Smoke" -or
+    $TestBinaryName -eq "MB_DDF_DytDebug_Tests") {
     $BuildAction = "hw_tests"
 }
 & $BuildScript $BuildAction

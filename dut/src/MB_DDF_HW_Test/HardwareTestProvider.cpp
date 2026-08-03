@@ -13,7 +13,6 @@
 #include "MB_DDF_HW/Device/Registers/XadcRegisters.h"
 #include "MB_DDF_HW/Transport/SpiDevTransport.h"
 #include "MB_DDF_HW/Transport/XdmaTransport.h"
-#include "MB_DDF_HW_Test/ComEchoRunner.h"
 
 #include <algorithm>
 #include <array>
@@ -182,7 +181,7 @@ ProductErrorCode run_com_bus(unsigned com_index, uint32_t count,
         return ProductErrorCode::ChannelInvalid;
     }
     HW::XdmaTransport transport({std::string(kXdmaDevice), offsets[com_index],
-                                 kComRegisterWindowSize, -1, -1,
+                                 Detail::kComMapLength, -1, -1,
                                  static_cast<int>(com_index)});
     const auto opened = transport.open();
     if (!opened) {
@@ -1277,9 +1276,10 @@ std::optional<ProductErrorCode> HardwareTestProvider::poll_imu_stream_feedback(
 }
 
 int run_hardware_test_service() {
-    HW::XdmaTransport transport({std::string(kXdmaDevice), kCom3UserOffset,
-                                 kComRegisterWindowSize, -1, -1,
-                                 kCom3EventNumber});
+    HW::XdmaTransport transport({std::string(kXdmaDevice),
+                                 Detail::kControlComUserOffset,
+                                 Detail::kComMapLength, -1, -1,
+                                 Detail::kControlComEventNumber});
     const auto opened = transport.open();
     if (!opened) {
         LOG_ERROR << "[HW-TEST] 打开 COM3 XDMA Transport 失败："

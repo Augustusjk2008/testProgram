@@ -1,6 +1,5 @@
 #include "MB_DDF_HW_Test/HardwareTestProvider.h"
 #include "MB_DDF_HW_Test/HardwareTestProviderDetail.h"
-#include "MB_DDF_HW_Test/ComEchoRunner.h"
 #include "MB_DDF_HW/Device/Ads1258Device.h"
 #include "MB_DDF_HW/Device/Ad7606Device.h"
 #include "MB_DDF_HW/Device/ComDevice.h"
@@ -552,10 +551,10 @@ TEST(HardwareTestProviderTest, HelmParametersDoNotImposeAngleLimits) {
     EXPECT_TRUE(MB_DDF::HWTest::validate_helm_stream_parameters(parameters));
 }
 
-TEST(HardwareTestProviderTest, Com3ImageUsesFixedWindowEventAnd614400EightEOneDefaults) {
-    static_assert(MB_DDF::HWTest::kCom3UserOffset == 0xC0000u);
-    static_assert(MB_DDF::HWTest::kComRegisterWindowSize == 0x40000u);
-    static_assert(MB_DDF::HWTest::kCom3EventNumber == 2);
+TEST(HardwareTestProviderTest, ControlComUsesFixedWindowEventAnd614400EightEOneDefaults) {
+    static_assert(MB_DDF::HWTest::Detail::kControlComUserOffset == 0xC0000u);
+    static_assert(MB_DDF::HWTest::Detail::kComMapLength == 0x40000u);
+    static_assert(MB_DDF::HWTest::Detail::kControlComEventNumber == 2);
     const auto config = MB_DDF::HW::ComDevice::default_config();
     EXPECT_EQ(config.format.byte_format, 0xB0u);
     EXPECT_EQ(config.format.receive_control, 0x21u);

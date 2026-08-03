@@ -21,6 +21,7 @@
 # 单独部署并执行指定目标
 .\tests\test-deploy.ps1 -TestBinaryName MB_DDF_v2_HardwareTests
 .\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Tests
+.\tests\test-deploy.ps1 -TestBinaryName MB_DDF_DytDebug_Tests
 .\tests\test-deploy.ps1 -TestBinaryName MB_DDF_HW_Smoke
 ```
 
@@ -31,6 +32,7 @@
 | `MB_DDF_v2_Tests` | DDS 单元与进程内集成 |
 | `MB_DDF_v2_HardwareTests` | 目标板 DDS、IPC、压力与性能 |
 | `MB_DDF_HW_Tests` | 硬件抽象、产品协议和产品测试服务 |
+| `MB_DDF_DytDebug_Tests` | Fake COM 端点下的导引头收发节奏与自描述日志 |
 | `MB_DDF_HW_Smoke` | 默认只读硬件巡检 |
 
 脚本使用独立的 `build/aarch64/tests/<Config>` 构建树，不复用应用画像。目标、筛选参数和部署选项以 `tests/test-deploy.ps1` 的当前帮助及[详细 DDS 测试说明](dds-test-guide.md)为准。

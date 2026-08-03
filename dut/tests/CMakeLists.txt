@@ -151,6 +151,16 @@ if(ENABLE_HW_UNIT_TESTS AND TARGET MB_DDF_HW)
         target_link_libraries(MB_DDF_HW_Tests PRIVATE MB_DDF_HW_DDS_Adapter)
     endif()
     add_test(NAME MB_DDF_HW_Tests COMMAND MB_DDF_HW_Tests)
+
+    add_executable(MB_DDF_DytDebug_Tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/hw_unit/test_dyt_debug.cpp
+        ${CMAKE_SOURCE_DIR}/src/MB_DDF_DEBUG/DytDebug.cpp
+        ${CMAKE_SOURCE_DIR}/src/MB_DDF/Tools/SelfDescribingLog.cpp
+        ${CMAKE_SOURCE_DIR}/src/MB_DDF/Tools/SelfDescribingLogReader.cpp
+    )
+    configure_mb_ddf_test_target(MB_DDF_DytDebug_Tests)
+    target_link_libraries(MB_DDF_DytDebug_Tests PRIVATE MB_DDF_HW)
+    add_test(NAME MB_DDF_DytDebug_Tests COMMAND MB_DDF_DytDebug_Tests)
 endif()
 
 if(ENABLE_HW_SMOKE_TESTS AND TARGET MB_DDF_HW)

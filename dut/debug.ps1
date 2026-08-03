@@ -568,7 +568,7 @@ if ($SourceDebug) {
     $buildConfig = "Debug"
     $buildProfile = "source_debug"
     $buildAction = "source_debug"
-    $appMode = "SOURCE_DEBUG (ECHO entry)"
+    $appMode = "SOURCE_DEBUG (DYT entry)"
 }
 elseif ($FullHardware) {
     $buildProfile = "demo"
