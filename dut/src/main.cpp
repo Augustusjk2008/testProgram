@@ -17,7 +17,7 @@ int main() {
 
     try {
 #if defined(MB_DDF_SOURCE_DEBUG)
-        return MB_DDF::SourceDebug::run_source_debug();
+        return MB_DDF::SourceDebug::run_udp_forward_test();
 #elif defined(MB_DDF_APP_HW_TEST)
         return MB_DDF::HWTest::run_hardware_test_service();
 #elif defined(MB_DDF_APP_DEMO)

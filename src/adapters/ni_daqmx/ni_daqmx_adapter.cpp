@@ -537,6 +537,15 @@ HalAdapterStatus applySafeOutputs(DeviceState* device, int timeoutMs)
 HalAdapterStatus stopTaskNative(TaskState* task)
 {
     if (task == nullptr || task->native == nullptr || !task->started) return makeStatus();
+    if (task->mode == HAL_ADAPTER_TASK_FINITE) {
+        bool32 done = 0;
+        if (DAQmxIsTaskDone(task->native, &done) >= 0 && done != 0) {
+            // A finite task stops itself after its programmed samples. Avoid a
+            // redundant driver wait while preserving StopTask for incomplete tasks.
+            task->started = false;
+            return makeStatus();
+        }
+    }
     const HalAdapterStatus status = fromDaq(DAQmxStopTask(task->native), "DAQmxStopTask");
     task->started = false;
     return status;

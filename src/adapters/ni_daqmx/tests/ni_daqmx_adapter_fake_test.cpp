@@ -1285,6 +1285,78 @@ bool runSafeShutdownOrderTest(const HalAdapterApiV1& api,
     return passed;
 }
 
+bool runCompletedFiniteTaskSkipsInterruptedStopTest(
+    const HalAdapterApiV1& api,
+    const HalAdapterTaskApiV1& taskApi)
+{
+    usePxiFixture();
+    HalAdapterHandle adapter = nullptr;
+    HalAdapterStatus status = api.initialize(validConfig(), &adapter);
+    if (!check(status.code == HAL_ADAPTER_OK && adapter != nullptr,
+               "completed finite stop setup should initialize the adapter")) return false;
+
+    HalAdapterDeviceHandle device = nullptr;
+    status = api.openDevice(adapter, "PXI1Slot2", validOpenSpec(), &device);
+    if (!check(status.code == HAL_ADAPTER_OK && device != nullptr,
+               "completed finite stop setup should open the device")) {
+        api.shutdown(adapter);
+        return false;
+    }
+
+    const int channel[] = {0};
+    HalAdapterTaskConfig config{};
+    config.structSize = sizeof(config);
+    config.kind = HAL_ADAPTER_TASK_ANALOG_INPUT;
+    config.mode = HAL_ADAPTER_TASK_FINITE;
+    config.channelIndexes = channel;
+    config.channelCount = 1;
+    config.sampleRateHz = 10000.0;
+    config.samplesPerChannel = 4;
+    config.bufferSamplesPerChannel = 4;
+    HalAdapterTaskHandle task = nullptr;
+    status = taskApi.createTask(device, &config, &task);
+    if (!check(status.code == HAL_ADAPTER_OK && task != nullptr,
+               "completed finite stop setup should create the task")) return false;
+
+    const double input[] = {1.0, 2.0, 3.0, 4.0};
+    fake_nidaqmx::setAnalogInputBlock(input, 1, 4);
+    if (!check(taskApi.startTask(task, 1000).code == HAL_ADAPTER_OK,
+               "completed finite stop setup should start the task")) return false;
+    double output[4]{};
+    HalAdapterTaskBuffer buffer{};
+    buffer.structSize = sizeof(buffer);
+    buffer.sampleType = HAL_ADAPTER_SAMPLE_FLOAT64;
+    buffer.data = output;
+    buffer.capacityValues = 4;
+    buffer.channelCount = 1;
+    buffer.samplesPerChannel = 4;
+    if (!check(taskApi.readTask(task, &buffer, 1000).code == HAL_ADAPTER_OK &&
+                   buffer.samplesPerChannel == 4,
+               "completed finite stop setup should consume the finite acquisition")) {
+        return false;
+    }
+
+    fake_nidaqmx::clearCallLog();
+    fake_nidaqmx::failNext(fake_nidaqmx::Operation::StopTask,
+                           -50700,
+                           "injected PAL wait interruption");
+    const HalAdapterStatus stopped = taskApi.stopTask(task, 1000);
+    const bool passed = check(stopped.code == HAL_ADAPTER_OK,
+                              "a naturally completed finite task should not surface an interrupted redundant stop") &&
+        check(fake_nidaqmx::firstCallIndex(fake_nidaqmx::Call::QueryTaskDone) >= 0,
+              "finite stop should query native completion") &&
+        check(fake_nidaqmx::firstCallIndex(fake_nidaqmx::Call::StopTask) < 0,
+              "finite stop should skip DAQmxStopTask after native completion");
+
+    const bool closed = check(taskApi.closeTask(task).code == HAL_ADAPTER_OK,
+                              "completed finite task should still clear normally");
+    const bool deviceClosed = check(api.closeDevice(device).code == HAL_ADAPTER_OK,
+                                    "completed finite stop test should close the device");
+    const bool shutdown = check(api.shutdown(adapter).code == HAL_ADAPTER_OK,
+                                "completed finite stop test should shut down the adapter");
+    return passed && closed && deviceClosed && shutdown;
+}
+
 } // namespace
 
 int main()
@@ -1318,6 +1390,7 @@ int main()
     passed = runFakeTimedDigitalBlockContractTest() && passed;
     passed = runFakeErrorInjectionContractTest() && passed;
     passed = runAdapterTaskApiTest(api, taskApi) && passed;
+    passed = runCompletedFiniteTaskSkipsInterruptedStopTest(api, taskApi) && passed;
     passed = runSafeShutdownOrderTest(api, taskApi) && passed;
     if (!passed) return EXIT_FAILURE;
     std::cout << "NI-DAQmx fake adapter tests passed\n";

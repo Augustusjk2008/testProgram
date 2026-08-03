@@ -26,6 +26,7 @@ enum class TaskKind {
 struct FakeTask {
     TaskKind kind = TaskKind::None;
     bool started = false;
+    bool done = false;
     std::string physicalChannel;
     int channelCount = 0;
     int terminalConfig = DAQmx_Val_Cfg_Default;
@@ -867,6 +868,7 @@ int32 DAQmxStartTask(TaskHandle taskHandle)
     FakeTask* task = taskFrom(taskHandle);
     if (task == nullptr || task->kind == TaskKind::None) return invalidContract();
     task->started = true;
+    task->done = false;
     ++state.starts;
     return 0;
 }
@@ -878,6 +880,7 @@ int32 DAQmxStopTask(TaskHandle taskHandle)
     FakeTask* task = taskFrom(taskHandle);
     if (task == nullptr) return invalidContract();
     task->started = false;
+    task->done = true;
     ++state.stops;
     return failure;
 }
@@ -1040,6 +1043,10 @@ int32 DAQmxReadAnalogF64(TaskHandle taskHandle,
         }
     }
     task->analogReadOffset += static_cast<std::size_t>(actual);
+    if (task->sampleMode == DAQmx_Val_FiniteSamps &&
+        task->analogReadOffset >= task->samplesPerChannel) {
+        task->done = true;
+    }
     ++state.analogReads;
     if (sampsPerChanRead != nullptr) *sampsPerChanRead = actual;
     return 0;
@@ -1085,7 +1092,7 @@ int32 DAQmxIsTaskDone(TaskHandle taskHandle, bool32* isTaskDone)
     if (failure != 0) return failure;
     FakeTask* task = taskFrom(taskHandle);
     if (task == nullptr || isTaskDone == nullptr) return invalidContract();
-    *isTaskDone = task->started ? 0u : 1u;
+    *isTaskDone = (!task->started || task->done) ? 1u : 0u;
     return 0;
 }
 
