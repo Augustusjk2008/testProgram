@@ -88,6 +88,17 @@
       "cwd": ".\\front",
       "confirm": false,
       "enabled": true
+    },
+    {
+      "id": "source_debug",
+      "label": "启动调试",
+      "icon": "Terminal",
+      "windowsCommand": ".\\debug.ps1 -SourceDebug -Run",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": "./dut/",
+      "confirm": false,
+      "enabled": true
     }
   ]
 }

@@ -277,13 +277,11 @@ else()
             "src/MB_DDF, src/MB_DDF_DEBUG, and src/MB_DDF_HW.")
         set(APP_SOURCES
             src/main.cpp
-            src/MB_DDF_HW_Test/ComEchoRunner.cpp
             ${SOURCE_DEBUG_FILES}
         )
     else()
         set(APP_SOURCES src/main.cpp)
         if(MB_DDF_APP_MODE STREQUAL "ECHO")
-            list(APPEND APP_SOURCES src/MB_DDF_HW_Test/ComEchoRunner.cpp)
         elseif(MB_DDF_APP_MODE STREQUAL "HW_TEST")
             list(APPEND APP_SOURCES ${DDS_CORE_SOURCES} ${HW_TEST_SOURCES})
         elseif(MB_DDF_APP_MODE STREQUAL "DEMO")

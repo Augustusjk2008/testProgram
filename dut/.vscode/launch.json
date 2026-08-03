@@ -5,7 +5,7 @@
             "name": "(gdb) Remote Debug", // 配置名称，可自定义            
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/aarch64/hw_test/Release/MB_DDF_v2", // **本地**可执行文件的路径，须与ARM板上的程序一致
+            "program": "${workspaceFolder}/build/aarch64/source_debug/Debug/MB_DDF_v2", // **本地**可执行文件的路径，须与ARM板上的程序一致
             "args": [], // 程序运行参数，如有需要在此添加
             "stopAtEntry": true, // 设为true可在main函数入口处自动暂停
             "cwd": "${workspaceFolder}", // 工作目录
