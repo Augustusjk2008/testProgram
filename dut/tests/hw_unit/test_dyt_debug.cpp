@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
 
 #include "MB_DDF/Tools/SelfDescribingLogReader.h"
-#include "MB_DDF_DEBUG/DytDebug.h"
-#include "MB_DDF_DEBUG/frame_a.h"
-#include "MB_DDF_DEBUG/frame_b.h"
+#include "MB_DDF_DEBUG/SourceDebug.h"
+#include "MB_DDF_DEBUG/dyt_frame_a.h"
+#include "MB_DDF_DEBUG/dyt_frame_b.h"
 
 #include <algorithm>
 #include <chrono>
@@ -15,7 +15,7 @@
 
 namespace {
 
-namespace Dyt = MB_DDF::DytDebug;
+namespace SourceDebug = MB_DDF::SourceDebug;
 namespace HW = MB_DDF::HW;
 namespace Tools = MB_DDF::Tools;
 
@@ -72,30 +72,8 @@ std::filesystem::path unique_log_path() {
            ("mb_ddf_dyt_debug_" + std::to_string(suffix) + ".sdlog");
 }
 
-void expect_same_except_baud(const HW::ComConfig& actual,
-                             const HW::ComConfig& defaults) {
-    EXPECT_EQ(actual.format.byte_format, defaults.format.byte_format);
-    EXPECT_EQ(actual.format.receive_control, defaults.format.receive_control);
-    EXPECT_EQ(actual.frame.send_length_bytes, defaults.frame.send_length_bytes);
-    EXPECT_EQ(actual.frame.receive_length_bytes, defaults.frame.receive_length_bytes);
-    EXPECT_EQ(actual.frame.send_header, defaults.frame.send_header);
-    EXPECT_EQ(actual.frame.send_tail, defaults.frame.send_tail);
-    EXPECT_EQ(actual.frame.receive_header, defaults.frame.receive_header);
-    EXPECT_EQ(actual.frame.receive_tail, defaults.frame.receive_tail);
-    EXPECT_EQ(actual.frame.send_header_length, defaults.frame.send_header_length);
-    EXPECT_EQ(actual.frame.send_tail_length, defaults.frame.send_tail_length);
-    EXPECT_EQ(actual.frame.receive_header_length, defaults.frame.receive_header_length);
-    EXPECT_EQ(actual.frame.receive_tail_length, defaults.frame.receive_tail_length);
-    EXPECT_EQ(actual.receive_enabled, defaults.receive_enabled);
-    EXPECT_EQ(actual.byte_timeout_returns_idle, defaults.byte_timeout_returns_idle);
-    EXPECT_EQ(actual.loopback, defaults.loopback);
-    EXPECT_EQ(actual.interrupt_mode, defaults.interrupt_mode);
-    EXPECT_EQ(actual.interrupt_pulse_counter, defaults.interrupt_pulse_counter);
-    EXPECT_EQ(actual.receive_timeout_counter, defaults.receive_timeout_counter);
-}
-
-TEST(DytDebugConfiguration, UsesCom1AndChangesOnlyBaudrateCounter) {
-    const auto transport = Dyt::make_com1_transport_config();
+TEST(SourceDebugConfiguration, ProjectsGeneratedFrameEnvelopeToCom1) {
+    const auto transport = SourceDebug::make_com1_transport_config();
     EXPECT_EQ(transport.device_path, "/dev/xdma0");
     EXPECT_EQ(transport.user_offset, 0x40000u);
     EXPECT_EQ(transport.map_length, 0x40000u);
@@ -103,9 +81,34 @@ TEST(DytDebugConfiguration, UsesCom1AndChangesOnlyBaudrateCounter) {
     EXPECT_EQ(transport.c2h_channel, -1);
     EXPECT_EQ(transport.event_number, 0);
 
-    const auto defaults = HW::ComDevice::default_config();
-    const auto configured = Dyt::make_com1_config();
-    expect_same_except_baud(configured, defaults);
+    const ProtocolModel::Main_to_dyt_frame_a frame_a;
+    const ProtocolModel::Dyt_to_main_frame_b frame_b;
+    ASSERT_EQ(frame_a.frameLength,
+              ProtocolModel::Main_to_dyt_frame_aProtocol::FRAME_SIZE);
+    ASSERT_EQ(frame_b.frameLength,
+              ProtocolModel::Dyt_to_main_frame_bProtocol::FRAME_SIZE);
+
+    const std::array<uint8_t, 4> expected_send_header{
+        frame_a.frameHeaderLow, frame_a.frameHeaderHigh, 0, 0};
+    const std::array<uint8_t, 4> expected_receive_header{
+        frame_b.frameHeaderLow, frame_b.frameHeaderHigh, 0, 0};
+    const std::array<uint8_t, 4> no_fixed_tail{};
+    const auto configured = SourceDebug::make_com1_config();
+    EXPECT_EQ(configured.format.byte_format, 0xB0u);
+    EXPECT_EQ(configured.format.receive_control, 0x21u);
+    EXPECT_EQ(configured.frame.send_header, expected_send_header);
+    EXPECT_EQ(configured.frame.receive_header, expected_receive_header);
+    EXPECT_EQ(configured.frame.send_header_length, 2u);
+    EXPECT_EQ(configured.frame.receive_header_length, 2u);
+    EXPECT_EQ(configured.frame.send_length_bytes, 1u);
+    EXPECT_EQ(configured.frame.receive_length_bytes, 1u);
+    EXPECT_EQ(configured.frame.send_tail, no_fixed_tail);
+    EXPECT_EQ(configured.frame.receive_tail, no_fixed_tail);
+    EXPECT_EQ(configured.frame.send_tail_length, 0u);
+    EXPECT_EQ(configured.frame.receive_tail_length, 0u);
+    EXPECT_TRUE(configured.receive_enabled);
+    EXPECT_TRUE(configured.byte_timeout_returns_idle);
+    EXPECT_FALSE(configured.loopback);
     EXPECT_EQ(configured.baudrate_counter, 135u);
 }
 
@@ -125,7 +128,7 @@ TEST(DytDebugLoop, SendsInitiallyThenAfterFourValidBFramesAndLogsEveryFrame) {
     ASSERT_TRUE(writer.open(
         log_path.string(), ProtocolModel::Dyt_to_main_frame_bProtocol::buildSchema()));
 
-    const auto result = Dyt::run_frame_loop(endpoint, writer, 4);
+    const auto result = SourceDebug::run_frame_loop(endpoint, writer, 4);
     ASSERT_TRUE(result) << result.status().message;
     EXPECT_EQ(result.value().received_b_frames, 4u);
     EXPECT_EQ(result.value().sent_a_frames, 2u);
@@ -171,7 +174,7 @@ TEST(DytDebugLoop, ContinuesAfterRecoverableProtocolError) {
     ASSERT_TRUE(writer.open(
         log_path.string(), ProtocolModel::Dyt_to_main_frame_bProtocol::buildSchema()));
 
-    const auto result = Dyt::run_frame_loop(endpoint, writer, 4);
+    const auto result = SourceDebug::run_frame_loop(endpoint, writer, 4);
     ASSERT_TRUE(result) << result.status().message;
     EXPECT_EQ(result.value().received_b_frames, 4u);
     EXPECT_EQ(result.value().sent_a_frames, 2u);
