@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <limits>
 #include <utility>
 
@@ -24,7 +25,7 @@ public:
             return false;
         }
         command_writer_ = dds.create_writer("local:://helm_command", false);
-        feedback_reader_ = dds.create_reader(
+        feedback_reader_ = dds.create_reader_after_current_sequence(
             "local:://helm_feedback", false,
             [callback = std::move(callback)](
                 const void* data, size_t size, uint64_t timestamp_ns) {
@@ -217,6 +218,7 @@ HelmDdsTestBridge::~HelmDdsTestBridge() {
 
 ProductErrorCode HelmDdsTestBridge::start(
     const HelmStreamParameters& parameters) {
+    std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex_);
     if (!validate_helm_stream_parameters(parameters)) {
         return ProductErrorCode::ParamOutOfRange;
     }
@@ -231,30 +233,52 @@ ProductErrorCode HelmDdsTestBridge::start(
     parameters_ = parameters;
     publish_failed_.store(false, std::memory_order_release);
     next_serial_.store(0, std::memory_order_release);
-    std::string error;
-    if (!endpoint_->open(
-            [this](const void* data, size_t size, uint64_t timestamp_us) {
-                receive_feedback(data, size, timestamp_us);
-            },
-            &error)) {
-        LOG_ERROR << "[HW-TEST] 打开舵控 DDS 端点失败：" << error;
-        endpoint_->close();
-        return ProductErrorCode::HelmDdsFailed;
-    }
-    endpoint_open_ = true;
-    if (!publish_neutral_command(&error)) {
-        LOG_ERROR << "[HW-TEST] 发布舵控 DDS 解锁首帧失败：" << error;
+    // reader 的工作线程会在 open() 返回前启动。先允许接收，避免把序列边界
+    // 之后、端点建立期间到达的首批反馈当成“尚未 active”而丢弃。
+    accepting_feedback_.store(true, std::memory_order_release);
+    const auto rollback_start = [this]() noexcept {
+        accepting_feedback_.store(false, std::memory_order_release);
+        active_.store(false, std::memory_order_release);
         endpoint_->close();
         endpoint_open_ = false;
+        std::lock_guard<std::mutex> lock(feedback_mutex_);
+        feedback_.clear();
+    };
+    std::string error;
+    try {
+        if (!endpoint_->open(
+                [this](const void* data, size_t size, uint64_t timestamp_us) {
+                    receive_feedback(data, size, timestamp_us);
+                },
+                &error)) {
+            LOG_ERROR << "[HW-TEST] 打开舵控 DDS 端点失败：" << error;
+            rollback_start();
+            return ProductErrorCode::HelmDdsFailed;
+        }
+        endpoint_open_ = true;
+        if (!publish_neutral_command(&error)) {
+            LOG_ERROR << "[HW-TEST] 发布舵控 DDS 解锁首帧失败：" << error;
+            rollback_start();
+            return ProductErrorCode::HelmDdsFailed;
+        }
+        started_ = std::chrono::steady_clock::now();
+        active_.store(true, std::memory_order_release);
+        command_thread_ = std::thread([this] { command_loop(); });
+    } catch (const std::exception& exception) {
+        LOG_ERROR << "[HW-TEST] 启动舵控 DDS bridge 异常：" << exception.what();
+        rollback_start();
+        return ProductErrorCode::HelmDdsFailed;
+    } catch (...) {
+        LOG_ERROR << "[HW-TEST] 启动舵控 DDS bridge 发生未知异常";
+        rollback_start();
         return ProductErrorCode::HelmDdsFailed;
     }
-    started_ = std::chrono::steady_clock::now();
-    active_.store(true, std::memory_order_release);
-    command_thread_ = std::thread([this] { command_loop(); });
     return ProductErrorCode::Ok;
 }
 
 ProductErrorCode HelmDdsTestBridge::stop() {
+    std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex_);
+    accepting_feedback_.store(false, std::memory_order_release);
     active_.store(false, std::memory_order_release);
     if (command_thread_.joinable()) command_thread_.join();
     ProductErrorCode result = ProductErrorCode::Ok;
@@ -348,7 +372,7 @@ void HelmDdsTestBridge::command_loop() {
 
 void HelmDdsTestBridge::receive_feedback(
     const void* data, size_t size, uint64_t timestamp_us) {
-    if (!active_.load(std::memory_order_acquire)) return;
+    if (!accepting_feedback_.load(std::memory_order_acquire)) return;
     HelmFeedbackSample sample{};
     sample.timestamp_us = timestamp_us;
     if (!ProtocolModel::Helm_fdb_frameProtocol::unpackFrame(
@@ -357,6 +381,7 @@ void HelmDdsTestBridge::receive_feedback(
         return;
     }
     std::lock_guard<std::mutex> lock(feedback_mutex_);
+    if (!accepting_feedback_.load(std::memory_order_acquire)) return;
     if (feedback_.size() >= kMaximumQueuedFeedback) feedback_.pop_front();
     feedback_.push_back(std::move(sample));
 }

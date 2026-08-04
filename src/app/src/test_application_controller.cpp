@@ -485,6 +485,7 @@ public:
     ContinuousDataRecorder dataRecorder;
     PostRunAnalysisCoordinator analysisCoordinator;
     ActionResult latchedShutdownFailure;
+    QString activeTaskId;
     QString suppressedResultTaskId;
     quint64 generation = 0;
     bool waitInProgress = false;
@@ -875,6 +876,7 @@ ActionResult TestApplicationController::loadConfigurations(const QString& testCo
     m_impl->controls = controls;
     m_impl->runTimeoutMs = timeoutMs;
     m_impl->snapshot = {};
+    m_impl->activeTaskId.clear();
     m_impl->suppressedResultTaskId.clear();
     m_impl->snapshot.phase = QStringLiteral("configured");
     m_impl->snapshot.descriptor = m_impl->descriptor;
@@ -1482,6 +1484,7 @@ ActionResult TestApplicationController::prepare()
                      [this, generation](const hwtest::biz::TaskId& taskId,
                                         quint64 cycleIndex) {
                          if (generation != m_impl->generation ||
+                             taskId != m_impl->activeTaskId ||
                              taskId == m_impl->suppressedResultTaskId) {
                              return;
                          }
@@ -1495,7 +1498,8 @@ ActionResult TestApplicationController::prepare()
                      [this, generation](const hwtest::biz::TaskId& taskId,
                                         const hwtest::biz::StepId& stepId,
                                         const hwtest::biz::RawSample& rawSample) {
-                         if (generation != m_impl->generation) {
+                         if (generation != m_impl->generation ||
+                             taskId != m_impl->activeTaskId) {
                              return;
                          }
                          ApplicationSample sample;
@@ -1530,7 +1534,8 @@ ActionResult TestApplicationController::prepare()
                                         const hwtest::biz::TestItemId&,
                                         int progress,
                                         const QString& step) {
-                         if (generation != m_impl->generation) {
+                         if (generation != m_impl->generation ||
+                             taskId != m_impl->activeTaskId) {
                              return;
                          }
                          m_impl->snapshot.taskId = taskId;
@@ -1543,7 +1548,8 @@ ActionResult TestApplicationController::prepare()
                      this,
                      [this, generation](const hwtest::biz::TaskId& taskId,
                                         hwtest::biz::TestState state) {
-                         if (generation != m_impl->generation) {
+                         if (generation != m_impl->generation ||
+                             taskId != m_impl->activeTaskId) {
                              return;
                          }
                          const QString previousPhase = m_impl->snapshot.phase;
@@ -1659,6 +1665,7 @@ ActionResult TestApplicationController::prepare()
                      [this, generation](const hwtest::biz::TaskId& taskId,
                                         const hwtest::biz::TestResult& result) {
                          if (generation != m_impl->generation ||
+                             taskId != m_impl->activeTaskId ||
                              taskId == m_impl->suppressedResultTaskId) {
                              return;
                          }
@@ -1683,6 +1690,7 @@ ActionResult TestApplicationController::prepare()
                                         hwtest::biz::ErrorCode code,
                                         const QString& description) {
                          if (generation != m_impl->generation ||
+                             taskId != m_impl->activeTaskId ||
                              taskId == m_impl->suppressedResultTaskId) {
                              return;
                          }
@@ -1721,6 +1729,10 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
 {
     if (!onAffinityThread(this)) {
         return affinityFailure();
+    }
+    if (m_impl->asyncStopInProgress) {
+        return failure(QStringLiteral("stop_in_progress"),
+                       QStringLiteral("An asynchronous stop is already active"));
     }
     if (m_impl->analysisCoordinator.blocksWrites()) {
         return analysisCommandInProgressFailure();
@@ -1837,7 +1849,6 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     m_impl->snapshot.dataFilePath.clear();
     m_impl->snapshot.dataSaveError.clear();
     m_impl->snapshot.effectiveRunParameters = normalizedParameters.value;
-    m_impl->suppressedResultTaskId.clear();
     m_impl->dataRecorder.cancel();
     if (saveContinuousData) {
         const ActionResult recording = m_impl->dataRecorder.begin(
@@ -1868,6 +1879,8 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
         m_impl->snapshot.dataFilePath.clear();
         return bizFailure(started.status, QStringLiteral("Unable to start test"));
     }
+    m_impl->activeTaskId = started.value;
+    m_impl->suppressedResultTaskId.clear();
     m_impl->dataRecorder.setTaskId(started.value);
     m_impl->snapshot.taskId = started.value;
     if (m_impl->descriptor.postRunAnalysis.supported) {
@@ -2242,6 +2255,7 @@ ActionResult TestApplicationController::shutdown()
         return m_impl->latchedShutdownFailure;
     }
     ++m_impl->generation;
+    m_impl->activeTaskId.clear();
     m_impl->suppressedResultTaskId.clear();
     ActionResult firstFailure;
     const bool configured = !m_impl->testConfigPath.isEmpty() && !m_impl->halConfigPath.isEmpty();

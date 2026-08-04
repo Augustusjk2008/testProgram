@@ -93,6 +93,13 @@ public:
     bool subscribe(MessageCallback callback = nullptr);
 
     /**
+     * @brief 从本地订阅建立时可见的当前序列之后开始接收消息
+     * @param callback 消息接收回调函数
+     * @return 订阅成功返回true；外部端点或注册失败返回false
+     */
+    bool subscribe_after_current_sequence(MessageCallback callback = nullptr);
+
+    /**
      * @brief 开始观察消息，回调包含Topic名称和本地序列号
      * @param callback 本地消息观察回调
      * @return 订阅成功返回true，失败返回false
@@ -196,6 +203,7 @@ public:
     }
 
 private:
+    bool subscribe_impl(MessageCallback callback, bool start_after_current_sequence);
     bool local_runtime_active() const;
 
     TopicMetadata* metadata_;       ///< Topic元数据指针

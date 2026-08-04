@@ -119,6 +119,18 @@ public:
     std::shared_ptr<Subscriber> create_reader(const std::string& topic_name, bool enable_checksum = true, const MessageCallback& callback = nullptr);
 
     /**
+     * @brief 创建只接收当前序列之后消息的本地订阅者
+     * @param topic_name Topic名称
+     * @param enable_checksum 是否启用校验和，默认true
+     * @param callback 消息接收回调函数，默认空函数
+     * @return 订阅者智能指针，失败时返回nullptr
+     */
+    std::shared_ptr<Subscriber> create_reader_after_current_sequence(
+        const std::string& topic_name,
+        bool enable_checksum = true,
+        const MessageCallback& callback = nullptr);
+
+    /**
      * @brief 创建绑定外部端点的订阅者（别名）
      * @param topic_name Topic名称，仅用于日志和API一致性
      * @param external_io 外部端点对象
@@ -280,6 +292,12 @@ private:
     std::shared_ptr<Publisher> create_publisher_if_initialized(
         const std::string& topic_name,
         bool enable_checksum);
+
+    std::shared_ptr<Subscriber> create_subscriber_impl(
+        const std::string& topic_name,
+        bool enable_checksum,
+        const MessageCallback& callback,
+        bool start_after_current_sequence);
 
     std::shared_ptr<Subscriber> create_observer_impl(
         const std::string& topic_name,

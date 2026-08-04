@@ -319,6 +319,8 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 
 - WebSocket 回调不得直接跨线程调用控制器。所有控制器动作和读取都通过 queued invocation 投递到控制器的 QObject 亲和线程；禁止 `BlockingQueuedConnection`。
 - Web 层不得调用 `waitForTerminal()`。运行进度和终态只通过 `snapshotChanged` 观察。
+- 应用控制器以最近一次成功 `start` 返回的 `taskId` 作为当前任务身份；新任务启动后才到达的旧任务 `cycleStarted`、样本、进度、状态、结果和硬件错误事件必须丢弃，不得覆盖当前快照、计数、保存或 Web 遥测。
+- 异步 STOP 完成前不得启动下一任务；失败的启动尝试不改变当前任务身份。
 - `sampleReceived` 只消费已形成的应用 DTO；默认 `single` 直接形成旧 `sample` 事件，已协商 `batch` 时进入每连接私有 `WebTelemetryBatcher`。批量器只按数目、字节、时间和 task 边界打包，不解释、合并或绘制业务字段，也不为连续测试写文件。连续数据文件在 Web 投影前已由共享应用控制器记录，TUI/GUI/WebSocket 适配器都不持有 recorder。`analysis` 不进入 sample 事件；伯德数组只能经 `analysisResult` 读取，避免每个样本重复携带大载荷。
 - 活跃客户端的样本 batch、关键快照和控制 reply 进入同一个按调用顺序的出站 FIFO。队列元素保留“遥测/关键消息”类别，只允许在即将超过硬上限时淘汰尚未提交到 socket 的最旧遥测；关键快照和控制 reply 不参与淘汰。WebSocket、批量器定时器、快照合并定时器、FIFO 和 `bytesToWrite()` 只在 WebSocket server 亲和线程访问；不得跨线程发送或阻塞等待网络 drain。
 - 默认出站限制为：`maxBatchSamples=64`、`maxBatchBytes=32768`、`maxBatchLatencyMs=20`、`snapshotIntervalMs=100`、`socketHighWaterBytes=1048576`、`socketLowWaterBytes=262144`、`maxQueuedOutputBytes=4194304`。`bytesToWrite()` 到达高水位后暂停继续提交到 Qt socket；在 `bytesWritten()` 使其降至低水位后恢复。新消息将越过硬上限时先淘汰旧遥测并记录一次降载诊断；淘汰后仍超限才记录 `telemetry_backpressure`、停止向旧连接投影新遥测并关闭旧连接。普通任务执行既有安全停止/收尾，不可停止有限流只分离连接且继续自然运行。不保留历史、不重放，也不得把旧 epoch 的 FIFO 内容交给重连客户端。

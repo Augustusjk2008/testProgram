@@ -1,6 +1,7 @@
 #include "MB_DDF_HW_Test/HelmDdsTestBridge.h"
 
 #include "HelmControl/ProtocolModel/helm_command_contract.h"
+#include "MB_DDF/DDS/DDSCore.h"
 #include "MB_DDF_HW_Test/ProductProtocol.h"
 
 #include <gtest/gtest.h>
@@ -14,7 +15,11 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <semaphore.h>
+#include <stdexcept>
 #include <string>
+#include <sys/mman.h>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -129,6 +134,51 @@ private:
     std::vector<Call> calls_;
 };
 
+class FeedbackDuringOpenEndpoint final : public IHelmDdsEndpoint {
+public:
+    explicit FeedbackDuringOpenEndpoint(uint16_t serial_b)
+        : serial_b_(serial_b) {}
+
+    bool open(FeedbackCallback callback, std::string* error) override {
+        ProtocolModel::Helm_fdb_frame frame{};
+        frame.serial_a = 7;
+        frame.serial_b = serial_b_;
+        frame.version = 0x4000;
+        const auto bytes = ProtocolModel::Helm_fdb_frameProtocol::packFrame(frame);
+        callback(bytes.data(), bytes.size(), 123456u);
+        if (error != nullptr) error->clear();
+        return true;
+    }
+
+    bool publish_command(std::span<const char>, std::string* error) override {
+        if (error != nullptr) error->clear();
+        return true;
+    }
+
+    void close() noexcept override {}
+
+private:
+    uint16_t serial_b_;
+};
+
+class ThrowingOpenEndpoint final : public IHelmDdsEndpoint {
+public:
+    bool open(FeedbackCallback, std::string*) override {
+        throw std::runtime_error("intentional open failure");
+    }
+
+    bool publish_command(std::span<const char>, std::string*) override {
+        return true;
+    }
+
+    void close() noexcept override { closed_ = true; }
+
+    bool closed() const noexcept { return closed_; }
+
+private:
+    bool closed_{false};
+};
+
 ProtocolModel::Helm_ins_frame unpack_command(
     const RecordingHelmDdsEndpoint::Call& call) {
     EXPECT_EQ(call.kind, RecordingHelmDdsEndpoint::CallKind::Publish);
@@ -150,6 +200,21 @@ void expect_unlock_byte(const RecordingHelmDdsEndpoint::Call& call) {
     ASSERT_EQ(call.payload.size(), 27u);
     EXPECT_EQ(static_cast<uint8_t>(call.payload[26]), 0xFFu);
 }
+
+class HelmDdsBridgeRealDdsTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        MB_DDF::DDS::DDSCore::instance().shutdown();
+        shm_unlink("/MB_DDF_V2_SHM");
+        sem_unlink("/MB_DDF_V2_SHM_sem");
+    }
+
+    void TearDown() override {
+        MB_DDF::DDS::DDSCore::instance().shutdown();
+        shm_unlink("/MB_DDF_V2_SHM");
+        sem_unlink("/MB_DDF_V2_SHM_sem");
+    }
+};
 
 TEST(HelmDdsTestBridgeTest, GeneratesOneSharedWaveformAndZerosDisabledChannels) {
     const auto commands = helm_channel_commands(sweep_parameters(), 1.0);
@@ -177,6 +242,25 @@ TEST(HelmDdsTestBridgeTest, StartPublishesNeutralUnlockedFirstFrame) {
     const auto first_frame = unpack_command(published.front());
     EXPECT_TRUE(all_commands_are_zero(first_frame));
     expect_unlock_byte(published.front());
+
+    EXPECT_EQ(bridge.stop(), ProductErrorCode::Ok);
+}
+
+TEST(HelmDdsTestBridgeTest, AcceptsFeedbackDeliveredWhileEndpointIsOpening) {
+    constexpr uint16_t kSerialB = 0x2345;
+    HelmDdsTestBridge bridge(
+        std::make_unique<FeedbackDuringOpenEndpoint>(kSerialB));
+
+    ASSERT_EQ(bridge.start(running_parameters()), ProductErrorCode::Ok);
+
+    ProductProtocol protocol;
+    auto response = protocol.create_message("helm_feedback_response", false);
+    const auto result = bridge.poll_feedback(response);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(*result, ProductErrorCode::Ok);
+    EXPECT_EQ(response.get_unsigned("sample_count").value_or(0), 1u);
+    EXPECT_EQ(response.get_unsigned("sample[0].serial_b").value_or(0),
+              kSerialB);
 
     EXPECT_EQ(bridge.stop(), ProductErrorCode::Ok);
 }
@@ -235,6 +319,16 @@ TEST(HelmDdsTestBridgeTest,
     const auto published = recording_endpoint->published_calls();
     ASSERT_FALSE(published.empty());
     EXPECT_EQ(published.front().payload.size(), 27u);
+}
+
+TEST(HelmDdsTestBridgeTest, EndpointExceptionRollsBackFailedStart) {
+    auto endpoint = std::make_unique<ThrowingOpenEndpoint>();
+    auto* throwing_endpoint = endpoint.get();
+    HelmDdsTestBridge bridge(std::move(endpoint));
+
+    EXPECT_EQ(bridge.start(running_parameters()), ProductErrorCode::HelmDdsFailed);
+    EXPECT_FALSE(bridge.active());
+    EXPECT_TRUE(throwing_endpoint->closed());
 }
 
 TEST(HelmDdsTestBridgeTest,
@@ -322,6 +416,104 @@ TEST(HelmDdsTestBridgeTest, DdsPayloadCodecsPreserveExactCommandAndFeedbackField
     EXPECT_EQ(decoded_feedback.bitGroup1.bit4, 2u);
     EXPECT_EQ(decoded_feedback.timeout, 1u);
     EXPECT_EQ(decoded_feedback.serial_a, 0x1234u);
+}
+
+TEST_F(HelmDdsBridgeRealDdsTest,
+       DefaultEndpointSkipsRetainedFeedbackAcrossConsecutiveStarts) {
+    auto& dds = MB_DDF::DDS::DDSCore::instance();
+    ASSERT_TRUE(dds.initialize(16 * 1024 * 1024));
+
+    auto feedback_writer = dds.create_writer("local:://helm_feedback", false);
+    ASSERT_NE(feedback_writer, nullptr);
+
+    const auto publish_feedback = [&feedback_writer](uint16_t serial_b) {
+        ProtocolModel::Helm_fdb_frame frame{};
+        frame.serial_a = static_cast<uint16_t>(serial_b - 0x1000u);
+        frame.serial_b = serial_b;
+        frame.version = 0x4000;
+        frame.fdb[0] = static_cast<float>(serial_b);
+        const auto bytes = ProtocolModel::Helm_fdb_frameProtocol::packFrame(frame);
+        return feedback_writer->publish(bytes.data(), bytes.size());
+    };
+
+    constexpr uint16_t kFirstHistoricalSerialB = 0x1100;
+    constexpr size_t kHistoricalFeedbackCount = 64;
+    for (size_t index = 0; index < kHistoricalFeedbackCount; ++index) {
+        ASSERT_TRUE(publish_feedback(
+            static_cast<uint16_t>(kFirstHistoricalSerialB + index)));
+    }
+
+    HelmDdsTestBridge bridge;
+    ASSERT_EQ(bridge.start(running_parameters()), ProductErrorCode::Ok);
+
+    ProductProtocol protocol;
+    auto before_fresh_response =
+        protocol.create_message("helm_feedback_response", false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const auto historical_result = bridge.poll_feedback(before_fresh_response);
+    EXPECT_FALSE(historical_result.has_value())
+        << "default Helm DDS reader accepted feedback retained before start";
+
+    constexpr uint16_t kFirstFreshSerialB = 0x2200;
+    ASSERT_TRUE(publish_feedback(kFirstFreshSerialB));
+
+    auto fresh_response = protocol.create_message("helm_feedback_response", false);
+    std::optional<ProductErrorCode> fresh_result;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::seconds(1);
+    while (std::chrono::steady_clock::now() < deadline) {
+        fresh_result = bridge.poll_feedback(fresh_response);
+        if (fresh_result.has_value()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    ASSERT_TRUE(fresh_result.has_value());
+    ASSERT_EQ(*fresh_result, ProductErrorCode::Ok);
+    EXPECT_EQ(fresh_response.get_unsigned("sample_count").value_or(0), 1u);
+    EXPECT_EQ(fresh_response.get_unsigned("sample[0].serial_b").value_or(0),
+              kFirstFreshSerialB);
+
+    EXPECT_EQ(bridge.stop(), ProductErrorCode::Ok);
+
+    constexpr uint16_t kSecondHistoricalSerialB = 0x3100;
+    for (size_t index = 0; index < kHistoricalFeedbackCount; ++index) {
+        ASSERT_TRUE(publish_feedback(
+            static_cast<uint16_t>(kSecondHistoricalSerialB + index)));
+    }
+
+    ASSERT_EQ(bridge.start(running_parameters()), ProductErrorCode::Ok);
+
+    auto before_second_fresh_response =
+        protocol.create_message("helm_feedback_response", false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const auto second_historical_result =
+        bridge.poll_feedback(before_second_fresh_response);
+    EXPECT_FALSE(second_historical_result.has_value())
+        << "restarted Helm DDS reader accepted feedback retained while stopped";
+
+    constexpr uint16_t kSecondFreshSerialB = 0x4200;
+    ASSERT_TRUE(publish_feedback(kSecondFreshSerialB));
+
+    auto second_fresh_response =
+        protocol.create_message("helm_feedback_response", false);
+    std::optional<ProductErrorCode> second_fresh_result;
+    const auto second_deadline = std::chrono::steady_clock::now() +
+                                 std::chrono::seconds(1);
+    while (std::chrono::steady_clock::now() < second_deadline) {
+        second_fresh_result = bridge.poll_feedback(second_fresh_response);
+        if (second_fresh_result.has_value()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    ASSERT_TRUE(second_fresh_result.has_value());
+    ASSERT_EQ(*second_fresh_result, ProductErrorCode::Ok);
+    EXPECT_EQ(second_fresh_response.get_unsigned("sample_count").value_or(0),
+              1u);
+    EXPECT_EQ(
+        second_fresh_response.get_unsigned("sample[0].serial_b").value_or(0),
+        kSecondFreshSerialB);
+
+    EXPECT_EQ(bridge.stop(), ProductErrorCode::Ok);
 }
 
 TEST(HelmDdsTestBridgeTest, PacksAtMostFiveCompleteFeedbackSamples) {

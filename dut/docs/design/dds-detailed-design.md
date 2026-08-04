@@ -176,7 +176,7 @@ ring_buffer_size
 ### 4.3 注册流程
 
 ```text
-create_publisher/create_subscriber/create_observer
+create_publisher/create_subscriber/create_reader_after_current_sequence/create_observer
   -> 对应的 *_impl
      -> lifecycle_mutex_
         -> bind_topic_locked
@@ -311,6 +311,14 @@ RingBuffer 写锁的发布 API，入口会立即返回失败，不会再次等�
 每个订阅者独立推进自己的序列号和读取位置。订阅和注销在全局 named semaphore
 保护下更新槽位。
 
+普通 `subscribe()` 以 `start_after_sequence=0` 注册，从仍保留的最早消息开始顺序读取。
+`create_reader_after_current_sequence()` 则以原子方式读取已经提交可见的当前序列 A，再按 A 注册；
+注册时若已经推进到 B，会补读仍保留的 `A < sequence <= B` 消息，随后继续读取新消息。
+因此它跳过 reader 创建前已经提交的历史，同时不丢失快照到注册完成之间的可见消息；
+它不为序列快照等待 Topic 写锁，正在提交但尚未推进 `current_sequence` 的消息属于 A 之后
+的消息。间隙消息若已被覆盖式 RingBuffer 覆盖，仍不提供恢复保证；该接口仅适用于本地
+RingBuffer，外部端点订阅会失败。
+
 `owner_pid` 放在 `SubscriberState` 原有的尾部 padding 中。AArch64 Linux 与 SylixOS
 上的 `sizeof(SubscriberState)` 仍为 128 字节，原有字段的偏移也保持不变；但 padding
 从“未定义内容”变为进程所有权元数据，属于共享内存字段语义变化，因此仍需升级
@@ -336,7 +344,8 @@ RingBuffer 写锁的发布 API，入口会立即返回失败，不会再次等�
 | `poll(..., latest=false)` | 否 | 尝试读取下一序列 |
 | `read(...)` 兼容重载 | 否 | 等价于 `poll` |
 | `read_blocking(..., latest)` | 是 | 先立即读，再等待通知后读取 |
-| 回调订阅 | 后台线程等待 | 顺序读取，失败时回退到最新消息 |
+| 普通回调订阅 | 后台线程等待 | 从仍保留的最早消息顺序读取，失败时回退到最新消息 |
+| after-current 回调订阅 | 后台线程等待 | 跳过注册快照前历史，补读注册间隙后顺序读取 |
 
 `read_next()` 按 `last_read_sequence + 1` 搜索。若消息已被覆盖，严格的下一序列可能
 找不到；回调线程会回退到 `read_latest()`，因此继续工作但可能跳过中间消息。

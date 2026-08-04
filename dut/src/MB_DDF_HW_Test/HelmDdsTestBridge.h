@@ -84,9 +84,11 @@ private:
     void receive_feedback(const void* data, size_t size, uint64_t timestamp_us);
 
     std::unique_ptr<IHelmDdsEndpoint> endpoint_;
+    std::mutex lifecycle_mutex_;
     HelmStreamParameters parameters_{};
     std::thread command_thread_;
     std::atomic_bool active_{false};
+    std::atomic_bool accepting_feedback_{false};
     std::atomic_bool publish_failed_{false};
     std::atomic_uint16_t next_serial_{0};
     bool endpoint_open_{false};

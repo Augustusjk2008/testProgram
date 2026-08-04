@@ -114,6 +114,14 @@ std::shared_ptr<Subscriber> DDSCore::create_subscriber(
     const std::string& topic_name,
     bool enable_checksum,
     const MessageCallback& callback) {
+    return create_subscriber_impl(topic_name, enable_checksum, callback, false);
+}
+
+std::shared_ptr<Subscriber> DDSCore::create_subscriber_impl(
+    const std::string& topic_name,
+    bool enable_checksum,
+    const MessageCallback& callback,
+    bool start_after_current_sequence) {
     if (Detail::before_visible_callback_active()) {
         LOG_ERROR << "DDS Topic/entity creation rejected during before_visible callback: "
                   << topic_name;
@@ -136,7 +144,10 @@ std::shared_ptr<Subscriber> DDSCore::create_subscriber(
         binding.runtime_state->process_name,
         ExternalEndpointRef{},
         binding.runtime_state);
-    if (!subscriber->is_runtime_active() || !subscriber->subscribe(callback)) {
+    const bool subscribed = start_after_current_sequence
+                                ? subscriber->subscribe_after_current_sequence(callback)
+                                : subscriber->subscribe(callback);
+    if (!subscriber->is_runtime_active() || !subscribed) {
         return nullptr;
     }
     if (!subscriber->is_runtime_active()) {
@@ -148,6 +159,13 @@ std::shared_ptr<Subscriber> DDSCore::create_subscriber(
 
 std::shared_ptr<Subscriber> DDSCore::create_reader(const std::string& topic_name, bool enable_checksum, const MessageCallback& callback) {
     return create_subscriber(topic_name, enable_checksum, callback);
+}
+
+std::shared_ptr<Subscriber> DDSCore::create_reader_after_current_sequence(
+    const std::string& topic_name,
+    bool enable_checksum,
+    const MessageCallback& callback) {
+    return create_subscriber_impl(topic_name, enable_checksum, callback, true);
 }
 
 std::shared_ptr<Subscriber> DDSCore::create_subscriber(const std::string& topic_name,

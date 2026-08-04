@@ -202,9 +202,13 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
    对数扫频在 `f0 != f1` 时使用
    `2*pi*f0*f1*T/(f1-f0)*ln(f1*T/(f1*T-t*(f1-f0))) + start`，`T` 取请求中的
    `sweep_duration_s`；`f0 == f1` 时退化为定频。超过 T 后命令归零，但反馈保持到 STOP。
-3. START 只打开 `HelmDdsTestBridge`：create-or-get `local:://helm_command` writer 与
-   `local:://helm_feedback` reader，先同步发布一帧四路零位解锁指令，成功后才以 1 ms
-   周期发布四路共用波形，未启用通道为零。writer 发送严格 27 字节
+3. START 只打开 `HelmDdsTestBridge`：create-or-get `local:://helm_command` writer，并以
+   已提交可见的当前 DDS sequence 为原子边界创建 `local:://helm_feedback` reader；reader
+   跳过边界前仍保留的历史反馈，并补读快照到注册完成之间的新反馈，不清 Topic 或共享
+   RingBuffer，也不为快照等待 Topic 写锁。bridge 在 reader 打开前先进入接收态，因此端点
+   建立期间到达的边界后反馈会进入私有队列；START 只有在首帧指令发布成功后才返回成功。
+   随后以 1 ms 周期发布四路共用波形，未启用通道为零。
+   writer 发送严格 27 字节
    `Helm_ins_frame`；B27/U8 名为 `helm_unlock`，`0x00` 表示无请求，连续测试的所有指令
    均固定为 `0xFF` 请求解锁。该字段不属于 COM3 产品 CSV，不由 PC 设置；现行线序以
    当前 `src/HelmControl/ProtocolModel` 实现为准。reader 只接受严格 41 字节
@@ -215,6 +219,8 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
 5. STOP 先停止并 `join` 本次指令线程，再于 DDS 端点关闭前发布一帧四路零位且
    `helm_unlock=0xFF` 的尾帧，然后关闭端点并清空反馈队列。它不访问板级
    `07/02` PWM/AD7606 路径，也不发送关舵锁或禁止 PWM 语义。
+   bridge 内的 START 与 STOP 生命周期操作互斥执行，端点打开失败、首帧失败或启动异常
+   都会退出接收态、关闭端点并清空该轮私有反馈。
    同一流的 START ACK、主动反馈和 STOP ACK 保持线序：已开始发送的反馈先完成，STOP ACK
    之后不得再发送该会话旧反馈。DDS 端点或发布失败返回 `HELM_DDS_FAILED (0x0301)`；同一
    bridge 重复 START 可返回 `TASK_BUSY`，但 `HELM_BOARD_TEST 07/02` 与该状态无关。
@@ -273,6 +279,11 @@ CSV 读取，不能假定所有响应都以 `status/err_code` 开头；例如 HE
 - `MB_DDF_v2_HelmControl` 的 ADC `read_snapshot()` 失败后继续使用上次反馈值（首次为 0），
   PWM 写失败也只记录告警并继续循环；DDS 命令只缓存最新帧，没有新鲜度 watchdog，命令源
   中断后控制仍会使用旧命令。
+- 舵机连续实测只能跳过 reader 快照前已经提交的历史反馈。若上一轮尾指令的反馈在下一轮
+  快照后才写入 DDS，它具有新的 DDS sequence；当前 27/41 字节舵控帧没有会话 epoch，bridge
+  无法仅凭时间戳或 `serial_a/serial_b` 可靠识别并过滤该晚到反馈。
+- 舵机连续实测的 reader 注册仍使用 DDS 全局 named semaphore；该既有注册锁没有 deadline。
+  若另一个存活进程永久占有该 semaphore，`HELM_START` 可能无法有界返回。
 - `TIMER_JITTER_START` 的 `mode=1` 使用无超时、不可跨线程取消的阻塞 `pread`；停止路径在
   关闭 transport 前 `join` 工作线程，若读取不返回，`join` 可无限等待。
 - `SystemTimer` 创建并写入 stop eventfd，但 worker 实际只等待实时信号；启动失败且

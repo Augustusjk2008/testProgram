@@ -62,26 +62,45 @@ Subscriber::~Subscriber() {
 }
 
 bool Subscriber::subscribe(MessageCallback callback) {
+    return subscribe_impl(std::move(callback), false);
+}
+
+bool Subscriber::subscribe_after_current_sequence(MessageCallback callback) {
+    return subscribe_impl(std::move(callback), true);
+}
+
+bool Subscriber::subscribe_impl(MessageCallback callback,
+                                bool start_after_current_sequence) {
     if (subscribed_.load()) {
         LOG_DEBUG << "Subscriber " << subscriber_id_ << " " << subscriber_name_ << " already subscribed";
         return false; // 已经订阅
     }
     
+    if (start_after_current_sequence && external_io_ != nullptr) {
+        LOG_ERROR << "Subscriber " << subscriber_id_ << " " << subscriber_name_
+                  << " after-current subscription requires a local ring buffer";
+        return false;
+    }
+
     if (external_io_ == nullptr) {
         if (ring_buffer_ == nullptr || !local_runtime_active()) {
             LOG_ERROR << "Subscriber " << subscriber_id_ << " " << subscriber_name_ << " ring buffer is null";
             return false;
         }
 
-        // 在RingBuffer中注册订阅者
-        subscriber_state_ = ring_buffer_->register_subscriber(subscriber_id_, subscriber_name_);
+        // current_sequence 是消息提交的可见性边界。先捕获 A、再按 A 注册；
+        // 注册阶段会补读仍保留的 A < sequence <= B，因而无需等待 Topic 写锁。
+        subscriber_state_ = start_after_current_sequence
+            ? ring_buffer_->register_subscriber_after_sequence(
+                  subscriber_id_, subscriber_name_, ring_buffer_->current_sequence())
+            : ring_buffer_->register_subscriber(subscriber_id_, subscriber_name_);
         if (!subscriber_state_) {
             LOG_DEBUG << "Failed to register subscriber " << subscriber_id_ << " " << subscriber_name_;
             return false;
         }
     }
     
-    callback_ = callback;
+    callback_ = std::move(callback);
     observer_callback_ = nullptr;
     subscribed_.store(true);
     running_.store(callback_ != nullptr);

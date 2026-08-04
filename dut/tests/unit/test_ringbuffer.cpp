@@ -101,6 +101,25 @@ TEST_F(RingBufferTest, MultipleMessages) {
     }
 }
 
+TEST_F(RingBufferTest, RegistrationBoundaryRetainsMessagesPublishedAfterSnapshot) {
+    ASSERT_TRUE(rb_->publish_message("before", 7));
+    const uint64_t boundary = rb_->current_sequence();
+
+    // This publish models the A..B gap between the caller's atomic sequence
+    // snapshot and register_subscriber_after_sequence(A).
+    ASSERT_TRUE(rb_->publish_message("during", 7));
+    auto* sub = rb_->register_subscriber_after_sequence(
+        1, "boundary_sub", boundary);
+    ASSERT_NE(sub, nullptr);
+
+    Message* msg = nullptr;
+    ASSERT_TRUE(rb_->read_next(sub, msg));
+    ASSERT_NE(msg, nullptr);
+    EXPECT_EQ(msg->header.sequence, boundary + 1u);
+    EXPECT_STREQ(static_cast<const char*>(msg->get_data()), "during");
+    EXPECT_FALSE(rb_->read_next(sub, msg));
+}
+
 // ==============================
 // 多订阅者隔离
 // ==============================

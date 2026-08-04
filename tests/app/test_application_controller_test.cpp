@@ -2306,6 +2306,9 @@ TEST(TestApplicationControllerTest, AsyncStopGuardsLifecycleAndCompletesOnAffini
     const ActionResult duplicateSync = controller.stop(5000);
     EXPECT_FALSE(duplicateSync.ok);
     EXPECT_EQ(duplicateSync.code, QStringLiteral("stop_in_progress"));
+    const ActionResult restartWhileStopping = controller.start();
+    EXPECT_FALSE(restartWhileStopping.ok);
+    EXPECT_EQ(restartWhileStopping.code, QStringLiteral("stop_in_progress"));
     const ActionResult prematureShutdown = controller.shutdown();
     EXPECT_FALSE(prematureShutdown.ok);
     EXPECT_EQ(prematureShutdown.code, QStringLiteral("stop_in_progress"));
@@ -2383,6 +2386,94 @@ TEST(TestApplicationControllerTest, AsyncStopStillProjectsSampleQueuedBeforeStop
     ASSERT_EQ(samples.size(), 1);
     EXPECT_EQ(samples.first().taskId, controller.snapshot().taskId);
     EXPECT_EQ(controller.snapshot().sampleCount, 1u);
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest,
+     DoesNotProjectQueuedPriorTaskEventsAfterNextTaskStarts)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString peerError;
+    ASSERT_TRUE(peer.bind(&peerError)) << peerError.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &peerError))
+        << peerError.toStdString();
+
+    TestApplicationController controller;
+    QVector<ApplicationSample> projectedSamples;
+    QObject::connect(&controller,
+                     &TestApplicationController::sampleReceived,
+                     &controller,
+                     [&projectedSamples](const ApplicationSample& sample) {
+                         projectedSamples.push_back(sample);
+                     });
+    ASSERT_TRUE(controller.loadConfigurations(QStringLiteral(HWTEST_APP_TEST_CONFIG),
+                                                halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+
+    TestRunOptions options;
+    options.mode = QStringLiteral("pc_periodic");
+    options.intervalMs = 0;
+    options.maxCycles = 0;
+    ASSERT_TRUE(controller.start(options).ok);
+    const QString firstTaskId = controller.snapshot().taskId;
+    ASSERT_FALSE(firstTaskId.isEmpty());
+    ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(&peerError)) << peerError.toStdString();
+
+    // The next request is a causal barrier: BIZ cannot begin cycle 2 until it has
+    // produced cycle 1's sample and queued A's controller-facing signals.
+    ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+    ASSERT_TRUE(projectedSamples.isEmpty());
+    ASSERT_TRUE(controller.stop(5000).ok);
+    ASSERT_EQ(controller.snapshot().phase, QStringLiteral("stopped"));
+    ASSERT_TRUE(projectedSamples.isEmpty());
+
+    TestRunOptions secondOptions = options;
+    secondOptions.intervalMs = 60000;
+    ASSERT_TRUE(controller.start(secondOptions).ok);
+    const QString secondTaskId = controller.snapshot().taskId;
+    ASSERT_NE(secondTaskId, firstTaskId);
+    ASSERT_EQ(controller.snapshot().sampleCount, 0u);
+
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    bool secondSampleReceived = false;
+    QObject::connect(&controller,
+                     &TestApplicationController::sampleReceived,
+                     &loop,
+                     [&](const ApplicationSample& sample) {
+                         if (sample.taskId == secondTaskId) {
+                             secondSampleReceived = true;
+                             loop.quit();
+                         }
+                     });
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    ASSERT_TRUE(peer.waitForRequest(3000, &peerError)) << peerError.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(&peerError)) << peerError.toStdString();
+    timeout.start(3000);
+    loop.exec();
+
+    ASSERT_TRUE(secondSampleReceived);
+    EXPECT_EQ(controller.snapshot().taskId, secondTaskId);
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("running"));
+    ASSERT_FALSE(projectedSamples.isEmpty());
+    for (const auto& sample : projectedSamples) {
+        EXPECT_EQ(sample.taskId, secondTaskId);
+    }
+    EXPECT_EQ(controller.snapshot().sampleCount, 1u);
+    EXPECT_TRUE(controller.stop(5000).ok);
     EXPECT_TRUE(controller.shutdown().ok);
 }
 
