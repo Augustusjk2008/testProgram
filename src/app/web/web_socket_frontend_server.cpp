@@ -1,5 +1,6 @@
 #include "web_socket_frontend_server.h"
 
+#include "../src/continuous_data_recorder.h"
 #include "web_protocol.h"
 #include "web_telemetry_batcher.h"
 
@@ -1021,6 +1022,8 @@ public:
             QStringLiteral("intervalMs"),
             QStringLiteral("maxCycles"),
             QStringLiteral("saveData"),
+            QStringLiteral("dataDirectory"),
+            QStringLiteral("dataFileName"),
             QStringLiteral("algorithmParameters"),
         };
         for (auto iterator = request.params.constBegin();
@@ -1121,6 +1124,44 @@ public:
                 return false;
             }
             parsed.saveData = saveData.toBool();
+        }
+
+        if (request.params.contains(QStringLiteral("dataDirectory"))) {
+            const QJsonValue directory =
+                request.params.value(QStringLiteral("dataDirectory"));
+            if (!directory.isString()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'dataDirectory' must be a string"));
+                }
+                return false;
+            }
+            parsed.dataDirectory = directory.toString();
+        }
+        if (request.params.contains(QStringLiteral("dataFileName"))) {
+            const QJsonValue fileName =
+                request.params.value(QStringLiteral("dataFileName"));
+            if (!fileName.isString()) {
+                if (error != nullptr) {
+                    *error = protocolError(
+                        QStringLiteral("invalid_envelope"),
+                        QStringLiteral("Parameter 'dataFileName' must be a string"));
+                }
+                return false;
+            }
+            parsed.dataFileName = fileName.toString();
+        }
+        const bool saveContinuousData = parsed.saveData &&
+            parsed.mode != QStringLiteral("single");
+        if (saveContinuousData) {
+            const ActionResult destinationValidated =
+                ContinuousDataRecorder::validateDestinationOverrides(
+                    parsed.dataDirectory, parsed.dataFileName);
+            if (!destinationValidated.ok) {
+                if (error != nullptr) *error = destinationValidated;
+                return false;
+            }
         }
 
         if (request.params.contains(QStringLiteral("algorithmParameters"))) {

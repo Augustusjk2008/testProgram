@@ -54,7 +54,7 @@
 - `module = "control"` 的资源按 `providerId` 进入标准控制 Provider；其他设备按 `adapterId` 进入 Adapter 路径。
 - 纯协议/golden 测试可以直接使用 Simulator；产品模拟和集成验证必须沿 HAL Mock 或标准 Provider 路径。
 - 配置、日志、报告和连续数据文件由各自服务边界访问，不属于生产硬件/通讯 I/O。
-- 应用层 `ConfigurationService` 只通过服务端 `documentId` 映射读取和原子写入 testcfg、测试目录与工位覆盖；浏览器不能提交路径。工位覆盖先受限投影到基础 HAL 配置，基础文件和 safe state 不被改写。
+- 应用层 `ConfigurationService` 只通过服务端 `documentId` 映射读取和原子写入 testcfg、测试目录与工位覆盖；浏览器不能提交这些配置或 HAL 路径。唯一的文件路径例外是 WebSocket 契约定义的 `start.dataDirectory`：它只为受信任本机连续测试覆盖本次数据输出目录，不回写配置，也不改变 HAL、日志、报告或分析路径。工位覆盖先受限投影到基础 HAL 配置，基础文件和 safe state 不被改写。
 - 浏览器只通过回环 WebSocket 使用应用 DTO；WebSocket 后端不持有产品协议或底层设备对象。
 
 ## 5. 生命周期与安全边界

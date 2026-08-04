@@ -53,6 +53,8 @@ struct TestRunOptions {
     quint64 maxCycles = 1;
     bool saveData = false;
     QVariantMap algorithmParameters;
+    QString dataDirectory;
+    QString dataFileName;
 };
 
 struct ApplicationSample {
@@ -180,6 +182,7 @@ struct TestDescriptor {
     QVariantMap runParameterDefaults;
     PostRunAnalysisCapability postRunAnalysis;
     bool stoppable = true;
+    QString reportTitle;
 };
 
 struct DigitalSwitchDescriptor {

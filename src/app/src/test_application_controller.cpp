@@ -291,7 +291,9 @@ TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
     const QVariantMap presentation = config.reportFields;
     descriptor.stoppable = presentation.value(QStringLiteral("stoppable"), true)
                                .toBool();
-    descriptor.title = presentation.value(QStringLiteral("title")).toString().trimmed();
+    descriptor.reportTitle =
+        presentation.value(QStringLiteral("title")).toString().trimmed();
+    descriptor.title = descriptor.reportTitle;
     if (descriptor.title.isEmpty()) {
         descriptor.title = step.name.trimmed();
     }
@@ -1763,6 +1765,15 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
         return failure(QStringLiteral("ParameterRangeError"),
                        QStringLiteral("PC periodic maxCycles must be 0 or at most 1000000000"));
     }
+    const bool saveContinuousData = options.saveData &&
+        (mode == hwtest::biz::RunMode::PcPeriodic ||
+         mode == hwtest::biz::RunMode::DeviceStream);
+    if (saveContinuousData) {
+        const ActionResult destinationValidated =
+            ContinuousDataRecorder::validateDestinationOverrides(
+                options.dataDirectory, options.dataFileName);
+        if (!destinationValidated.ok) return destinationValidated;
+    }
 
     const auto normalizedParameters =
         hwtest::algorithm::mbddf::normalizeRunParameters(
@@ -1828,16 +1839,15 @@ ActionResult TestApplicationController::start(const TestRunOptions& options)
     m_impl->snapshot.effectiveRunParameters = normalizedParameters.value;
     m_impl->suppressedResultTaskId.clear();
     m_impl->dataRecorder.cancel();
-    const bool saveContinuousData = options.saveData &&
-        (mode == hwtest::biz::RunMode::PcPeriodic ||
-         mode == hwtest::biz::RunMode::DeviceStream);
     if (saveContinuousData) {
         const ActionResult recording = m_impl->dataRecorder.begin(
             m_impl->dataStorageDirectory,
             m_impl->descriptor,
             runMode,
             effectiveIntervalMs,
-            effectiveMaxCycles);
+            effectiveMaxCycles,
+            options.dataDirectory,
+            options.dataFileName);
         if (!recording.ok) {
             m_impl->analysisCoordinator.discardPrepared();
             m_impl->snapshot.dataSaveError = recording.message;

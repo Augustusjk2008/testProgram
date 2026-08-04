@@ -5,6 +5,8 @@ export interface TestRunOptions {
   intervalMs: number
   maxCycles: number
   saveData: boolean
+  dataDirectory?: string
+  dataFileName?: string
   algorithmParameters: Record<string, unknown>
 }
 

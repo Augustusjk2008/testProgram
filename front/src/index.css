@@ -638,6 +638,29 @@ code,
   white-space: nowrap;
 }
 
+.run-save-destination {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.run-save-destination input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--line-bright);
+  background: var(--input);
+  color: var(--text);
+  font: 11px "Geist Mono", monospace;
+}
+
+.run-save-destination input:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
 .run-parameters .serial-auxiliary-port {
   grid-column: 1 / -1;
   grid-template-columns: auto minmax(0, 1fr);
@@ -3019,7 +3042,8 @@ code,
 
   .config-form-section__fields,
   .config-form-list__fields,
-  .config-form-list__item {
+  .config-form-list__item,
+  .run-save-destination {
     grid-template-columns: 1fr;
   }
 

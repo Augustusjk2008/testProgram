@@ -3,21 +3,37 @@
 #include <app/test_application_controller.h>
 
 #include <QFile>
+#include <QSaveFile>
 #include <QString>
 #include <QVector>
+
+#include <functional>
+#include <memory>
 
 namespace hwtest::app {
 
 class ContinuousDataRecorder final {
 public:
-    ContinuousDataRecorder() = default;
+    using Clock = std::function<qint64()>;
+    using OutputFileFactory =
+        std::function<std::unique_ptr<QSaveFile>(const QString&)>;
+
+    explicit ContinuousDataRecorder(Clock clock = {},
+                                    OutputFileFactory outputFileFactory = {});
     ~ContinuousDataRecorder();
+
+    static ActionResult validateDestinationOverrides(
+        const QString& dataDirectory,
+        const QString& dataFileName,
+        QString* normalizedFileName = nullptr);
 
     ActionResult begin(const QString& directory,
                        const TestDescriptor& descriptor,
                        const QString& runMode,
                        int intervalMs,
-                       quint64 maxCycles);
+                       quint64 maxCycles,
+                       const QString& dataDirectory = {},
+                       const QString& dataFileName = {});
     void setTaskId(const QString& taskId);
     ActionResult append(const ApplicationSample& sample);
     ActionResult finish(const QString& finalStatus,
@@ -34,6 +50,7 @@ private:
     };
 
     ActionResult writePartial(const QByteArray& bytes, bool flush);
+    void releaseOutputReservation();
     void resetState();
 
     QFile m_partialFile;
@@ -41,9 +58,14 @@ private:
     QVector<Column> m_columns;
     QString m_taskId;
     QString m_runMode;
+    QString m_outputDirectory;
+    QString m_requestedFileName;
     QString m_outputPath;
     QString m_partialPath;
     QString m_writeError;
+    Clock m_clock;
+    OutputFileFactory m_outputFileFactory;
+    bool m_outputReservationActive = false;
     qint64 m_startedAtUs = 0;
     quint64 m_sampleCount = 0;
     quint64 m_maxCycles = 0;

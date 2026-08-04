@@ -277,6 +277,8 @@ describe('HwtestClient protocol boundary', () => {
       intervalMs: 250,
       maxCycles: 0,
       saveData: true,
+      dataDirectory: 'D:\\captures\\MB_DDF',
+      dataFileName: 'continuous-run.txt',
       algorithmParameters: { waveform: 4, ampl: 250 },
     }))).toEqual({
       v: 1,
@@ -288,6 +290,8 @@ describe('HwtestClient protocol boundary', () => {
         intervalMs: 250,
         maxCycles: 0,
         saveData: true,
+        dataDirectory: 'D:\\captures\\MB_DDF',
+        dataFileName: 'continuous-run.txt',
         algorithmParameters: { waveform: 4, ampl: 250 },
       },
     })

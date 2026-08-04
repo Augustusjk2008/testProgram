@@ -1364,7 +1364,7 @@ TEST(TestApplicationControllerTest, StoppedPcPeriodicSavesCompleteElectricalHeal
     ASSERT_FALSE(snapshot.dataFilePath.isEmpty());
     const QFileInfo savedInfo(snapshot.dataFilePath);
     EXPECT_EQ(savedInfo.absolutePath(), QFileInfo(dataDirectory).absoluteFilePath());
-    EXPECT_TRUE(savedInfo.fileName().startsWith(QStringLiteral("ElectricalHealth_data_")));
+    EXPECT_TRUE(savedInfo.fileName().startsWith(QStringLiteral("电气健康_")));
     EXPECT_EQ(savedInfo.suffix(), QStringLiteral("txt"));
     ASSERT_TRUE(savedInfo.isFile());
 
@@ -1399,6 +1399,130 @@ TEST(TestApplicationControllerTest, StoppedPcPeriodicSavesCompleteElectricalHeal
     EXPECT_TRUE(dataLines.at(1).contains(QStringLiteral("\t11.1\t12.2\t")));
     EXPECT_TRUE(dataLines.at(2).contains(QStringLiteral("\t4661\t0\t0x0000\t")));
     EXPECT_TRUE(dataLines.at(2).contains(QStringLiteral("\t21.1\t22.2\t")));
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest,
+     StoppedPcPeriodicUsesExplicitDataDirectoryAndBaseName)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString error;
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+    const QString configuredDirectory =
+        directory.filePath(QStringLiteral("configured-data"));
+    const QString requestedDirectory =
+        QDir(directory.filePath(QStringLiteral("requested-data"))).absolutePath();
+    ASSERT_TRUE(setDataStorageDirectory(halConfigPath, configuredDirectory, &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_ELEC_HEALTH_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+
+    TestRunOptions options;
+    options.mode = QStringLiteral("pc_periodic");
+    options.intervalMs = 0;
+    options.maxCycles = 0;
+    options.saveData = true;
+    options.dataDirectory = requestedDirectory;
+    options.dataFileName = QStringLiteral("operator-capture");
+    ASSERT_TRUE(controller.start(options).ok);
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(
+                    QStringLiteral("elec_health_status_response"),
+                    {{QStringLiteral("status"), 0},
+                     {QStringLiteral("err_code"), 0},
+                     {QStringLiteral("c_volt"), 11.1},
+                     {QStringLiteral("b_volt"), 12.2},
+                     {QStringLiteral("external_vol"), 3.3},
+                     {QStringLiteral("core_vol"), 1.0},
+                     {QStringLiteral("assist_vol"), 1.8},
+                     {QStringLiteral("v28_5"), 28.5},
+                     {QStringLiteral("js_5V"), 5.0},
+                     {QStringLiteral("dyt_5V"), 5.1},
+                     {QStringLiteral("power_24V"), 24.0},
+                     {QStringLiteral("value_YX"), 4.9},
+                     {QStringLiteral("activate_bits"), 0}},
+                    &error))
+        << error.toStdString();
+    ASSERT_TRUE(controller.stop(5000).ok);
+
+    const QFileInfo savedInfo(controller.snapshot().dataFilePath);
+    EXPECT_EQ(savedInfo.absolutePath(), QFileInfo(requestedDirectory).absoluteFilePath());
+    EXPECT_EQ(savedInfo.fileName(), QStringLiteral("operator-capture.txt"));
+    EXPECT_TRUE(savedInfo.isFile());
+    EXPECT_TRUE(QDir(configuredDirectory)
+                    .entryList(QStringList{QStringLiteral("*.txt")}, QDir::Files)
+                    .isEmpty());
+    EXPECT_TRUE(controller.shutdown().ok);
+}
+
+TEST(TestApplicationControllerTest,
+     PcPeriodicRejectsRelativeDirectoryAndPathLikeDataFileNameBeforeRun)
+{
+    ensureQtApplication();
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QString error;
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QString halConfigPath;
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_ELEC_HEALTH_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+
+    TestRunOptions options;
+    options.mode = QStringLiteral("pc_periodic");
+    options.intervalMs = 0;
+    options.maxCycles = 1;
+    options.saveData = true;
+    options.dataDirectory = QStringLiteral("relative-output");
+    ActionResult rejected = controller.start(options);
+    EXPECT_FALSE(rejected.ok);
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
+
+#ifdef Q_OS_WIN
+    options.dataDirectory = QStringLiteral("//server");
+    rejected = controller.start(options);
+    EXPECT_FALSE(rejected.ok);
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
+#endif
+
+    options.dataDirectory = QDir(directory.filePath(QStringLiteral("requested-data"))).absolutePath();
+    options.dataFileName = QStringLiteral("nested/capture.txt");
+    rejected = controller.start(options);
+    EXPECT_FALSE(rejected.ok);
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
+
+    options.dataFileName = QStringLiteral("nested\\capture.txt");
+    rejected = controller.start(options);
+    EXPECT_FALSE(rejected.ok);
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("ready"));
     EXPECT_TRUE(controller.shutdown().ok);
 }
 

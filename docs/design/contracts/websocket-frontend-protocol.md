@@ -33,7 +33,7 @@
 - 服务器发送紧凑 JSON，不依赖空白或对象成员顺序。
 - 每个有效请求恰好产生一个相同 `id` 的 reply。快照和样本是独立异步事件，可以出现在请求与 reply 之间。
 - 所有对浏览器可见的事件序号必须是 `0..9007199254740991` 内的整数。服务端不得把超出 JavaScript 安全整数范围的 `snapshot.seq`、`sample.seq`、`sampleBatch.firstSeq` 或 `sampleBatch.lastSeq` 转成 JSON number 后发送。
-- `selectAuxiliarySerialPort`、`snapshot.auxiliarySerialPortName`、`setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`setTelemetryDelivery`、descriptor 中的 `stoppable`/`postRunAnalysis`/`runParameters[].persistValues`、快照 `rawData.boardTest`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。新客户端收到旧服务端缺失的辅助串口字段时回退为空字符串，缺失 `stoppable` 时兼容回退为 true；缺失后处理字段时安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。显式 `stoppable` 与 `persistValues` 必须为 boolean，其他类型是协议边界错误。
+- `selectAuxiliarySerialPort`、`snapshot.auxiliarySerialPortName`、`setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`start.dataDirectory`、`start.dataFileName`、`setTelemetryDelivery`、descriptor 中的 `stoppable`/`postRunAnalysis`/`runParameters[].persistValues`、快照 `rawData.boardTest`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。旧客户端省略两个保存目标字段时继续使用 6.1 节默认规则；不认识它们的旧服务端会按严格参数白名单返回 `invalid_envelope`，客户端不得删除用户指定的目标后静默重试。新客户端收到旧服务端缺失的辅助串口字段时回退为空字符串，缺失 `stoppable` 时兼容回退为 true；缺失后处理字段时安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。显式 `stoppable` 与 `persistValues` 必须为 boolean，其他类型是协议边界错误。
 
 ## 4. 消息结构
 
@@ -98,7 +98,8 @@
 | `intervalMs` | integer |
 | `maxCycles`、`cycleIndex`、`sampleCount` | non-negative integer |
 | `dataSaveEnabled` | boolean；当前任务是否启用了后端连续数据保存 |
-| `dataFilePath`、`dataSaveError` | string；后端目标/完成文件路径与保存错误，未启用或无错误时为空 |
+| `dataFilePath` | string；服务端归一化后的绝对路径。未启用保存时为空；显式文件名在运行中投影当前候选最终目标，默认名因结束时间未知而保持为空；终态保存成功后是已原子占位并提交的最终 TXT，失败且存在可恢复工作文件时是 `.partial` |
+| `dataSaveError` | string；保存错误，未启用或无错误时为空 |
 | `digitalStimulus` | object；当前数字刺激状态，字段见下表 |
 | `analysis` | object；后处理 capability、当前分析身份、进度和通道摘要，字段与可用性见 4.4.1；不含完整伯德数组 |
 
@@ -236,7 +237,8 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `invalid_run_mode` | `start.mode` 不是固定三种模式之一 | 是 |
 | `CapabilityUnsupported` | `start.mode` 未在当前配置的 `supportedRunModes` 中声明，或刺激快照超出 WebSocket v1 的 16 位投影 | 是 |
 | `capability_unsupported` | `setDigitalStimulus`/`resetDigitalStimulus` 面对超出 v1 范围的刺激配置 | 是 |
-| `ParameterRangeError` | `start.intervalMs`、`start.maxCycles` 或算法运行参数缺失、未知、非有限、类型/范围不合法 | 是 |
+| `ParameterRangeError` | `start.intervalMs`、`start.maxCycles`、算法运行参数或连续数据保存目标的值/范围不合法；已定义字段的非预期 JSON 类型仍使用 `invalid_envelope` | 是 |
+| `data_storage` | 保存目标参数合法，但目录、工作文件或最终文件无法创建、写入、刷新或原子提交 | 是 |
 | `analysis_not_ready` | 请求身份是当前分析，但状态尚非 `completed`/`partial`，或该通道尚无可读投影 | 是 |
 | `stale_analysis_result` | `analysisResult` 的 taskId 或 analysisGeneration 不是当前身份 | 是 |
 | `analysis_projection_invalid` | 后端保存的投影不满足点数、数组、有限数或空洞编码不变量 | 是 |
@@ -266,7 +268,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `selectSerialPort` | `{"portName":"COM7"}` | 调用 `selectSerialPort`；`portName` 必须是非空字符串 |
 | `selectAuxiliarySerialPort` | `{"portName":"COM8"}` | 只允许当前 `mbddf.serial_test` 在配置态选择 `ports` 枚举中的非空串口；保存到 `snapshot.auxiliarySerialPortName`。回显启动时必须已选择，且不得与主控制串口相同；回环忽略该端口 |
 | `prepare` | `{}` | 调用 `prepare` |
-| `start` | `{}` 或 `{"mode":"device_stream","saveData":true,"algorithmParameters":{"waveform":4,"ampl":3.5}}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`，且必须由当前 descriptor 声明；`intervalMs` 为 `0..3600000` 的整数，`0` 表示上一轮完整收发结束后不增加额外等待，所有步骤仍严格串行；`maxCycles` 为 `0..1000000000` 的整数且 `0` 表示 PC 周期不限轮数。两者只有 `pc_periodic` 具备调度含义，其他模式由控制器归一为 `1000/1`；`saveData` 只能是 boolean，`pc_periodic` 与 `device_stream` 均可启用保存，`single` 强制不保存；`algorithmParameters` 必须是 object，键和值再由当前算法 Schema 校验 |
+| `start` | `{}` 或 `{"mode":"device_stream","saveData":true,"dataDirectory":"D:\\captures\\MB_DDF","dataFileName":"run-001.txt","algorithmParameters":{"waveform":4,"ampl":3.5}}` | 调用 `start(TestRunOptions)`；空对象保持单次兼容。`mode` 只允许 `single`、`pc_periodic`、`device_stream`，且必须由当前 descriptor 声明；`intervalMs` 为 `0..3600000` 的整数，`0` 表示上一轮完整收发结束后不增加额外等待，所有步骤仍严格串行；`maxCycles` 为 `0..1000000000` 的整数且 `0` 表示 PC 周期不限轮数。两者只有 `pc_periodic` 具备调度含义，其他模式由控制器归一为 `1000/1`；`saveData` 只能是 boolean，`pc_periodic` 与 `device_stream` 均可启用保存，`single` 强制不保存。`dataDirectory`、`dataFileName` 是可选 string，只在连续保存生效时解释；空白值分别回退配置目录和默认文件名，非空值遵循 6.1 节。`algorithmParameters` 必须是 object，键和值再由当前算法 Schema 校验 |
 | `pause` | `{}` | 调用 `pause`；活动 descriptor `stoppable=false` 时返回 `CapabilityUnsupported`，不调用控制器动作 |
 | `resume` | `{}` | 调用 `resume`；活动 descriptor `stoppable=false` 时返回 `CapabilityUnsupported`，不调用控制器动作 |
 | `setDigitalStimulus` | `{"switchId":"di0","active":true,"expectedRevision":0}` | 必须且只能包含这三个字段；`switchId` 为非空 string，`active` 为 boolean，`expectedRevision` 为 0..9007199254740991 的非负安全整数。未知字段（包括 `resourceId`、`adapterId`、端口或路径）一律 `invalid_envelope`；控制器再按已加载配置白名单验证 `switchId`。reply 的 `data.digitalStimulus` 返回当前状态 |
@@ -279,19 +281,21 @@ station/testcfg 表单描述使用轻量契约 `{"contractVersion":1,"mode":"for
 
 表单 Schema 不写入配置文件，也不参与配置 revision；客户端只能在完整 `value` 草稿上修改 Schema 声明路径，必须原样保留未显示字段。文档未显式写某个字段时，`defaultValue` 只作为界面显示、条件判断和保存前校验的继承值；工程师实际修改该控件后才把值写入草稿。判据比较字段的 `acceptOptionIndex=true` 只兼容旧配置中的枚举整数，工程师重新选择后写入稳定字符串名。`optionsSource=serialPorts` 使用 `ports` 结果；板卡型号对应的 NI 设备名和序列号选项使用 `hardwareOptions`，但始终允许手工输入。目录文档由固定的启停/排序控件编辑，不使用该表单契约。未知契约版本或缺少表单描述时，浏览器不得回退成原始配置编辑器。
 
-除 `start`、`selectTest`、`configDocument`、`saveConfig`、`selectControl`、`selectSerialPort`、`selectAuxiliarySerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，`configDocument`/`saveConfig` 只读取服务端文档 ID，三者都不读取客户端路径。testcfg 的文件名、`schemaVersion`、`configId` 和 `steps[].algorithmId` 是当前只读标识；“本次运行参数”继续是单次启动覆盖，不因配置页面保存而回写。`selectSerialPort` 保留既有非空端口名覆盖能力；`selectAuxiliarySerialPort` 则必须命中本次系统枚举。`start`、`saveConfig` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知顶层字段按 `invalid_envelope` 拒绝；`algorithmParameters` 内的未知字段由应用/算法边界以 `ParameterRangeError` 拒绝。`start` 不接受客户端保存目录、文件名或测量字段；这些内容不能借 `saveData` 绕过后端配置和 descriptor 白名单。
+除 `start`、`selectTest`、`configDocument`、`saveConfig`、`selectControl`、`selectSerialPort`、`selectAuxiliarySerialPort` 和 `setDigitalStimulus` 外，无参数动作不得从 `params` 读取行为配置。`load` 尤其不得读取 `testConfigPath`、`halConfigPath` 或其他客户端路径字段；`selectTest` 只读取白名单标识，`configDocument`/`saveConfig` 只读取服务端文档 ID，三者都不读取客户端路径。testcfg 的文件名、`schemaVersion`、`configId` 和 `steps[].algorithmId` 是当前只读标识；“本次运行参数”继续是单次启动覆盖，不因配置页面保存而回写。`selectSerialPort` 保留既有非空端口名覆盖能力；`selectAuxiliarySerialPort` 则必须命中本次系统枚举。`start`、`saveConfig` 与 `setDigitalStimulus` 都只接受上表列出的字段，未知顶层字段按 `invalid_envelope` 拒绝；`algorithmParameters` 内的未知字段由应用/算法边界以 `ParameterRangeError` 拒绝。`start.dataDirectory` 与 `start.dataFileName` 是受信任本机连续数据文件的一次性输出覆盖，不进入 `ConfigurationService`、testcfg、工位覆盖、HAL、Provider/Adapter、设备端点或分析请求；除这两个字段外，`start` 不接受客户端路径、任意测量字段或其他保存配置。
 
 ### 6.1 连续模式数据文件
 
-`[当前实现]` `saveData=true` 且运行模式为 `pc_periodic` 或 `device_stream` 时，`TestApplicationController` 在后端记录配置 descriptor 定义的全部测量列，而不是任意 `ApplicationSample.values` 字段或浏览器当前勾选的曲线字段。`pc_periodic` 记录 PC 每轮单发单回产生的样本；`device_stream` 记录一次启动后设备持续回告产生的全部样本，应用层不会为它重复发起 PC 请求。默认 HAL/应用组合配置为：
+`[当前实现]` `saveData=true` 且运行模式为 `pc_periodic` 或 `device_stream` 时，`TestApplicationController` 在后端记录配置 descriptor 定义的全部测量列，而不是任意 `ApplicationSample.values` 字段或浏览器当前勾选的曲线字段。`pc_periodic` 记录 PC 每轮单发单回产生的样本；`device_stream` 记录一次启动后设备持续回告产生的全部样本，应用层不会为它重复发起 PC 请求。`dataDirectory` 与 `dataFileName` 只覆盖本次连续数据 TXT，不回写配置，也不改变日志、报告、HAL、设备通讯或后处理的存储目录。默认 HAL/应用组合配置为：
 
 ```json
 {"dataStorage":{"directory":"../data"}}
 ```
 
-绝对目录直接使用；相对目录按 HAL 配置文件所在目录解析。字段缺失时同样回退 `../data`。客户端无权覆盖目录。目录或初始文件不能创建时，`start` 返回控制器错误 `data_storage`；运行中写入或终态提交失败时，完整快照的 `dataSaveError` 返回诊断。
+`dataDirectory` 缺失或 trim 后为空时使用合并 HAL/应用配置的 `dataStorage.directory`；配置中的绝对目录直接使用，相对目录按 HAL 配置文件所在目录解析，字段缺失时回退 `../data`。非空 `dataDirectory` 必须是服务端主机可识别的完全限定绝对文件系统路径；Windows 盘符相对路径（如 `H:output`）、裸盘符和当前盘根相对路径都拒绝，UNC 路径至少包含非空的 server 与 share 两段。服务端不把有效绝对路径限制在配置目录内，也不展开 URI、环境变量或 `~`。映射盘、UNC、符号链接和 junction 按主机文件系统及服务端进程权限处理。这是用户确认的受信任回环客户端能力：获得 WebSocket 会话的本机客户端可让服务端进程在其权限范围内创建任意绝对目录和连续数据文件，不得把该权限外推到配置、HAL 或其他文件接口。
 
-最终文件固定为带 UTF-8 BOM 的 `.txt`：顶部是一行标题和 `# key=value` 元数据，至少包含 `started_at`、`finished_at`、`final_status`、`final_detail`、`sample_count`、`run_mode`、`repeat_delay_ms`、`config_id`、`algorithm_id` 与 `max_cycles`；`device_stream` 的两个 PC 周期字段固定写 `NA`。空行之后是制表符分隔、换行符为 LF 的固定表头和数据行。文件名使用后端开始时间；电气健康保持 PyQt 参考名 `ElectricalHealth_data_YYYYMMDD_HHMMSS_ffffff.txt`。样本提供非负 `streamElapsedUs` 时，`sample_time_us` 直接使用该相对值；任意负值或字段不可用时保持 `timestampUs - started_at` 的兼容计算并钳制为非负值。
+`dataFileName` 缺失或 trim 后为空时，服务端在终态生成 `<safeProject>_<startedAt>-<finishedAt>.txt`。`safeProject` 取 trim 后的 `reportFields.title`，空时回退 `configId`，除 Unicode 字母/数字、`-`、`_` 外的字符统一替换为 `_`；两个时间均按 `Asia/Shanghai` 格式化为 `yyyyMMdd_HHmmss_ffffff`。非空 `dataFileName` 必须是 basename，不得含 `/`、`\`、Windows 非法字符、ASCII 控制字符、尾随点/空格、`.`、`..` 或保留设备名；无扩展名时自动补 `.txt`，大小写不敏感的 `.txt` 统一为小写，其他扩展名拒绝。文件名 stem 最长 220 个字符。最终名冲突时在 `.txt` 前追加最小可用的 `_N`，显式名和默认名使用同一规则。工作 `.partial` 以排他创建避免协作实例互相截断；终态再以排他占位选择最终名，因此不会覆盖在运行期间新出现的同名文件。
+
+最终文件固定为带 UTF-8 BOM 的 `.txt`：顶部是一行标题和 `# key=value` 元数据，至少包含 `started_at`、`finished_at`、`final_status`、`final_detail`、`sample_count`、`run_mode`、`repeat_delay_ms`、`config_id`、`algorithm_id` 与 `max_cycles`；`device_stream` 的两个 PC 周期字段固定写 `NA`。`started_at`、`finished_at` 使用 `Asia/Shanghai` 的 `yyyy-MM-dd HH:mm:ss.ffffff+08:00`，不依赖服务端系统本地时区；样本的 UTC epoch `timestampUs` 及相对 `sample_time_us` 语义不变。空行之后是制表符分隔、换行符为 LF 的固定表头和数据行。样本提供非负 `streamElapsedUs` 时，`sample_time_us` 直接使用该相对值；任意负值或字段不可用时保持 `timestampUs - started_at` 的兼容计算并钳制为非负值。
 
 电气健康表头保持参考实现的固定顺序：
 
@@ -301,7 +305,7 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 
 实际分隔符是 TAB。其他连续模式配置使用同样的前五列，后续列由已验证 descriptor 的全部 `measurements` 固定投影，并排除已在前缀中的 `status`/`err_code`；单位非空时写入列名后缀。前端图表的显示/隐藏、组合、时间窗和降采样均不改变该列集合。响应 `status != 0` 或 `err_code != 0` 时仍保存状态和错误码，测量列写 `NA`。协议 F32 在内部保留来源类型，TXT 使用能够往返为同一 F32 的最短十进制表示；真实 Double 继续使用既有双精度格式，不统一截断为 F32 位数。
 
-运行期数据逐样本刷新到同目录的 `.partial` 文件，避免不限 PC 周期或设备持续回告在内存累积；正常完成、用户停止或错误终态时，后端使用 `QSaveFile` 把元数据和 TSV 原子提交为最终 TXT，再删除 `.partial`。提交失败时保留 `.partial` 供恢复。未勾选或 `single` 均不创建数据文件。
+运行期数据逐样本刷新到同目录排他创建的 `.partial` 文件，避免不限 PC 周期或设备持续回告在内存累积。显式文件名在工作文件成功打开后即可通过 `dataFilePath` 投影当前候选最终目标；若终态前出现同名文件，最终路径可按 `_N` 规则调整。默认名依赖结束时间，运行中 `dataFilePath` 保持为空。正常完成、用户停止或错误终态时，后端先排他占位最终名，再使用 `QSaveFile` 把元数据和 TSV 原子提交为最终 TXT；成功终态投影最终绝对路径，并尽力删除已无用途的 `.partial`。写入或提交失败时保留 `.partial` 供恢复，将其绝对路径投影到 `dataFilePath` 并在 `dataSaveError` 返回诊断；后续启动不得删除该恢复文件。目录、工作文件不能创建时 `start` 返回 `data_storage`；目标值不合法时在打开夹具或启动任务前返回 `ParameterRangeError`。未勾选或 `single` 均不解释两个目标字段且不创建数据文件。
 
 ### 6.2 `analysisResult` 投影不变量
 

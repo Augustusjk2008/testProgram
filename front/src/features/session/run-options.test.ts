@@ -39,6 +39,44 @@ describe('continuous data run options', () => {
     })
   })
 
+  it('keeps an enabled device-stream save destination in the start request', () => {
+    expect(normalizeRunOptionsForStart({
+      mode: 'device_stream',
+      intervalMs: 250,
+      maxCycles: 0,
+      saveData: true,
+      dataDirectory: 'D:\\captures\\MB_DDF',
+      dataFileName: 'continuous-run.txt',
+      algorithmParameters: { waveform: 4 },
+    })).toEqual({
+      mode: 'device_stream',
+      intervalMs: 1000,
+      maxCycles: 1,
+      saveData: true,
+      dataDirectory: 'D:\\captures\\MB_DDF',
+      dataFileName: 'continuous-run.txt',
+      algorithmParameters: { waveform: 4 },
+    })
+  })
+
+  it('omits save destinations when periodic saving is disabled', () => {
+    expect(normalizeRunOptionsForStart({
+      mode: 'pc_periodic',
+      intervalMs: 250,
+      maxCycles: 0,
+      saveData: false,
+      dataDirectory: 'D:\\captures\\MB_DDF',
+      dataFileName: 'continuous-run.txt',
+      algorithmParameters: { waveform: 4 },
+    })).toEqual({
+      mode: 'pc_periodic',
+      intervalMs: 250,
+      maxCycles: 0,
+      saveData: false,
+      algorithmParameters: { waveform: 4 },
+    })
+  })
+
   it('forces single runs not to save', () => {
     expect(normalizeRunOptionsForStart({
       mode: 'single',

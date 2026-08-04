@@ -15,6 +15,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
@@ -83,6 +84,15 @@ bool writeJsonObject(const QString& path, const QJsonObject& value)
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
     return file.write(QJsonDocument(value).toJson(QJsonDocument::Indented)) >= 0;
+}
+
+QString fileTimestampFromMetadata(const QString& timestamp)
+{
+    QString date = timestamp.left(10);
+    QString time = timestamp.mid(11, 8);
+    date.remove(QLatin1Char('-'));
+    time.remove(QLatin1Char(':'));
+    return date + QLatin1Char('_') + time + QLatin1Char('_') + timestamp.mid(20, 6);
 }
 
 QJsonObject niAdapterHalConfig(const QString& libraryPath)
@@ -811,6 +821,156 @@ TEST(WebSocketControllerIntegrationTest, RejectsMistypedContinuousRunParametersA
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
 }
 
+TEST(WebSocketControllerIntegrationTest,
+     ValidatesContinuousDataDestinationParametersAtBoundary)
+{
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    WebSocketFrontendServer server(&controller, launchOptions(), options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+
+    const QJsonObject typeDirectory = sendAndWait(
+        &client,
+        QStringLiteral("data-directory-type"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 10},
+                    {QStringLiteral("maxCycles"), 1},
+                    {QStringLiteral("saveData"), true},
+                    {QStringLiteral("dataDirectory"), 42}});
+    EXPECT_FALSE(typeDirectory.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(typeDirectory.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+    EXPECT_TRUE(typeDirectory.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("dataDirectory")));
+    EXPECT_TRUE(typeDirectory.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("string")));
+
+    const QJsonObject typeFileName = sendAndWait(
+        &client,
+        QStringLiteral("data-file-name-type"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 10},
+                    {QStringLiteral("maxCycles"), 1},
+                    {QStringLiteral("saveData"), true},
+                    {QStringLiteral("dataFileName"), true}});
+    EXPECT_FALSE(typeFileName.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(typeFileName.value(QStringLiteral("code")).toString(),
+              QStringLiteral("invalid_envelope"));
+    EXPECT_TRUE(typeFileName.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("dataFileName")));
+    EXPECT_TRUE(typeFileName.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("string")));
+
+    const QJsonObject relativeDirectory = sendAndWait(
+        &client,
+        QStringLiteral("relative-data-directory"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 10},
+                    {QStringLiteral("maxCycles"), 1},
+                    {QStringLiteral("saveData"), true},
+                    {QStringLiteral("dataDirectory"), QStringLiteral("relative-output")}});
+    EXPECT_FALSE(relativeDirectory.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(relativeDirectory.value(QStringLiteral("code")).toString(),
+              QStringLiteral("ParameterRangeError"));
+    EXPECT_TRUE(relativeDirectory.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("absolute")));
+
+    const QJsonObject pathFileName = sendAndWait(
+        &client,
+        QStringLiteral("path-data-file-name"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 10},
+                    {QStringLiteral("maxCycles"), 1},
+                    {QStringLiteral("saveData"), true},
+                    {QStringLiteral("dataFileName"),
+                     QStringLiteral("nested/capture.txt")}});
+    EXPECT_FALSE(pathFileName.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(pathFileName.value(QStringLiteral("code")).toString(),
+              QStringLiteral("ParameterRangeError"));
+    EXPECT_TRUE(pathFileName.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("separator")));
+
+    const QJsonObject windowsPathFileName = sendAndWait(
+        &client,
+        QStringLiteral("windows-path-data-file-name"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 10},
+                    {QStringLiteral("maxCycles"), 1},
+                    {QStringLiteral("saveData"), true},
+                    {QStringLiteral("dataFileName"),
+                     QStringLiteral("nested\\capture.txt")}});
+    EXPECT_FALSE(windowsPathFileName.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(windowsPathFileName.value(QStringLiteral("code")).toString(),
+              QStringLiteral("ParameterRangeError"));
+    EXPECT_TRUE(windowsPathFileName.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("separator")));
+
+    const QJsonObject driveRelativeDirectory = sendAndWait(
+        &client,
+        QStringLiteral("drive-relative-data-directory"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 10},
+                    {QStringLiteral("maxCycles"), 1},
+                    {QStringLiteral("saveData"), true},
+                    {QStringLiteral("dataDirectory"), QStringLiteral("H:relative-output")}});
+    EXPECT_FALSE(driveRelativeDirectory.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(driveRelativeDirectory.value(QStringLiteral("code")).toString(),
+              QStringLiteral("ParameterRangeError"));
+    EXPECT_TRUE(driveRelativeDirectory.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("absolute")));
+
+#ifdef Q_OS_WIN
+    const QJsonObject incompleteUncDirectory = sendAndWait(
+        &client,
+        QStringLiteral("incomplete-unc-data-directory"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 10},
+                    {QStringLiteral("maxCycles"), 1},
+                    {QStringLiteral("saveData"), true},
+                    {QStringLiteral("dataDirectory"), QStringLiteral("//server")}});
+    EXPECT_FALSE(incompleteUncDirectory.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(incompleteUncDirectory.value(QStringLiteral("code")).toString(),
+              QStringLiteral("ParameterRangeError"));
+    EXPECT_TRUE(incompleteUncDirectory.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral("absolute")));
+#endif
+
+    const QJsonObject wrongExtension = sendAndWait(
+        &client,
+        QStringLiteral("wrong-data-file-extension"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 10},
+                    {QStringLiteral("maxCycles"), 1},
+                    {QStringLiteral("saveData"), true},
+                    {QStringLiteral("dataFileName"), QStringLiteral("capture.csv")}});
+    EXPECT_FALSE(wrongExtension.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(wrongExtension.value(QStringLiteral("code")).toString(),
+              QStringLiteral("ParameterRangeError"));
+    EXPECT_TRUE(wrongExtension.value(QStringLiteral("message"))
+                    .toString()
+                    .contains(QStringLiteral(".txt")));
+    EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+}
+
 TEST(WebSocketControllerIntegrationTest, RejectsClientSuppliedConfigurationPaths)
 {
     TestApplicationController controller;
@@ -1197,6 +1357,7 @@ TEST(WebSocketContinuousIntegrationTest, PcPeriodicStreamsSamplesFromTwoCommandR
                     .value(QStringLiteral("ok"))
                     .toBool());
 
+    // V1 requests intentionally omit dataDirectory and dataFileName.
     const QJsonObject started = sendAndWait(
         &client,
         QStringLiteral("periodic"),
@@ -1258,7 +1419,82 @@ TEST(WebSocketContinuousIntegrationTest, PcPeriodicStreamsSamplesFromTwoCommandR
     EXPECT_TRUE(client.waitForDisconnected(5000));
 }
 
-TEST(WebSocketContinuousIntegrationTest, PcPeriodicBatchesSamplesWithoutChangingSavedResult)
+TEST(WebSocketContinuousIntegrationTest,
+     PcPeriodicForwardsExplicitDataDirectoryAndDataFileName)
+{
+    if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
+        GTEST_SKIP() << "MB_DDF protocol assets are not available";
+    }
+
+    test::MbddfUdpTestPeer peer;
+    QTemporaryDir directory;
+    QString error;
+    QString halConfigPath;
+    ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(peer.bind(&error)) << error.toStdString();
+    ASSERT_TRUE(peer.writeHalConfig(QStringLiteral(HWTEST_APP_HAL_CONFIG),
+                                    &directory,
+                                    &halConfigPath,
+                                    &error))
+        << error.toStdString();
+
+    const QString requestedDirectory =
+        QDir(directory.filePath(QStringLiteral("requested-data"))).absolutePath();
+
+    TestApplicationController controller;
+    WebSocketServerOptions options;
+    options.port = 0;
+    WebSocketFrontendServer server(&controller,
+                                   launchOptions(halConfigPath),
+                                   options);
+    test::WebSocketTestClient client;
+    connectClient(&server, &client);
+    ASSERT_TRUE(sendAndWait(&client, QStringLiteral("load"), QStringLiteral("load"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("prepare"),
+                            QStringLiteral("prepare"))
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+
+    const QJsonObject started = sendAndWait(
+        &client,
+        QStringLiteral("explicit-data-destination"),
+        QStringLiteral("start"),
+        QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
+                    {QStringLiteral("intervalMs"), 0},
+                    {QStringLiteral("maxCycles"), 1},
+                    {QStringLiteral("saveData"), true},
+                    {QStringLiteral("dataDirectory"), requestedDirectory},
+                    {QStringLiteral("dataFileName"), QStringLiteral("operator-capture")}});
+    ASSERT_TRUE(started.value(QStringLiteral("ok")).toBool())
+        << started.value(QStringLiteral("message")).toString().toStdString();
+
+    ASSERT_TRUE(peer.waitForRequest(3000, &error)) << error.toStdString();
+    ASSERT_TRUE(peer.replyToLastRequest(&error)) << error.toStdString();
+
+    QJsonObject terminal;
+    ASSERT_TRUE(client.waitForSnapshotPhase(QStringLiteral("finished"),
+                                            &terminal,
+                                            5000));
+    const QJsonObject snapshot = terminal.value(QStringLiteral("snapshot")).toObject();
+    EXPECT_TRUE(snapshot.value(QStringLiteral("dataSaveError")).toString().isEmpty());
+    const QString expectedPath = QDir(requestedDirectory).absoluteFilePath(
+        QStringLiteral("operator-capture.txt"));
+    const QString actualPath = snapshot.value(QStringLiteral("dataFilePath")).toString();
+    EXPECT_EQ(QDir::cleanPath(actualPath), QDir::cleanPath(expectedPath));
+    EXPECT_TRUE(QFileInfo(actualPath).isFile());
+
+    const QJsonObject disconnected = sendAndWait(&client,
+                                                  QStringLiteral("cleanup-explicit"),
+                                                  QStringLiteral("disconnect"));
+    EXPECT_TRUE(disconnected.value(QStringLiteral("ok")).toBool());
+    EXPECT_TRUE(client.waitForDisconnected(5000));
+}
+
+TEST(WebSocketContinuousIntegrationTest,
+     PcPeriodicBatchesSamplesWithoutChangingSavedResultAndEmptyDestinationUsesDefaultName)
 {
     if (!QFileInfo(qEnvironmentVariable("MB_DDF_PROTOCOL_CSV_DIR")).isDir()) {
         GTEST_SKIP() << "MB_DDF protocol assets are not available";
@@ -1308,7 +1544,9 @@ TEST(WebSocketContinuousIntegrationTest, PcPeriodicBatchesSamplesWithoutChanging
         QJsonObject{{QStringLiteral("mode"), QStringLiteral("pc_periodic")},
                     {QStringLiteral("intervalMs"), 0},
                     {QStringLiteral("maxCycles"), 2},
-                    {QStringLiteral("saveData"), true}});
+                    {QStringLiteral("saveData"), true},
+                    {QStringLiteral("dataDirectory"), QString{}},
+                    {QStringLiteral("dataFileName"), QString{}}});
     ASSERT_TRUE(started.value(QStringLiteral("ok")).toBool())
         << started.value(QStringLiteral("message")).toString().toStdString();
 
@@ -1363,7 +1601,35 @@ TEST(WebSocketContinuousIntegrationTest, PcPeriodicBatchesSamplesWithoutChanging
     EXPECT_EQ(snapshot.value(QStringLiteral("sampleCount")).toInt(), 2);
     EXPECT_TRUE(snapshot.value(QStringLiteral("dataSaveEnabled")).toBool());
     EXPECT_TRUE(snapshot.value(QStringLiteral("dataSaveError")).toString().isEmpty());
-    EXPECT_TRUE(QFileInfo(snapshot.value(QStringLiteral("dataFilePath")).toString()).isFile());
+    const QString dataFilePath = snapshot.value(QStringLiteral("dataFilePath")).toString();
+    const QFileInfo dataFileInfo(dataFilePath);
+    EXPECT_TRUE(dataFileInfo.isFile());
+    EXPECT_EQ(dataFileInfo.absolutePath(),
+              QFileInfo(directory.filePath(QStringLiteral("data"))).absoluteFilePath());
+
+    const QRegularExpression fileNamePattern(
+        QStringLiteral("^系统状态_(\\d{8}_\\d{6}_\\d{6})-(\\d{8}_\\d{6}_\\d{6})\\.txt$"));
+    const QRegularExpressionMatch fileNameMatch = fileNamePattern.match(dataFileInfo.fileName());
+    ASSERT_TRUE(fileNameMatch.hasMatch()) << dataFileInfo.fileName().toStdString();
+
+    QFile saved(dataFilePath);
+    ASSERT_TRUE(saved.open(QIODevice::ReadOnly));
+    const QString text = QString::fromUtf8(saved.readAll().mid(3));
+    const QRegularExpression startedAtPattern(
+        QStringLiteral("^# started_at=(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{6}\\+08:00)$"),
+        QRegularExpression::MultilineOption);
+    const QRegularExpression finishedAtPattern(
+        QStringLiteral("^# finished_at=(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{6}\\+08:00)$"),
+        QRegularExpression::MultilineOption);
+    const QRegularExpressionMatch startedAtMatch = startedAtPattern.match(text);
+    const QRegularExpressionMatch finishedAtMatch = finishedAtPattern.match(text);
+    ASSERT_TRUE(startedAtMatch.hasMatch()) << text.toStdString();
+    ASSERT_TRUE(finishedAtMatch.hasMatch()) << text.toStdString();
+    EXPECT_EQ(fileNameMatch.captured(1),
+              fileTimestampFromMetadata(startedAtMatch.captured(1)));
+    EXPECT_EQ(fileNameMatch.captured(2),
+              fileTimestampFromMetadata(finishedAtMatch.captured(1)));
+    EXPECT_LE(fileNameMatch.captured(1), fileNameMatch.captured(2));
 
     const QJsonObject disconnected = sendAndWait(&client,
                                                   QStringLiteral("cleanup-batch"),

@@ -292,7 +292,7 @@ DDS 时间来自设备单调时钟而非 UTC。宿主保留每条原始值为 `d
 
 十三个当前配置的 `reportFields` 还包含应用层展示元数据：`title`、`description`、`supportedRunModes`、`measurements` 和可选 `stoppable`。这些字段只由应用层投影为 WebSocket descriptor，`measurements` 的 `id`、`label`、`unit`、`primary` 不能改变算法判定、协议编解码或 HAL 安全行为；设备流保存固定使用完整 descriptor 列，曲线选择不改变保存格式。`stoppable` 缺失时兼容回退为 true；显式 false 只允许恰好声明 `device_stream`，当前仅 DH 点火有限流使用。串口回显的 114 个协议数据字段只在算法内部逐字节判定，公开样本和测量只包含状态、链路、轮次、字节数和不一致摘要，完整请求/响应仍以帧十六进制及数据 SHA-256 保留在结果诊断中。可编辑运行参数不在 `reportFields` 定义，而由算法 ID 对应的 Schema 唯一声明；应用层只把 Schema 字段作为本次覆盖，固定协议字段仍留在配置请求中，再将规范化结果透传 BIZ。Schema 可为 descriptor 的每个 `runParameters[]` 项声明 `persistValues`；其浏览器兼容与 localStorage 语义只以 [WebSocket 前端协议](websocket-frontend-protocol.md) 为准。
 
-算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。串口回显额外消费一个 `role=auxiliary-link` 的 `qt.serial` 资源；Web 只允许从系统 `ports` 枚举中选择其本次 `portName`，不允许客户端提供路径或任意 HAL 配置。主控制资源与辅助资源由同一 `HalDevice` 独立打开，不能映射到同一物理串口。
+算法不选择 Provider 或物理端点。`control.resourceId`、资源 `providerId`、串口参数、UDP 端点、设备 match、SDK 和扫描结果只属于 HAL 部署配置；当前样例见 `configs/mbddf_pc_hal.json`。把 `control.resourceId` 设为 `CONTROL_SERIAL` 或 `CONTROL_NETWORK` 即可在 PC 每次运行前选择控制口，不向产品端发送切换命令。串口回显额外消费一个 `role=auxiliary-link` 的 `qt.serial` 资源；Web 只允许从系统 `ports` 枚举中选择其本次 `portName`，不允许客户端提供协议、端点或任意 HAL 配置路径。WebSocket `start.dataDirectory` 是应用层本次连续数据输出路径的独立例外，不选择 Provider、端点、资源或 HAL 配置。主控制资源与辅助资源由同一 `HalDevice` 独立打开，不能映射到同一物理串口。
 
 当前 `ProtocolProfile` 列表由 BIZ 保存和透传，但 MB_DDF 执行器仍没有把它与 `executionConfig.protocol.*ProfileId`、CSV 命令键或 HAL 资源做完整交叉校验。该绑定仍是未实现项，不能仅凭同名 Profile 宣称映射已建立。
 

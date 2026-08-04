@@ -11,11 +11,13 @@
 #include <QMetaType>
 #include <QSaveFile>
 #include <QStringList>
+#include <QTimeZone>
 
 #include <charconv>
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace hwtest::app {
 namespace {
@@ -23,6 +25,11 @@ namespace {
 ActionResult storageFailure(const QString& message)
 {
     return ActionResult{false, QStringLiteral("data_storage"), message};
+}
+
+ActionResult parameterFailure(const QString& message)
+{
+    return ActionResult{false, QStringLiteral("ParameterRangeError"), message};
 }
 
 qint64 utcNowUs()
@@ -36,7 +43,12 @@ QString timestampText(qint64 timestampUs, const QString& dateFormat)
 {
     const qint64 milliseconds = timestampUs / 1000;
     const int microseconds = static_cast<int>(timestampUs % 1000000);
-    return QDateTime::fromMSecsSinceEpoch(milliseconds, Qt::UTC).toString(dateFormat) +
+    const QDateTime utc = QDateTime::fromMSecsSinceEpoch(milliseconds, Qt::UTC);
+    const QTimeZone shanghai(QByteArrayLiteral("Asia/Shanghai"));
+    const QDateTime local = shanghai.isValid()
+        ? utc.toTimeZone(shanghai)
+        : utc.toOffsetFromUtc(8 * 60 * 60);
+    return local.toString(dateFormat) +
         QStringLiteral("%1").arg(microseconds, 6, 10, QLatin1Char('0'));
 }
 
@@ -155,12 +167,180 @@ QString safeFileStem(QString value)
     return value;
 }
 
+QString dataFileProject(const TestDescriptor& descriptor)
+{
+    return descriptor.reportTitle.trimmed().isEmpty()
+        ? descriptor.configId
+        : descriptor.reportTitle;
+}
+
+ActionResult normalizeDataFileName(const QString& requested, QString* output)
+{
+    QString fileName = requested.trimmed();
+    if (fileName.isEmpty()) {
+        if (output != nullptr) *output = QString{};
+        return {};
+    }
+    if (fileName.contains(QLatin1Char('/')) ||
+        fileName.contains(QLatin1Char('\\'))) {
+        return parameterFailure(
+            QStringLiteral("Continuous data file name must not contain a path separator"));
+    }
+    if (fileName.endsWith(QLatin1Char('.')) ||
+        fileName.endsWith(QLatin1Char(' '))) {
+        return parameterFailure(
+            QStringLiteral("Continuous data file name must not end with a dot or space"));
+    }
+    const QString invalidCharacters = QStringLiteral("<>:\"|?*");
+    for (const QChar character : fileName) {
+        if (character.unicode() < 0x20 || invalidCharacters.contains(character)) {
+            return parameterFailure(
+                QStringLiteral("Continuous data file name contains an invalid Windows character"));
+        }
+    }
+
+    const QFileInfo info(fileName);
+    const QString suffix = info.suffix();
+    if (!suffix.isEmpty() &&
+        suffix.compare(QStringLiteral("txt"), Qt::CaseInsensitive) != 0) {
+        return parameterFailure(
+            QStringLiteral("Continuous data file name must use the .txt extension"));
+    }
+    QString stem = suffix.isEmpty()
+        ? fileName
+        : fileName.left(fileName.size() - suffix.size() - 1);
+    if (stem.isEmpty() || stem == QStringLiteral(".") || stem == QStringLiteral("..")) {
+        return parameterFailure(QStringLiteral("Continuous data file name is empty"));
+    }
+    const QString reservedStem = stem.section(QLatin1Char('.'), 0, 0).toUpper();
+    const bool numberedDevice =
+        (reservedStem.startsWith(QStringLiteral("COM")) ||
+         reservedStem.startsWith(QStringLiteral("LPT"))) &&
+        reservedStem.size() == 4 && reservedStem.at(3) >= QLatin1Char('1') &&
+        reservedStem.at(3) <= QLatin1Char('9');
+    if (reservedStem == QStringLiteral("CON") ||
+        reservedStem == QStringLiteral("PRN") ||
+        reservedStem == QStringLiteral("AUX") ||
+        reservedStem == QStringLiteral("NUL") ||
+        reservedStem == QStringLiteral("CLOCK$") || numberedDevice) {
+        return parameterFailure(
+            QStringLiteral("Continuous data file name is reserved by Windows"));
+    }
+    if (stem.size() > 220) {
+        return parameterFailure(QStringLiteral("Continuous data file name is too long"));
+    }
+
+    fileName = stem + QStringLiteral(".txt");
+    if (output != nullptr) *output = fileName;
+    return {};
+}
+
+bool isFullyQualifiedDataDirectory(const QString& requested)
+{
+    const QString path = QDir::fromNativeSeparators(requested.trimmed());
+#ifdef Q_OS_WIN
+    const auto hasDriveRoot = [](const QString& value) {
+        return value.size() >= 3 && value.at(0).isLetter() &&
+            value.at(1) == QLatin1Char(':') && value.at(2) == QLatin1Char('/');
+    };
+    const auto hasServerAndShare = [](const QString& value) {
+        const QStringList components = value.split(
+            QLatin1Char('/'), Qt::SkipEmptyParts);
+        return components.size() >= 2;
+    };
+
+    if (path.startsWith(QStringLiteral("//?/UNC/"), Qt::CaseInsensitive)) {
+        return hasServerAndShare(path.mid(8));
+    }
+    if (path.startsWith(QStringLiteral("//?/"))) {
+        return hasDriveRoot(path.mid(4));
+    }
+    if (path.startsWith(QStringLiteral("//"))) {
+        return hasServerAndShare(path.mid(2));
+    }
+    return hasDriveRoot(path);
+#else
+    return QDir::isAbsolutePath(path);
+#endif
+}
+
+QString uniqueOutputPath(const QString& directory, const QString& fileName)
+{
+    const QString stem = fileName.left(fileName.size() - 4);
+    for (int suffix = 0;; ++suffix) {
+        const QString candidateName = suffix == 0
+            ? fileName
+            : QStringLiteral("%1_%2.txt").arg(stem).arg(suffix);
+        const QString candidate = QDir(directory).absoluteFilePath(candidateName);
+        if (!QFileInfo::exists(candidate) &&
+            !QFileInfo::exists(candidate + QStringLiteral(".partial"))) {
+            return candidate;
+        }
+    }
+}
+
+ActionResult reserveOutputPath(const QString& directory,
+                               const QString& fileName,
+                               const QString& ownPartialPath,
+                               QString* outputPath)
+{
+    const QString stem = fileName.left(fileName.size() - 4);
+    for (int suffix = 0;; ++suffix) {
+        const QString candidateName = suffix == 0
+            ? fileName
+            : QStringLiteral("%1_%2.txt").arg(stem).arg(suffix);
+        const QString candidate = QDir(directory).absoluteFilePath(candidateName);
+        const QString candidatePartial = candidate + QStringLiteral(".partial");
+        if (candidatePartial != ownPartialPath && QFileInfo::exists(candidatePartial)) {
+            continue;
+        }
+        QFile reservation(candidate);
+        if (reservation.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+            reservation.close();
+            if (outputPath != nullptr) *outputPath = candidate;
+            return {};
+        }
+        if (!QFileInfo::exists(candidate)) {
+            return storageFailure(
+                QStringLiteral("Cannot reserve continuous data file '%1': %2")
+                    .arg(candidate, reservation.errorString()));
+        }
+    }
+}
+
 bool writeAll(QIODevice* device, const QByteArray& content)
 {
     return device != nullptr && device->write(content) == content.size();
 }
 
 } // namespace
+
+ContinuousDataRecorder::ContinuousDataRecorder(Clock clock,
+                                               OutputFileFactory outputFileFactory)
+    : m_clock(std::move(clock)),
+      m_outputFileFactory(std::move(outputFileFactory))
+{
+    if (!m_clock) m_clock = utcNowUs;
+    if (!m_outputFileFactory) {
+        m_outputFileFactory = [](const QString& path) {
+            return std::make_unique<QSaveFile>(path);
+        };
+    }
+}
+
+ActionResult ContinuousDataRecorder::validateDestinationOverrides(
+    const QString& dataDirectory,
+    const QString& dataFileName,
+    QString* normalizedFileName)
+{
+    const QString requestedDirectory = dataDirectory.trimmed();
+    if (!requestedDirectory.isEmpty() &&
+        !isFullyQualifiedDataDirectory(requestedDirectory)) {
+        return parameterFailure(
+            QStringLiteral("Continuous data directory must be an absolute path"));
+    }
+    return normalizeDataFileName(dataFileName, normalizedFileName);
+}
 
 ContinuousDataRecorder::~ContinuousDataRecorder()
 {
@@ -174,14 +354,25 @@ ActionResult ContinuousDataRecorder::begin(const QString& directory,
                                            const TestDescriptor& descriptor,
                                            const QString& runMode,
                                            int intervalMs,
-                                           quint64 maxCycles)
+                                           quint64 maxCycles,
+                                           const QString& dataDirectory,
+                                           const QString& dataFileName)
 {
     if (m_active) {
         return storageFailure(QStringLiteral("A continuous data recording is already active"));
     }
     resetState();
 
-    const QString normalizedDirectory = QDir(directory).absolutePath();
+    const QString requestedDirectory = dataDirectory.trimmed();
+    QString normalizedFileName;
+    const ActionResult validated = validateDestinationOverrides(
+        requestedDirectory, dataFileName, &normalizedFileName);
+    if (!validated.ok) return validated;
+
+    const QString normalizedDirectory = QDir(requestedDirectory.isEmpty()
+                                                  ? directory
+                                                  : requestedDirectory)
+                                            .absolutePath();
     if (!QDir().mkpath(normalizedDirectory)) {
         return storageFailure(
             QStringLiteral("Cannot create continuous data directory '%1'")
@@ -190,9 +381,11 @@ ActionResult ContinuousDataRecorder::begin(const QString& directory,
 
     m_descriptor = descriptor;
     m_runMode = runMode;
+    m_outputDirectory = normalizedDirectory;
+    m_requestedFileName = normalizedFileName;
     m_intervalMs = intervalMs;
     m_maxCycles = maxCycles;
-    m_startedAtUs = utcNowUs();
+    m_startedAtUs = m_clock();
     m_electricalHealthFormat =
         descriptor.algorithmId == QStringLiteral("mbddf.elec_health_status");
 
@@ -223,30 +416,38 @@ ActionResult ContinuousDataRecorder::begin(const QString& directory,
         }
     }
 
-    const QString prefix = m_electricalHealthFormat
-        ? QStringLiteral("ElectricalHealth")
-        : safeFileStem(descriptor.configId);
-    const QString timestamp = timestampText(m_startedAtUs,
-                                            QStringLiteral("yyyyMMdd_HHmmss_"));
-    QString fileName = QStringLiteral("%1_data_%2.txt").arg(prefix, timestamp);
-    QString finalPath = QDir(normalizedDirectory).absoluteFilePath(fileName);
-    for (int suffix = 1;
-         QFileInfo::exists(finalPath) || QFileInfo::exists(finalPath + QStringLiteral(".partial"));
-         ++suffix) {
-        fileName = QStringLiteral("%1_data_%2_%3.txt").arg(prefix, timestamp).arg(suffix);
-        finalPath = QDir(normalizedDirectory).absoluteFilePath(fileName);
+    const QString prefix = safeFileStem(dataFileProject(descriptor));
+    const QString timestamp = timestampText(
+        m_startedAtUs, QStringLiteral("yyyyMMdd_HHmmss_"));
+    QString openError;
+    bool partialOpened = false;
+    for (int attempt = 0; attempt < 1000 && !partialOpened; ++attempt) {
+        if (!m_requestedFileName.isEmpty()) {
+            m_outputPath = uniqueOutputPath(normalizedDirectory, m_requestedFileName);
+            m_partialPath = m_outputPath + QStringLiteral(".partial");
+        } else {
+            const QString partialName = attempt == 0
+                ? QStringLiteral(".%1_%2.partial").arg(prefix, timestamp)
+                : QStringLiteral(".%1_%2_%3.partial")
+                      .arg(prefix, timestamp)
+                      .arg(attempt);
+            m_partialPath = QDir(normalizedDirectory).absoluteFilePath(partialName);
+        }
+        m_partialFile.setFileName(m_partialPath);
+        partialOpened = m_partialFile.open(QIODevice::WriteOnly | QIODevice::NewOnly);
+        if (!partialOpened) {
+            openError = m_partialFile.errorString();
+            if (!QFileInfo::exists(m_partialPath)) break;
+        }
     }
-
-    m_outputPath = finalPath;
-    m_partialPath = finalPath + QStringLiteral(".partial");
-    m_partialFile.setFileName(m_partialPath);
-    if (!m_partialFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        const QString error = m_partialFile.errorString();
+    if (!partialOpened) {
+        const QString failedPartialPath = m_partialPath;
         resetState();
         return storageFailure(
             QStringLiteral("Cannot open continuous data file '%1': %2")
-                .arg(m_partialPath, error));
+                .arg(failedPartialPath, openError));
     }
+    m_active = true;
 
     QStringList header{
         QStringLiteral("report_index"),
@@ -268,7 +469,6 @@ ActionResult ContinuousDataRecorder::begin(const QString& directory,
         cancel();
         return written;
     }
-    m_active = true;
     return {};
 }
 
@@ -356,15 +556,38 @@ ActionResult ContinuousDataRecorder::finish(const QString& finalStatus,
                 .arg(m_partialPath, rows.errorString()));
     }
 
-    QSaveFile output(m_outputPath);
-    if (!output.open(QIODevice::WriteOnly)) {
+    const qint64 finishedAtUs = m_clock();
+    const QString fileName = m_requestedFileName.isEmpty()
+        ? QStringLiteral("%1_%2-%3.txt")
+              .arg(safeFileStem(dataFileProject(m_descriptor)),
+                   timestampText(m_startedAtUs,
+                                 QStringLiteral("yyyyMMdd_HHmmss_")),
+                   timestampText(finishedAtUs,
+                                 QStringLiteral("yyyyMMdd_HHmmss_")))
+        : m_requestedFileName;
+    QString reservedOutputPath;
+    const ActionResult reserved = reserveOutputPath(
+        m_outputDirectory, fileName, m_partialPath, &reservedOutputPath);
+    if (!reserved.ok) {
+        m_outputPath = m_partialPath;
+        return reserved;
+    }
+    m_outputPath = reservedOutputPath;
+    m_outputReservationActive = true;
+
+    std::unique_ptr<QSaveFile> output = m_outputFileFactory(m_outputPath);
+    if (!output || !output->open(QIODevice::WriteOnly)) {
+        const QString failedPath = m_outputPath;
+        const QString error = output == nullptr
+            ? QStringLiteral("Output file factory returned null")
+            : output->errorString();
+        releaseOutputReservation();
         m_outputPath = m_partialPath;
         return storageFailure(
             QStringLiteral("Cannot create continuous data file '%1': %2")
-                .arg(output.fileName(), output.errorString()));
+                .arg(failedPath, error));
     }
 
-    const qint64 finishedAtUs = utcNowUs();
     const QString title = m_electricalHealthFormat
         ? QStringLiteral("电气健康连续采集数据")
         : QStringLiteral("%1连续采集数据").arg(m_descriptor.title);
@@ -372,10 +595,12 @@ ActionResult ContinuousDataRecorder::finish(const QString& finalStatus,
     metadata += QStringLiteral("# %1\n").arg(metadataText(title));
     metadata += QStringLiteral("# started_at=%1\n")
                     .arg(timestampText(m_startedAtUs,
-                                       QStringLiteral("yyyy-MM-dd HH:mm:ss.")));
+                                       QStringLiteral("yyyy-MM-dd HH:mm:ss.")) +
+                         QStringLiteral("+08:00"));
     metadata += QStringLiteral("# finished_at=%1\n")
                     .arg(timestampText(finishedAtUs,
-                                       QStringLiteral("yyyy-MM-dd HH:mm:ss.")));
+                                       QStringLiteral("yyyy-MM-dd HH:mm:ss.")) +
+                         QStringLiteral("+08:00"));
     metadata += QStringLiteral("# final_status=%1\n").arg(metadataText(finalStatus));
     metadata += QStringLiteral("# final_detail=%1\n").arg(metadataText(finalDetail));
     metadata += QStringLiteral("# sample_count=%1\n").arg(m_sampleCount);
@@ -391,24 +616,26 @@ ActionResult ContinuousDataRecorder::finish(const QString& finalStatus,
         ? QStringLiteral("# max_cycles=%1\n\n").arg(m_maxCycles)
         : QStringLiteral("# max_cycles=NA\n\n");
 
-    bool ok = writeAll(&output, QByteArray::fromHex("EFBBBF")) &&
-        writeAll(&output, metadata.toUtf8());
+    bool ok = writeAll(output.get(), QByteArray::fromHex("EFBBBF")) &&
+        writeAll(output.get(), metadata.toUtf8());
     while (ok && !rows.atEnd()) {
         const QByteArray chunk = rows.read(64 * 1024);
         if (chunk.isEmpty() && rows.error() != QFile::NoError) {
             ok = false;
             break;
         }
-        ok = writeAll(&output, chunk);
+        ok = writeAll(output.get(), chunk);
     }
     rows.close();
-    if (!ok || !output.commit()) {
+    if (!ok || !output->commit()) {
         const QString finalPath = m_outputPath;
+        releaseOutputReservation();
         m_outputPath = m_partialPath;
         return storageFailure(
             QStringLiteral("Cannot finalize continuous data file '%1': %2")
-                .arg(finalPath, output.errorString()));
+                .arg(finalPath, output->errorString()));
     }
+    m_outputReservationActive = false;
 
     QFile::remove(m_partialPath);
     return {};
@@ -416,12 +643,14 @@ ActionResult ContinuousDataRecorder::finish(const QString& finalStatus,
 
 void ContinuousDataRecorder::cancel()
 {
+    const bool discardWorkingFile = m_active;
     if (m_partialFile.isOpen()) {
         m_partialFile.close();
     }
-    if (!m_partialPath.isEmpty()) {
+    if (discardWorkingFile && !m_partialPath.isEmpty()) {
         QFile::remove(m_partialPath);
     }
+    if (discardWorkingFile) releaseOutputReservation();
     resetState();
 }
 
@@ -441,9 +670,21 @@ ActionResult ContinuousDataRecorder::writePartial(const QByteArray& bytes, bool 
         (flush && !m_partialFile.flush())) {
         m_writeError = QStringLiteral("Cannot write continuous data file '%1': %2")
                            .arg(m_partialPath, m_partialFile.errorString());
+        releaseOutputReservation();
+        m_outputPath = m_partialPath;
         return storageFailure(m_writeError);
     }
     return {};
+}
+
+void ContinuousDataRecorder::releaseOutputReservation()
+{
+    if (!m_outputReservationActive) return;
+    const QFileInfo reservation(m_outputPath);
+    if (reservation.isFile() && reservation.size() == 0) {
+        QFile::remove(m_outputPath);
+    }
+    m_outputReservationActive = false;
 }
 
 void ContinuousDataRecorder::resetState()
@@ -453,9 +694,12 @@ void ContinuousDataRecorder::resetState()
     m_columns.clear();
     m_taskId.clear();
     m_runMode.clear();
+    m_outputDirectory.clear();
+    m_requestedFileName.clear();
     m_outputPath.clear();
     m_partialPath.clear();
     m_writeError.clear();
+    m_outputReservationActive = false;
     m_startedAtUs = 0;
     m_sampleCount = 0;
     m_maxCycles = 0;

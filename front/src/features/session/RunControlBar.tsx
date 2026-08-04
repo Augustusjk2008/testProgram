@@ -39,6 +39,8 @@ function loadRunOptions(): TestRunOptions {
         intervalMs: parsed.intervalMs ?? 500,
         maxCycles: parsed.maxCycles ?? 0,
         saveData: parsed.saveData === true,
+        dataDirectory: typeof parsed.dataDirectory === 'string' ? parsed.dataDirectory : '',
+        dataFileName: typeof parsed.dataFileName === 'string' ? parsed.dataFileName : '',
         algorithmParameters: {},
       }
     }
@@ -46,7 +48,12 @@ function loadRunOptions(): TestRunOptions {
     // Ignore browser storage restrictions and use safe defaults.
   }
   return {
-    mode: 'pc_periodic', intervalMs: 500, maxCycles: 0, saveData: false,
+    mode: 'pc_periodic',
+    intervalMs: 500,
+    maxCycles: 0,
+    saveData: false,
+    dataDirectory: '',
+    dataFileName: '',
     algorithmParameters: {},
   }
 }
@@ -202,6 +209,8 @@ export function RunControlBar() {
       intervalMs: next.intervalMs,
       maxCycles: next.maxCycles,
       saveData: next.saveData,
+      dataDirectory: next.dataDirectory,
+      dataFileName: next.dataFileName,
     }))
   }, [hasRunModeCapabilities, options, supportedModes])
 
@@ -212,6 +221,8 @@ export function RunControlBar() {
       intervalMs: next.intervalMs,
       maxCycles: next.maxCycles,
       saveData: next.saveData,
+      dataDirectory: next.dataDirectory,
+      dataFileName: next.dataFileName,
     }))
   }
 
@@ -329,16 +340,44 @@ export function RunControlBar() {
           </>
         ) : null}
         {options.mode !== 'single' ? (
-          <label className="run-save-option">
-            <input
-              aria-label="保存连续测试全部测量列"
-              checked={options.saveData}
-              disabled={active || analysisBlockingWrites}
-              onChange={(event) => saveOptions({ ...options, saveData: event.target.checked })}
-              type="checkbox"
-            />
-            <span>保存全部测量列</span>
-          </label>
+          <>
+            <label className="run-save-option">
+              <input
+                aria-label="保存连续测试全部测量列"
+                checked={options.saveData}
+                disabled={active || analysisBlockingWrites}
+                onChange={(event) => saveOptions({ ...options, saveData: event.target.checked })}
+                type="checkbox"
+              />
+              <span>保存全部测量列</span>
+            </label>
+            {options.saveData && (
+              <div className="run-save-destination">
+                <label>
+                  <span>保存目录</span>
+                  <input
+                    aria-label="保存目录"
+                    disabled={active || analysisBlockingWrites}
+                    onChange={(event) => saveOptions({ ...options, dataDirectory: event.target.value })}
+                    placeholder="留空使用后端配置目录"
+                    type="text"
+                    value={options.dataDirectory ?? ''}
+                  />
+                </label>
+                <label>
+                  <span>文件名</span>
+                  <input
+                    aria-label="文件名"
+                    disabled={active || analysisBlockingWrites}
+                    onChange={(event) => saveOptions({ ...options, dataFileName: event.target.value })}
+                    placeholder="留空由后端生成"
+                    type="text"
+                    value={options.dataFileName ?? ''}
+                  />
+                </label>
+              </div>
+            )}
+          </>
         ) : null}
         {serialEcho && (
           <label className="serial-auxiliary-port">
