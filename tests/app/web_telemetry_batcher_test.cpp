@@ -5,11 +5,23 @@
 
 #include <QEventLoop>
 #include <QJsonArray>
+#include <QMetaType>
 #include <QTimer>
 #include <QVector>
 
+#include <atomic>
+#include <limits>
+
+struct CountingTelemetryValue {
+    QString text;
+};
+
+Q_DECLARE_METATYPE(CountingTelemetryValue)
+
 namespace hwtest::app::web {
 namespace {
+
+std::atomic<int> countingTelemetryConversions{0};
 
 ApplicationSample makeApplicationSample(const QString& taskId,
                                         qint64 timestampUs = 1785000000123456LL)
@@ -44,6 +56,44 @@ TEST(WebTelemetryBatcherTest, FlushesAtConfiguredSampleCountWithAssignedSequence
     EXPECT_EQ(flushed.first().value(QStringLiteral("firstSeq")).toInt(), 17);
     EXPECT_EQ(flushed.first().value(QStringLiteral("lastSeq")).toInt(), 18);
     EXPECT_EQ(flushed.first().value(QStringLiteral("samples")).toArray().size(), 2);
+    EXPECT_FALSE(batcher.hasPendingSamples());
+}
+
+TEST(WebTelemetryBatcherTest, ProjectsEachSampleOnlyOnceForFullBatch)
+{
+    static const bool converterRegistered =
+        QMetaType::registerConverter<CountingTelemetryValue, QString>(
+            [](const CountingTelemetryValue& value) {
+                countingTelemetryConversions.fetch_add(1, std::memory_order_relaxed);
+                return value.text;
+            });
+    (void)converterRegistered;
+
+    WebTelemetryBatcherOptions options;
+    options.maxSamples = 64;
+    options.maxBytes = std::numeric_limits<qint64>::max();
+    options.maxLatencyMs = 1000;
+    WebTelemetryBatcher batcher(options);
+    QVector<QJsonObject> flushed;
+    batcher.setFlushCallback([&flushed](const QJsonObject& batch) {
+        flushed.push_back(batch);
+    });
+
+    ApplicationSample sample = makeApplicationSample(QStringLiteral("task-a"));
+    sample.values.insert(
+        QStringLiteral("counted"),
+        QVariant::fromValue(CountingTelemetryValue{QStringLiteral("value")}));
+    countingTelemetryConversions.store(0, std::memory_order_relaxed);
+
+    for (quint64 sequence = 1; sequence <= 64; ++sequence) {
+        ASSERT_TRUE(batcher.enqueueSample(sequence, sample));
+    }
+
+    ASSERT_EQ(flushed.size(), 1);
+    EXPECT_EQ(flushed.first().value(QStringLiteral("firstSeq")).toInt(), 1);
+    EXPECT_EQ(flushed.first().value(QStringLiteral("lastSeq")).toInt(), 64);
+    EXPECT_EQ(flushed.first().value(QStringLiteral("samples")).toArray().size(), 64);
+    EXPECT_EQ(countingTelemetryConversions.load(std::memory_order_relaxed), 64);
     EXPECT_FALSE(batcher.hasPendingSamples());
 }
 
@@ -116,6 +166,32 @@ TEST(WebTelemetryBatcherTest, FlushesBeforeSoftByteLimitAndPreservesOversizeSing
                   .toArray()
                   .size(),
               1);
+}
+
+TEST(WebTelemetryBatcherTest, UsesExactByteLimitAtJsonSafeSequenceBoundary)
+{
+    constexpr quint64 firstSequence = 9007199254740990ULL;
+    const ApplicationSample sample = makeApplicationSample(QStringLiteral("task-舵机"));
+    const int twoSampleBytes =
+        compactJson(makeSampleBatch(firstSequence, {sample, sample})).toUtf8().size();
+
+    WebTelemetryBatcherOptions options;
+    options.maxBytes = twoSampleBytes;
+    options.maxLatencyMs = 1000;
+    WebTelemetryBatcher batcher(options);
+    QVector<QJsonObject> flushed;
+    batcher.setFlushCallback([&flushed](const QJsonObject& batch) {
+        flushed.push_back(batch);
+    });
+
+    ASSERT_TRUE(batcher.enqueueSample(firstSequence, sample));
+    ASSERT_TRUE(batcher.enqueueSample(firstSequence + 1, sample));
+
+    ASSERT_EQ(flushed.size(), 1);
+    EXPECT_EQ(flushed.first().value(QStringLiteral("firstSeq")).toDouble(),
+              static_cast<double>(firstSequence));
+    EXPECT_EQ(flushed.first().value(QStringLiteral("samples")).toArray().size(), 1);
+    EXPECT_TRUE(batcher.hasPendingSamples());
 }
 
 TEST(WebTelemetryBatcherTest, FlushesAfterMaximumLatency)

@@ -31,13 +31,23 @@ public:
     bool hasPendingSamples() const;
 
 private:
-    void beginBatch(quint64 firstSequence, const ApplicationSample& sample);
-    bool batchWouldReachByteLimit(const QVector<ApplicationSample>& samples) const;
+    struct ProjectedSample {
+        QJsonObject object;
+        qint64 compactUtf8Bytes = 0;
+    };
+
+    void beginBatch(quint64 firstSequence,
+                    const QString& taskId,
+                    ProjectedSample sample);
+    QJsonObject makeBatch() const;
+    bool batchWouldReachByteLimit(int sampleCount,
+                                  qint64 projectedObjectBytes) const;
 
     WebTelemetryBatcherOptions m_options;
     FlushCallback m_flushCallback;
     QTimer m_latencyTimer;
-    QVector<ApplicationSample> m_samples;
+    QVector<ProjectedSample> m_samples;
+    qint64 m_projectedObjectBytes = 0;
     quint64 m_firstSequence = 0;
     QString m_taskId;
 };

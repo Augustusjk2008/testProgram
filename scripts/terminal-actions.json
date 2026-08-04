@@ -99,6 +99,17 @@
       "cwd": "./dut/",
       "confirm": false,
       "enabled": true
+    },
+    {
+      "id": "helm",
+      "label": "启动舵机",
+      "icon": "Terminal",
+      "windowsCommand": "scp .\\build\\aarch64\\hw_test\\Release\\MB_DDF_v2_HelmControl root@192.168.1.29:/home/sast8/tmp/; if ($LASTEXITCODE -eq 0) { ssh -t root@192.168.1.29 'cd /home/sast8/tmp && chmod +x ./MB_DDF_v2_HelmControl && exec ./MB_DDF_v2_HelmControl' }",
+      "linuxCommand": "",
+      "macosCommand": "",
+      "cwd": ".\\dut\\",
+      "confirm": false,
+      "enabled": true
     }
   ]
 }
