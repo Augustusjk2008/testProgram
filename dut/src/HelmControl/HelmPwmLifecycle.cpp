@@ -32,6 +32,10 @@ bool HelmPwmLifecycle::initialize() {
     result = pwm_.apply_outputs(MB_DDF::HW::PwmRawOutputs{});
     if (!result) return fail("PWM startup zero duty write failed", result.status());
 
+    // FPGA 完成逻辑到物理通道的反序；控制循环始终只使用逻辑下标。
+    result = pwm_.set_channel_mapping(kHelmPwmChannelMapping);
+    if (!result) return fail("PWM channel mapping write failed", result.status());
+
     initialized_ = true;
     return true;
 }

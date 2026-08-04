@@ -339,6 +339,7 @@ Logger 初始化和编译期入口分派，DDS Core 不依赖测试服务或 `MB
   `PositiveToOne=0xBBBB`。
 - 以强类型 `PwmChannelMapping` 配置并回读局部 `0x40` 低 16 位的通道映射；默认
   `0x3210`，从低到高四个 nibble 对应逻辑舵 1 至 4 的实际 PWM/方向通道。
+- 可只写 `set_channel_mapping()` 调整局部 `0x40`，无需连带覆盖载波、峰值、波形和方向模式。
 - 设置无符号占空比模式。
 - 开关统一更新。
 - 不经 peak/方向/duty 读改流程，直接把四路 enable 写为全关，用于启动安全态。
@@ -380,6 +381,11 @@ v4 的 `Ad7606Config` 默认时序依次为：过采样 `0`、时钟周期 `24`�
 解释，读取是立即快照，不等待下一次转换完成。`raw(signed) / 65536 * 10 V` 是寄存器
 换算契约，不构成真机量程验收；舵控主动反馈仍使用下文单独说明的参考仿射换算，二者
 不能混用。
+
+独立舵控程序使用板级反序关系：PWM 局部 `0x40` 写 `0x0123`，AD7606 局部 `0x44`
+写 `0x76540123`。因此控制循环始终按逻辑下标执行 `AD[i] -> controller[i] -> PWM[i]`，
+实际通道 4、3、2、1 分别对应逻辑舵 1、2、3、4；不得再在软件中执行 `3-i`，否则会
+形成双重反序。AD7606 未用于舵反馈的逻辑通道 5 至 8 保持默认映射 4、5、6、7。
 
 ### 6.5 Ads1258Device
 
@@ -708,14 +714,15 @@ DDS 指令严格使用当前 `src/HelmControl/ProtocolModel` 定义的 27 字节
 “四路零位 + `helm_unlock=0xFF`”尾帧，再关闭本次 DDS 端点并清空队列。
 
 独立舵控程序将 AD7606 的有符号 16 位原始反馈码按现有路径扩展为 `int32_t data`，再按
-`actual_angle = (static_cast<double>(data) * 10.0 / 65535.0 - 2.048) * 3.0 * 115.0 / 20.0`
+`actual_angle = (2.048 - static_cast<int16_t>(data) * 10.0 / 65535.0) * 3.0 * 115.0 / (4 * 4.096)`
 换算舵机实际角度；该角度同时参与闭环控制反馈并填入 41 字节 DDS 反馈帧。此公式只属于
 `MB_DDF_v2_HelmControl` 的连续舵控实际角度换算，不替代或改变独立 `HELM_BOARD_TEST 07/02`
 上传 AD7606 有符号原始码后由 PC 按 `10/65536 V/code` 执行的通用换算。
 
 `MB_DDF_v2_HelmControl` 由用户独立启动或停止，内部保留自身舵角限幅。程序打开
-PWM transport 后的首个控制写是 `disable_outputs()` 直接禁止四路 PWM，随后关闭 update gate
-并写入零 duty；未收到解锁请求时不允许输出。首次 `helm_unlock=0xFF` 使控制线程将全局基址
+PWM transport 后的首个控制写是 `disable_outputs()` 直接禁止四路 PWM，随后关闭 update gate、
+写入零 duty，再写 PWM 反序映射；AD7606 初始化时写对应反馈反序映射。未收到解锁请求时
+不允许输出。首次 `helm_unlock=0xFF` 使控制线程将全局基址
 `0x140000` 的 DIDO DO0 置为高有效，从成功写入起使用 `steady_clock` 至少等待 30 ms，
 到期后才开启 update gate 和四路 PWM。该状态在进程内不可逆；重复请求不重置计时，字段
 回落或 STOP 不关闭 DO0/PWM，四路零位指令由闭环继续回零。任一首次关闭、解锁或使能

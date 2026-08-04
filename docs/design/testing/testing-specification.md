@@ -19,12 +19,12 @@
 | `tests/log/` | `hwtest_log_tests` | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
 | `tests/biz/` | `hwtest_biz_tests` | 6 | 45 | 配置、计划、三种运行模式、调度、线程、状态和报告 |
 | `tests/algorithm/` | `hwtest_algorithm_tests` | 16 | 134 | 协议 CSV、编解码、运行参数、串口、DH、DI、板级流程、流式算法和后处理 |
-| `tests/app/` | `hwtest_app_tests`、`hwtest_gui_tests`、`hwtest_web_tests` | 18 | 216 | 控制器、配置发现与持久化、TUI/GUI/WebSocket、连续保存、fixture、分析与 Web 出站边界 |
+| `tests/app/` | `hwtest_app_tests`、`hwtest_gui_tests`、`hwtest_web_tests` | 18 | 217 | 控制器、配置发现与持久化、TUI/GUI/WebSocket、连续保存、fixture、分析与 Web 出站边界 |
 | `src/adapters/ni_daqmx/tests/` | `hwtest_ni_daqmx_adapter_fake_tests` | 1 | 0 | 生产 Adapter 源码配合 Fake NIDAQmx 的软件路径 |
 
-- 合计为 55 个测试源文件：54 个含 GoogleTest 定义的源文件和 1 个 NI Fake 自定义 main；GoogleTest 定义数为 464。
-- 在一个已完成发现的构建树中，当前应有 475 条 CTest：464 条动态 GoogleTest、10 条应用进程测试和 1 条 NI Fake CTest。`ctest -N` 只核对该清单，不证明通过。
-- 浏览器前端当前有 35 个 `*.test.ts`/`*.test.tsx` 文件和 150 条 Vitest；它们不计入 475 条 CTest。
+- 合计为 55 个测试源文件：54 个含 GoogleTest 定义的源文件和 1 个 NI Fake 自定义 main；GoogleTest 定义数为 465。
+- 在一个已完成发现的构建树中，当前应有 476 条 CTest：465 条动态 GoogleTest、10 条应用进程测试和 1 条 NI Fake CTest。`ctest -N` 只核对该清单，不证明通过。
+- 浏览器前端当前有 35 个 `*.test.ts`/`*.test.tsx` 文件和 150 条 Vitest；它们不计入 476 条 CTest。
 
 ### 2.1 当前配置与运行模式门禁
 

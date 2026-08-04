@@ -111,13 +111,12 @@ int main(int argc, char** argv) {
         }
     }
 
-    // ─── PWM 寄存器默认值（硬件自带，无需手动配）───
+    // ─── 保留 PWM 波形参数硬件默认值；通道映射已由 lifecycle 单独配置 ───
     //   载波频率 = 4000Hz        （寄存器 0xB*4）
     //   波峰值   = 100000000     （寄存器 0xC*4）
     //   波形模式 = 锯齿波         （寄存器 0xD*4 / 16'hA001）
     //   占空比模式 = 有符号模式   （寄存器 0xE*4 / 16'hAAAA）
     //   正占空比方向 = 0           （寄存器 0xF*4 / 16'hAAAA）
-    //   PWM/方向通道映射 = 0x3210  （寄存器 0x10*4）
     //
     // 修改配置：
     // PwmConfig pwm_cfg = {
@@ -141,6 +140,7 @@ int main(int argc, char** argv) {
         Ad7606Config adc_cfg = {
             .acquisition_enabled = true,
             .filter_enabled = true,
+            .channel_mapping = kHelmAd7606ChannelMapping,
         };
         auto adc_cfg_result = adc.configure(adc_cfg);
         if (!adc_cfg_result) {

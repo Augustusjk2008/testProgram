@@ -42,7 +42,10 @@ Result<void> PwmDevice::configure(const PwmConfig& c) {
     if (!direction_mode) {
         return direction_mode;
     }
-    return transport_.write32(R::ChannelMapping, c.channel_mapping.encoded);
+    return set_channel_mapping(c.channel_mapping);
+}
+Result<void> PwmDevice::set_channel_mapping(PwmChannelMapping mapping) {
+    return transport_.write32(R::ChannelMapping, mapping.encoded);
 }
 Result<void> PwmDevice::set_duty_mode_unsigned() {
     return transport_.write32(R::DutyMode, 0xFFFFu);

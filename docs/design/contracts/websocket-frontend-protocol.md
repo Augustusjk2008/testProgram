@@ -211,10 +211,10 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 - `samples` 必须非空，最多包含 capability `maxSamples` 所声明的数量，且 v1 上限为 64。
 - `firstSeq`、`lastSeq` 都是 JavaScript 安全整数，且严格满足 `lastSeq == firstSeq + samples.length - 1`。样本在进入服务端批量器时分配序号，flush 时不得重编或重排；跨 batch 的序号也不得重置。
 - batch 内样本顺序与 `sampleReceived` 顺序一致；每个元素的字段形状与旧 `sample.sample` 完全一致，不含单独的 `seq` 字段。
-- 一个 batch 不得跨 `taskId`。任务变化前必须先 flush；不得丢字段、降采样或合并相邻样本。
+- 一个 batch 不得跨 `taskId`。任务变化前必须先 flush；正常投影不得丢字段、降采样或合并相邻样本。
 - 到达样本数、紧凑 JSON 软字节上限、首样本最大等待时间、任务变化、暂停、停止、错误、终态、断线或 `disconnect`/`quit` 收尾时必须 flush。单个样本本身超过软字节上限时，允许完整发送一个超过软上限的单元素 batch，不得截断或静默丢弃。
 
-健康连接期间，批量投影仍包含每一条可投影样本；浏览器环形显示缓存淘汰旧点不等于网络样本丢失。断线前历史不会被缓存或重放，完整长期记录仍以后端启用保存后的 TXT 为事实源。
+健康连接期间，批量投影仍包含每一条可投影样本；浏览器环形显示缓存淘汰旧点不等于网络样本丢失。若 Qt socket 待写字节与应用 FIFO 已接近硬上限，服务端先按整条 `sample`/`sampleBatch` 淘汰尚未提交到 socket 的最旧遥测，保留关键快照和控制 reply，并继续当前连接与测试。被保留的 batch 内部仍连续且不重排，后续 `firstSeq` 保持原分配值，因此客户端可通过跨 batch 序号间隙明确识别显示投影缺口。若淘汰全部待发遥测后仍无法容纳当前消息，才进入 `telemetry_backpressure` 硬失败。断线前历史不会被缓存或重放，完整长期记录仍以后端启用保存后的 TXT 为事实源；Web 投影淘汰不影响此前已完成的后端记录和后处理采集。
 
 ## 5. 协议层错误码
 
@@ -227,7 +227,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 | `missing_field` | 必填字段缺失、字符串为空，或动作必需参数缺失 | 是 |
 | `server_busy` | 已有活跃客户端 | 否，关闭码 `1008` |
 | `message_too_large` | UTF-8 文本超过 `16384` 字节 | 否，关闭码 `1009` |
-| `telemetry_backpressure` | 活跃客户端的出站 FIFO 加 Qt socket 待写字节超过 `maxQueuedOutputBytes` 硬上限 | 否；记录诊断并以 `1011` 关闭。普通任务执行现有安全停止/收尾；不可停止有限流只分离连接，任务继续自然运行，绝不把背压解释为 STOP |
+| `telemetry_backpressure` | 淘汰尚未提交的旧遥测后，活跃客户端的出站 FIFO 加 Qt socket 待写字节仍无法容纳当前消息并超过 `maxQueuedOutputBytes` 硬上限 | 否；记录诊断并以 `1011` 关闭。普通任务执行现有安全停止/收尾；不可停止有限流只分离连接，任务继续自然运行，绝不把背压解释为 STOP |
 | `command_in_progress` | `[当前实现]` 正在异步停止、安全收尾，或分析处于 `queued` 到终态之间时又收到新会话写动作 | 是 |
 | `test_config_not_found` | `selectTest.configId` 不在后端启动时发现的配置白名单中 | 是 |
 | `config_not_found` / `config_invalid` | 配置文档 ID 不存在，或草稿不能通过对应结构/业务校验 | 是 |
@@ -320,8 +320,8 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 - WebSocket 回调不得直接跨线程调用控制器。所有控制器动作和读取都通过 queued invocation 投递到控制器的 QObject 亲和线程；禁止 `BlockingQueuedConnection`。
 - Web 层不得调用 `waitForTerminal()`。运行进度和终态只通过 `snapshotChanged` 观察。
 - `sampleReceived` 只消费已形成的应用 DTO；默认 `single` 直接形成旧 `sample` 事件，已协商 `batch` 时进入每连接私有 `WebTelemetryBatcher`。批量器只按数目、字节、时间和 task 边界打包，不解释、合并或绘制业务字段，也不为连续测试写文件。连续数据文件在 Web 投影前已由共享应用控制器记录，TUI/GUI/WebSocket 适配器都不持有 recorder。`analysis` 不进入 sample 事件；伯德数组只能经 `analysisResult` 读取，避免每个样本重复携带大载荷。
-- 活跃客户端的样本 batch、关键快照和控制 reply 进入同一个按调用顺序的出站 FIFO。WebSocket、批量器定时器、快照合并定时器、FIFO 和 `bytesToWrite()` 只在 WebSocket server 亲和线程访问；不得跨线程发送或阻塞等待网络 drain。
-- 默认出站限制为：`maxBatchSamples=64`、`maxBatchBytes=32768`、`maxBatchLatencyMs=20`、`snapshotIntervalMs=100`、`socketHighWaterBytes=1048576`、`socketLowWaterBytes=262144`、`maxQueuedOutputBytes=4194304`。`bytesToWrite()` 到达高水位后暂停继续提交到 Qt socket；在 `bytesWritten()` 使其降至低水位后恢复。达到硬上限时，服务端记录 `telemetry_backpressure`、停止向旧连接投影新遥测并关闭旧连接；普通任务执行既有安全停止/收尾，不可停止有限流只分离连接且继续自然运行。不保留历史、不重放，也不得把旧 epoch 的 FIFO 内容交给重连客户端。
+- 活跃客户端的样本 batch、关键快照和控制 reply 进入同一个按调用顺序的出站 FIFO。队列元素保留“遥测/关键消息”类别，只允许在即将超过硬上限时淘汰尚未提交到 socket 的最旧遥测；关键快照和控制 reply 不参与淘汰。WebSocket、批量器定时器、快照合并定时器、FIFO 和 `bytesToWrite()` 只在 WebSocket server 亲和线程访问；不得跨线程发送或阻塞等待网络 drain。
+- 默认出站限制为：`maxBatchSamples=64`、`maxBatchBytes=32768`、`maxBatchLatencyMs=20`、`snapshotIntervalMs=100`、`socketHighWaterBytes=1048576`、`socketLowWaterBytes=262144`、`maxQueuedOutputBytes=4194304`。`bytesToWrite()` 到达高水位后暂停继续提交到 Qt socket；在 `bytesWritten()` 使其降至低水位后恢复。新消息将越过硬上限时先淘汰旧遥测并记录一次降载诊断；淘汰后仍超限才记录 `telemetry_backpressure`、停止向旧连接投影新遥测并关闭旧连接。普通任务执行既有安全停止/收尾，不可停止有限流只分离连接且继续自然运行。不保留历史、不重放，也不得把旧 epoch 的 FIFO 内容交给重连客户端。
 - `setDigitalStimulus` 和 `resetDigitalStimulus` 只在控制器处于 `ready`、`running`、`paused`、`finished` 或 `stopped`，且 DI 已准备时才会执行；Web 层不持有或传递物理资源/Adapter 参数。
 - `stop` 保存请求 id，调用 `stopAsync()` 后保持事件循环运行；发起成功后收到 `stopCompleted` 才回复。若 `stopAsync()` 因状态、超时参数或已有停止而立即失败，则直接返回该控制器错误并清除 Web 层 pending 状态。
 - `[当前实现]` 异步停止、断开收尾或后处理处于 `queued` 到终态期间，`snapshot`、`analysisResult`、`testConfigs`、`controls`、`ports` 和 `hardwareOptions` 等只读动作仍允许；其他新会话写动作回复 `command_in_progress`，不得再次触发控制器写动作。当前捕获任务 STOP 和所有 cleanup 始终允许。
@@ -344,7 +344,7 @@ report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V
 
 1. 活跃连接建立后依次把 `hello`、当前完整 `snapshot` 放入该连接 FIFO；每个新连接都从 `single` 模式开始。
 2. 同一事件循环队列中的普通请求按接收顺序投递；每个请求最多一个 reply。样本、关键快照和 reply 通过同一 FIFO 提交，客户端必须按 `type` 分流，不能假定 reply 先于相应 snapshot。
-3. `single` 模式维持逐样本、逐快照兼容投影。`batch` 模式只允许合并普通运行态快照；样本序号和样本字段绝不合并、降采样或改序。批量器在关键快照和控制 reply 前先 flush 已收样本，确保健康连接中批内及跨批样本序号连续。
-4. 暂停、停止、错误、终态和安全状态变化时，顺序固定为：必要的尾部 `sampleBatch`（或已发送的单条 sample）→ 最终完整 `snapshot` → `stop`/`disconnect`/`quit` reply → 必要时关闭帧。`disconnect`/`quit` 不得在 FIFO 中的 reply 提交前关闭 socket；`quit` 的关闭帧必须先于进程退出。
+3. `single` 模式维持逐样本、逐快照兼容投影。`batch` 模式只允许合并普通运行态快照；样本序号和样本字段绝不合并、降采样或改序。批量器在关键快照和控制 reply 前先 flush 已收样本，确保健康连接中批内及跨批样本序号连续；仅硬上限降载可删除整条尚未提交的遥测消息，并以跨消息序号间隙显式暴露缺口。
+4. 暂停、停止、错误、终态和安全状态变化时，正常顺序固定为：必要的尾部 `sampleBatch`（或已发送的单条 sample）→ 最终完整 `snapshot` → `stop`/`disconnect`/`quit` reply → 必要时关闭帧。发生硬上限降载时，已淘汰的尾部遥测不再阻塞关键快照/reply，其余保留消息仍按 FIFO 顺序提交。`disconnect`/`quit` 不得在 FIFO 中的 reply 提交前关闭 socket；`quit` 的关闭帧必须先于进程退出。
 5. `stop`、`disconnect`、`quit` 的 reply 必须晚于 `stopCompleted`（若需要停止）和 `shutdown`（若需要收尾）。高水位只暂停继续提交，不能重排 FIFO；硬背压失败不承诺普通遥测或 reply 投影，但仍执行安全收尾并关闭受影响连接。
 6. `[当前实现]` `HELM_STREAM` 的成功 STOP reply 不等待性能计算：捕获封存先发布 `analysis.state=queued` 以建立写门禁，`stopCompleted` 硬件收尾完成后再排队启动分析线程，随后发布 validating/preprocessing/calculating/persisting/终态摘要；浏览器收到终态摘要后再按通道请求 `analysisResult`。旧身份的进度、文件提交和 reply 不得覆盖新 `{taskId,analysisGeneration}`。

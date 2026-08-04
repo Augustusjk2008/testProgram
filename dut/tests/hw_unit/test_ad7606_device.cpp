@@ -4,6 +4,7 @@
 
 #include "MB_DDF_HW/Device/Ad7606Device.h"
 #include "MB_DDF_HW/Device/Registers/Ad7606Registers.h"
+#include "HelmControl/HelmPwmLifecycle.h"
 #include "hw_unit/support/RecordingTransport.h"
 
 using namespace MB_DDF::HW;
@@ -85,4 +86,19 @@ TEST(HwAd7606Device, ReadsChannelMappingIntoState) {
     EXPECT_EQ(state.value().config.channel_mapping, 0x10325476u);
     ASSERT_EQ(t.accesses().size(), 17u);
     EXPECT_EQ(t.accesses().back().offset, Registers::Ad7606::ChannelMapping);
+}
+
+TEST(HwAd7606Device, ConfiguresHelmReverseChannelMapping) {
+    static_assert(kHelmAd7606ChannelMapping == 0x76540123u);
+
+    RecordingTransport t;
+    ASSERT_TRUE(t.open());
+    Ad7606Device d(t);
+    Ad7606Config config{};
+    config.channel_mapping = kHelmAd7606ChannelMapping;
+
+    ASSERT_TRUE(d.configure(config));
+    ASSERT_FALSE(t.accesses().empty());
+    EXPECT_EQ(t.accesses().back().offset, Registers::Ad7606::ChannelMapping);
+    EXPECT_EQ(t.accesses().back().value, 0x76540123u);
 }

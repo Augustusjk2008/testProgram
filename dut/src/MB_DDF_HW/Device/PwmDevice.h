@@ -58,6 +58,7 @@ public:
     explicit PwmDevice(ITransport& transport) : transport_(transport) {}
     Result<void> check_communication() const;
     Result<void> configure(const PwmConfig& config);
+    Result<void> set_channel_mapping(PwmChannelMapping mapping);
     Result<void> set_duty_mode_unsigned();
     Result<void> set_update_enabled(bool enabled);
     Result<void> disable_outputs();

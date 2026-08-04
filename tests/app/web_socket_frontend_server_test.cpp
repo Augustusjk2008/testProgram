@@ -411,6 +411,75 @@ TEST(WebSocketFrontendServerTest, HardOutputLimitClosesClientAfterTelemetryBackp
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
 }
 
+TEST(WebSocketFrontendServerTest, EvictsQueuedTelemetryBeforeAggregateBackpressureClosesClient)
+{
+    WebSocketServerOptions options = testOptions();
+    options.maxBatchSamples = 1;
+    options.maxBatchBytes = 2048;
+    options.maxBatchLatencyMs = 0;
+    options.socketHighWaterBytes = 1;
+    options.socketLowWaterBytes = 0;
+    options.maxQueuedOutputBytes = 8192;
+    TestApplicationController controller;
+    WebSocketFrontendServer server(&controller, {}, options);
+    ASSERT_TRUE(server.listen());
+    test::WebSocketTestClient client;
+    ASSERT_TRUE(client.connectTo(server.webSocketUrl()));
+    ASSERT_TRUE(client.waitForMessageCount(2));
+
+    QJsonObject deliveryReply;
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("batch"),
+                            QStringLiteral("setTelemetryDelivery"),
+                            QJsonObject{{QStringLiteral("mode"),
+                                         QStringLiteral("batch")}},
+                            &deliveryReply));
+    ASSERT_TRUE(deliveryReply.value(QStringLiteral("ok")).toBool());
+
+    client.setReadBufferSize(1);
+    constexpr int producedSamples = 64;
+    for (int index = 0; index < producedSamples; ++index) {
+        ApplicationSample sample;
+        sample.taskId = QStringLiteral("task-sustained-backpressure");
+        sample.stepId = QStringLiteral("HELM_STREAM");
+        sample.channelId = QStringLiteral("HELM_STREAM");
+        sample.timestampUs = 1785000000123456LL + index;
+        sample.cycleIndex = index;
+        sample.values.insert(QStringLiteral("payload"),
+                             QString(256, QLatin1Char('x')));
+        controller.sampleReceived(sample);
+    }
+
+    client.setReadBufferSize(0);
+    QJsonObject snapshotReply;
+    ASSERT_TRUE(sendAndWait(&client,
+                            QStringLiteral("still-connected"),
+                            QStringLiteral("snapshot"),
+                            {},
+                            &snapshotReply))
+        << client.events().join(QStringLiteral(", ")).toStdString();
+    EXPECT_TRUE(snapshotReply.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(client.state(), QAbstractSocket::ConnectedState);
+
+    QVector<qint64> receivedSequences;
+    for (const QJsonObject& message : client.messages()) {
+        if (message.value(QStringLiteral("type")).toString() ==
+            QStringLiteral("sampleBatch")) {
+            receivedSequences.push_back(
+                static_cast<qint64>(
+                    message.value(QStringLiteral("firstSeq")).toDouble()));
+        }
+    }
+    ASSERT_FALSE(receivedSequences.isEmpty());
+    EXPECT_LT(receivedSequences.size(), producedSamples);
+    bool sawGap = receivedSequences.front() > 1;
+    for (int index = 1; index < receivedSequences.size(); ++index) {
+        sawGap = sawGap ||
+            receivedSequences[index] > receivedSequences[index - 1] + 1;
+    }
+    EXPECT_TRUE(sawGap);
+}
+
 TEST(WebSocketFrontendServerTest, RejectsUnknownAnalysisResultParameters)
 {
     TestApplicationController controller;

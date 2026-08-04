@@ -272,6 +272,7 @@ public:
         quint64 epoch = 0;
         QString text;
         qint64 byteCount = 0;
+        bool telemetry = false;
     };
 
     Impl(WebSocketFrontendServer* owner,
@@ -383,6 +384,7 @@ public:
         outputQueue.clear();
         queuedOutputBytes = 0;
         outputPausedAtHighWater = false;
+        telemetryDropWarningEmitted = false;
         closeAfterDrainSocket.clear();
         closeAfterDrainEpoch = 0;
         closeAfterDrainReason.clear();
@@ -537,13 +539,46 @@ public:
 
         const QString text = compactJson(message);
         const qint64 byteCount = text.toUtf8().size();
-        if (wouldExceedQueuedOutputLimit(socket, byteCount)) {
+        const QString messageType =
+            message.value(QStringLiteral("type")).toString();
+        const bool telemetry = messageType == QStringLiteral("sample") ||
+            messageType == QStringLiteral("sampleBatch");
+        if (!makeQueuedOutputRoomByDiscardingTelemetry(socket, byteCount)) {
             beginTelemetryBackpressureCleanup(socket);
             return;
         }
-        outputQueue.enqueue(QueuedOutput{activeClientEpoch, text, byteCount});
+        outputQueue.enqueue(
+            QueuedOutput{activeClientEpoch, text, byteCount, telemetry});
         queuedOutputBytes += byteCount;
         pumpOutput();
+    }
+
+    bool makeQueuedOutputRoomByDiscardingTelemetry(const QWebSocket* socket,
+                                                    qint64 additionalBytes)
+    {
+        qint64 droppedMessages = 0;
+        qint64 droppedBytes = 0;
+        while (wouldExceedQueuedOutputLimit(socket, additionalBytes)) {
+            const auto telemetry = std::find_if(
+                outputQueue.begin(),
+                outputQueue.end(),
+                [](const QueuedOutput& output) { return output.telemetry; });
+            if (telemetry == outputQueue.end()) {
+                break;
+            }
+            droppedBytes += telemetry->byteCount;
+            queuedOutputBytes -= telemetry->byteCount;
+            outputQueue.erase(telemetry);
+            ++droppedMessages;
+        }
+        if (droppedMessages > 0 && !telemetryDropWarningEmitted) {
+            telemetryDropWarningEmitted = true;
+            qWarning().noquote()
+                << "telemetry_backpressure: discarded"
+                << droppedMessages << "queued telemetry message(s),"
+                << droppedBytes << "byte(s), while preserving the active run";
+        }
+        return !wouldExceedQueuedOutputLimit(socket, additionalBytes);
     }
 
     bool wouldExceedQueuedOutputLimit(const QWebSocket* socket,
@@ -2099,6 +2134,7 @@ public:
     QQueue<QueuedOutput> outputQueue;
     qint64 queuedOutputBytes = 0;
     bool outputPausedAtHighWater = false;
+    bool telemetryDropWarningEmitted = false;
     QPointer<QWebSocket> closeAfterDrainSocket;
     quint64 closeAfterDrainEpoch = 0;
     QWebSocketProtocol::CloseCode closeAfterDrainCode =

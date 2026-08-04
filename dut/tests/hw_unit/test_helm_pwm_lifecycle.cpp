@@ -33,6 +33,8 @@ void open_all(LifecycleRig& rig) {
 }
 
 TEST(HelmPwmLifecycleTest, InitializeImmediatelyDisablesPwm) {
+    static_assert(kHelmPwmChannelMapping.encoded == 0x0123u);
+
     LifecycleRig rig;
     open_pwm(rig);
 
@@ -46,6 +48,9 @@ TEST(HelmPwmLifecycleTest, InitializeImmediatelyDisablesPwm) {
     EXPECT_TRUE(accesses[1].write);
     EXPECT_EQ(accesses[1].offset, 0x24u);
     EXPECT_EQ(accesses[1].value, 0xFFFFu);
+    ASSERT_TRUE(accesses.back().write);
+    EXPECT_EQ(accesses.back().offset, 0x40u);
+    EXPECT_EQ(accesses.back().value, 0x0123u);
     EXPECT_FALSE(rig.lifecycle.pwm_enabled());
 }
 
@@ -140,6 +145,16 @@ TEST(HelmPwmLifecycleTest, FalseAfterEnableDoesNotReverseState) {
 
 TEST(HelmPwmLifecycleTest, StartupDisableFailureStopsLifecycle) {
     LifecycleRig rig;
+
+    EXPECT_FALSE(rig.lifecycle.initialize());
+    EXPECT_FALSE(rig.lifecycle.update(true, Clock::time_point{}));
+    EXPECT_FALSE(rig.lifecycle.pwm_enabled());
+}
+
+TEST(HelmPwmLifecycleTest, ChannelMappingFailureStopsLifecycle) {
+    LifecycleRig rig;
+    open_pwm(rig);
+    rig.pwm_transport.fail_next_write_at(0x40u);
 
     EXPECT_FALSE(rig.lifecycle.initialize());
     EXPECT_FALSE(rig.lifecycle.update(true, Clock::time_point{}));
