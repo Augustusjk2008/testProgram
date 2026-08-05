@@ -15,7 +15,7 @@ namespace {
 
 const QString kAnalyzerId = QStringLiteral("mbddf.helm.performance");
 const QString kAnalyzerVersion =
-    QStringLiteral("mbddf.helm.performance/1;cyclesPerEstimate=4;maxDelayMs=100;"
+    QStringLiteral("mbddf.helm.performance/3;cyclesPerEstimate=4;maxDelayMs=100;"
                    "frequencyPointCount=96;candidateSamples=2048;"
                    "candidateSampling=time_stratified;"
                    "minCommandCorrelation=0.95;absoluteExcitationFloor=1e-6;"
@@ -86,25 +86,6 @@ quint64 missingBefore(quint32 previous, quint32 current)
     const quint32 advance = current - previous;
     if (advance <= 1u || advance >= 0x80000000u) return 0;
     return static_cast<quint64>(advance - 1u);
-}
-
-bool channelInputValid(const HelmCaptureData& capture, int channel, QString* reason)
-{
-    for (const HelmCaptureRecord& record : capture.records) {
-        if ((record.flags & 0x1u) != 0u || (record.flags & 0x10u) != 0u ||
-            !std::isfinite(record.command[static_cast<size_t>(channel)]) ||
-            !std::isfinite(record.feedback[static_cast<size_t>(channel)]) ||
-            record.streamElapsedUs < 0) {
-            if (reason != nullptr) *reason = QStringLiteral("invalid_input");
-            return false;
-        }
-        if (record.status != 0u || record.errorCode != 0u || record.selfCheck != 0u ||
-            record.timeout != 0u) {
-            if (reason != nullptr) *reason = QStringLiteral("device_reported_error");
-            return false;
-        }
-    }
-    return true;
 }
 
 HelmSeries channelSeries(const HelmCaptureData& capture, int channel)
@@ -328,13 +309,6 @@ AnalysisResult HelmPerformanceAnalyzer::analyze(const AnalysisInputSeal& input,
         AnalysisChannelResult channel;
         channel.channel = channelIndex;
         channel.enabled = true;
-        QString invalidReason;
-        if (!channelInputValid(capture, channelIndex, &invalidReason)) {
-            channel = unavailableChannel(channelIndex, true, invalidReason,
-                                         QStringLiteral("Input samples are invalid or report a device error"));
-            result.channels.push_back(channel);
-            continue;
-        }
         const HelmSeries series = channelSeries(capture, channelIndex);
         const QPair<int, int> commonWindow = commonAnalysisWindow(series, parameters);
         appendHelmCommonMetrics(series, commonWindow.first, commonWindow.second,

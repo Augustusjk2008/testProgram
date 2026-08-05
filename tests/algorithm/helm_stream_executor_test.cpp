@@ -386,8 +386,6 @@ TEST(HelmStreamExecutorTest, SendsParametersSplitsBatchIntoCompleteSamplesAndSto
                 13.5, 1e-6);
     EXPECT_NEAR(observer.samples.at(1).values.value(QStringLiteral("ins[3]")).toDouble(),
                 14.5, 1e-6);
-    EXPECT_EQ(observer.samples.at(1).values.value(
-                  QStringLiteral("self_check_combined")).toUInt(), 2u);
     EXPECT_EQ(observer.samples.at(1).values.value(QStringLiteral("timeout")).toUInt(), 1u);
     EXPECT_EQ(observer.samples.at(0).values.value(
                   QStringLiteral("product_frame_sequence")).toUInt(), 0x9000u);
@@ -395,8 +393,22 @@ TEST(HelmStreamExecutorTest, SendsParametersSplitsBatchIntoCompleteSamplesAndSto
               0x9000u);
     EXPECT_EQ(observer.samples.at(0).values.value(QStringLiteral("status")).toInt(),
               0);
-    EXPECT_EQ(observer.samples.at(0).values.value(
-                  QStringLiteral("self_check_reserved")).toUInt(), 0u);
+    const QStringList removedSelfCheckFields{
+        QStringLiteral("self_check"),
+        QStringLiteral("self_check_1"),
+        QStringLiteral("self_check_2"),
+        QStringLiteral("self_check_3"),
+        QStringLiteral("self_check_4"),
+        QStringLiteral("self_check_combined"),
+        QStringLiteral("self_check_reserved"),
+        QStringLiteral("self_check_or"),
+        QStringLiteral("self_check_or_timeout"),
+    };
+    for (const hwtest::biz::RawSample& sample : observer.samples) {
+        for (const QString& field : removedSelfCheckFields) {
+            EXPECT_FALSE(sample.values.contains(field)) << field.toStdString();
+        }
+    }
     EXPECT_FALSE(observer.samples.at(0).values.value(
                      QStringLiteral("product_frame_discontinuity")).toBool());
     EXPECT_DOUBLE_EQ(observer.samples.at(0).values.value(
@@ -425,6 +437,50 @@ TEST(HelmStreamExecutorTest, SendsParametersSplitsBatchIntoCompleteSamplesAndSto
                          QStringLiteral("sweep_duration_s")).toDouble(),
                      25.0);
     EXPECT_EQ(startValues.value(QStringLiteral("enable")).toUInt(), 15u);
+    EXPECT_TRUE(executor.finishRun().ok());
+}
+
+TEST(HelmStreamExecutorTest, FeedbackStatusIsRecordedWithoutStoppingAcquisition)
+{
+    const QString assets = catalogDirectory();
+    ASSERT_TRUE(QFileInfo(assets).isDir());
+    ProtocolCatalog catalog;
+    QString error;
+    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
+
+    QVariantMap feedback = oneSampleFeedback((quint64{2} << 32) + 0x10, 90, 100);
+    feedback.insert(QStringLiteral("status"), 1);
+    feedback.insert(QStringLiteral("err_code"), 0x1234);
+    QVariantMap normalFeedback = oneSampleFeedback(
+        (quint64{2} << 32) + 0x20, 91, 101);
+    auto transport = std::make_unique<StreamingTransport>(
+        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2345,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}),
+        std::vector<QByteArray>{
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0x9000, feedback),
+            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0x9001,
+                     normalFeedback)},
+        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2346,
+                 {{QStringLiteral("status"), 0},
+                  {QStringLiteral("err_code"), 0}}));
+    HelmStreamAlgorithmExecutor executor(std::move(transport));
+    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
+                                 executionConfig(assets)).ok());
+    RunControl control;
+    Observer observer([&executor] {
+        if (executor.sampleCount() >= 2) EXPECT_TRUE(executor.requestStop(100).ok());
+    });
+
+    const auto outcome = executor.executeStep(streamStep(), control, observer);
+
+    ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
+    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Pass);
+    ASSERT_EQ(observer.samples.size(), 2);
+    EXPECT_EQ(observer.samples.first().values.value(QStringLiteral("status")).toUInt(), 1u);
+    EXPECT_EQ(observer.samples.first().values.value(QStringLiteral("err_code")).toUInt(),
+              0x1234u);
+    EXPECT_EQ(observer.samples.at(1).values.value(QStringLiteral("status")).toUInt(), 0u);
     EXPECT_TRUE(executor.finishRun().ok());
 }
 

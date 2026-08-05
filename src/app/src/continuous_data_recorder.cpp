@@ -491,6 +491,8 @@ ActionResult ContinuousDataRecorder::append(const ApplicationSample& sample)
     const quint16 errorCode = static_cast<quint16>(
         sample.values.value(QStringLiteral("err_code")).toUInt());
     const bool failed = responseStatus != 0 || errorCode != 0;
+    const bool suppressMeasurements = failed &&
+        m_descriptor.algorithmId != QStringLiteral("mbddf.helm_stream");
     const quint16 sequence = static_cast<quint16>(
         sample.values.value(QStringLiteral("seq")).toUInt());
     const qint64 sampleTimeUs = sample.streamElapsedUs >= 0
@@ -508,11 +510,13 @@ ActionResult ContinuousDataRecorder::append(const ApplicationSample& sample)
                 .rightJustified(4, QLatin1Char('0')),
     };
     for (const Column& column : m_columns) {
-        row.push_back(failed ? QStringLiteral("NA")
-                             : scalarText(sample.values.value(column.valueKey)));
+        row.push_back(suppressMeasurements
+                          ? QStringLiteral("NA")
+                          : scalarText(sample.values.value(column.valueKey)));
     }
     if (m_electricalHealthFormat) {
-        if (failed || !sample.values.contains(QStringLiteral("activate_bits"))) {
+        if (suppressMeasurements ||
+            !sample.values.contains(QStringLiteral("activate_bits"))) {
             row.push_back(QStringLiteral("NA"));
             row.push_back(QStringLiteral("NA"));
         } else {

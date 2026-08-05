@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent
 PI = math.pi
 GENERATOR_VERSION = "1"
 ANALYZER_VERSION = (
-    "mbddf.helm.performance/1;cyclesPerEstimate=4;maxDelayMs=100;"
+    "mbddf.helm.performance/3;cyclesPerEstimate=4;maxDelayMs=100;"
     "frequencyPointCount=96;candidateSamples=2048;"
     "candidateSampling=time_stratified;"
     "minCommandCorrelation=0.95;absoluteExcitationFloor=1e-6;"
@@ -43,7 +43,6 @@ def sample(t_us, command, feedback, sequence):
         "feedback": [feedback, feedback, feedback, feedback],
         "status": 0,
         "errCode": 0,
-        "selfCheck": 0,
         "timeout": 0,
         "productSequence": sequence & 0xFFFF,
         "serialA": sequence & 0xFFFF,

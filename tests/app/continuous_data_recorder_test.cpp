@@ -231,5 +231,49 @@ TEST(ContinuousDataRecorderTest, CancelPreservesPartialAfterFinalizeFailure)
     EXPECT_TRUE(QFileInfo(recoveryPath).isFile());
 }
 
+TEST(ContinuousDataRecorderTest, HelmFeedbackErrorsKeepObservedMeasurementValues)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QVector<qint64> now{
+        utcMicroseconds(16, 36, 0, 100000),
+        utcMicroseconds(16, 36, 1, 100000),
+    };
+    int nextNow = 0;
+    ContinuousDataRecorder recorder([&now, &nextNow] { return now.at(nextNow++); });
+    TestDescriptor helm = descriptor(QStringLiteral("Helm"));
+    helm.algorithmId = QStringLiteral("mbddf.helm_stream");
+    helm.measurements = {
+        TestMeasurementDescriptor{QStringLiteral("ins[0]"),
+                                  QStringLiteral("Command"),
+                                  QStringLiteral("degree"), true},
+        TestMeasurementDescriptor{QStringLiteral("fdb[0]"),
+                                  QStringLiteral("Feedback"),
+                                  QStringLiteral("degree"), true},
+        TestMeasurementDescriptor{QStringLiteral("timeout"),
+                                  QStringLiteral("Timeout"), {}, false},
+    };
+    ASSERT_TRUE(recorder.begin(directory.path(), helm,
+                               QStringLiteral("device_stream"), 0, 0).ok);
+    ApplicationSample sample;
+    sample.streamElapsedUs = 1234;
+    sample.values = {
+        {QStringLiteral("seq"), 7},
+        {QStringLiteral("status"), 1},
+        {QStringLiteral("err_code"), 0x1234},
+        {QStringLiteral("ins[0]"), 1.8},
+        {QStringLiteral("fdb[0]"), 43.125},
+        {QStringLiteral("timeout"), 1},
+    };
+
+    ASSERT_TRUE(recorder.append(sample).ok);
+    ASSERT_TRUE(recorder.finish(QStringLiteral("已停止"), QStringLiteral("done")).ok);
+
+    const QString text = readTextFile(recorder.outputPath());
+    EXPECT_TRUE(text.contains(
+        QStringLiteral("1\t1234\t7\t1\t0x1234\t1.8\t43.125\t1\n")));
+    EXPECT_FALSE(text.contains(QStringLiteral("\tNA")));
+}
+
 } // namespace
 } // namespace hwtest::app

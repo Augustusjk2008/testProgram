@@ -340,14 +340,6 @@ Status HelmStreamAlgorithmExecutor::publishFeedback(
     const TestStep& step,
     hwtest::biz::IAlgorithmObserver& observer)
 {
-    if (values.value(QStringLiteral("status")).toInt() != 0 ||
-        values.value(QStringLiteral("err_code")).toUInt() != 0) {
-        return status(ErrorCode::RemoteCommandError,
-                      QStringLiteral("Helm stream feedback reported remote error 0x%1")
-                          .arg(values.value(QStringLiteral("err_code")).toUInt(),
-                               4, 16, QLatin1Char('0')),
-                      QStringLiteral("mbddf.helm_stream.feedback"));
-    }
     const int count = values.value(QStringLiteral("sample_count")).toInt();
     if (count < 1 || count > 5) {
         return status(ErrorCode::ProtocolParseError,
@@ -437,28 +429,8 @@ Status HelmStreamAlgorithmExecutor::publishFeedback(
                                  values.value(source +
                                      QStringLiteral("ins[%1]").arg(channel)));
         }
-        const QStringList selfCheckNames{
-            QStringLiteral("self_check"),
-            QStringLiteral("self_check_1"),
-            QStringLiteral("self_check_2"),
-            QStringLiteral("self_check_3"),
-            QStringLiteral("self_check_4"),
-            QStringLiteral("self_check_combined"),
-        };
-        uint selfCheckOr = 0;
-        for (const QString& name : selfCheckNames) {
-            const QVariant value = values.value(source + name);
-            sample.values.insert(name, value);
-            selfCheckOr |= value.toUInt();
-        }
-        sample.values.insert(
-            QStringLiteral("self_check_reserved"),
-            values.value(source + QStringLiteral("self_check_reserved")));
         const uint timeout = values.value(source + QStringLiteral("timeout")).toUInt();
         sample.values.insert(QStringLiteral("timeout"), timeout);
-        sample.values.insert(QStringLiteral("self_check_or"), selfCheckOr);
-        sample.values.insert(QStringLiteral("self_check_or_timeout"),
-                             selfCheckOr != 0 || timeout != 0);
         sample.values.insert(QStringLiteral("product_frame_sequence"),
                              productSequence);
         sample.values.insert(QStringLiteral("product_frame_discontinuity"),
@@ -780,11 +752,11 @@ Result<TestResult> HelmStreamAlgorithmExecutor::executeStep(
     if (m_sampleCount == 0) {
         result.verdict = TestVerdict::Fail;
         result.errorCode = ErrorCode::SampleFail;
-        result.message = QStringLiteral("Helm stream ended without valid feedback");
+        result.message = QStringLiteral("Helm stream ended without decoded feedback samples");
     } else {
         result.verdict = TestVerdict::Pass;
         result.errorCode = ErrorCode::Ok;
-        result.message = QStringLiteral("Helm stream received %1 valid sample(s)")
+        result.message = QStringLiteral("Helm stream received %1 decoded sample(s)")
                              .arg(m_sampleCount);
     }
     hwtest::biz::MeasurementRecord count;

@@ -65,22 +65,46 @@ TEST(HelmPerformanceAnalyzerTest, ReducesEveryEnabledChannelStateCombinationDete
     }
 }
 
-TEST(HelmPerformanceAnalyzerTest, SelfCheckAndNonStrictTimeAreUnavailableRatherThanPass)
+TEST(HelmPerformanceAnalyzerTest, DeviceDiagnosticsAndFlatFeedbackDoNotGateCalculation)
 {
-    auto fixture = test::loadHelmPerformanceFixture(QStringLiteral("constant"));
+    auto fixture = test::loadHelmPerformanceFixture(QStringLiteral("square"));
     ASSERT_GT(fixture.samples.size(), 3);
-    fixture.samples[1].streamElapsedUs = fixture.samples[0].streamElapsedUs;
-    fixture.samples[1].values.insert(QStringLiteral("self_check_or"), 1);
+    for (PostRunSample& sample : fixture.samples) {
+        sample.values.insert(QStringLiteral("status"), 1);
+        sample.values.insert(QStringLiteral("err_code"), 0x1234);
+        sample.values.insert(QStringLiteral("timeout"), 1);
+        sample.values.insert(QStringLiteral("self_check"), 3);
+        sample.values.insert(QStringLiteral("self_check_1"), 1);
+        sample.values.insert(QStringLiteral("self_check_2"), 2);
+        sample.values.insert(QStringLiteral("self_check_3"), 3);
+        sample.values.insert(QStringLiteral("self_check_4"), 1);
+        sample.values.insert(QStringLiteral("self_check_combined"), 2);
+        sample.values.insert(QStringLiteral("self_check_reserved"), 0xff);
+        sample.values.insert(QStringLiteral("self_check_or"), 3);
+        sample.values.insert(QStringLiteral("self_check_or_timeout"), true);
+        for (int channel = 0; channel < 4; ++channel) {
+            sample.values.insert(QStringLiteral("fdb[%1]").arg(channel),
+                                 43.125);
+        }
+    }
     QTemporaryDir directory;
     QString error;
     const AnalysisResult result = test::analyzeHelmFixture(fixture, &directory, &error);
     const auto* channel = test::findChannel(result, 0);
     ASSERT_NE(channel, nullptr) << error.toStdString();
-    EXPECT_EQ(result.state, AnalysisState::Unavailable);
-    EXPECT_EQ(channel->state, AnalysisChannelState::Unavailable);
+    EXPECT_NE(result.state, AnalysisState::Unavailable);
+    EXPECT_NE(channel->state, AnalysisChannelState::Unavailable);
+    EXPECT_NE(channel->reasonCode, QStringLiteral("device_reported_error"));
+    EXPECT_NE(channel->reasonCode, QStringLiteral("invalid_input"));
+    EXPECT_GT(test::requiredMetricValue(channel->commonMetrics,
+                                        QStringLiteral("mae")),
+              40.0);
+    EXPECT_NEAR(test::requiredMetricValue(channel->commonMetrics,
+                                          QStringLiteral("feedback_range")),
+                0.0, 1e-9);
 }
 
-TEST(HelmPerformanceAnalyzerTest, MissingRequiredDeviceDiagnosticIsUnavailableRatherThanSilentZero)
+TEST(HelmPerformanceAnalyzerTest, MissingDeviceDiagnosticIsRecordedButDoesNotGateCalculation)
 {
     auto fixture = test::loadHelmPerformanceFixture(QStringLiteral("constant"));
     ASSERT_FALSE(fixture.samples.isEmpty());
@@ -90,8 +114,10 @@ TEST(HelmPerformanceAnalyzerTest, MissingRequiredDeviceDiagnosticIsUnavailableRa
     const AnalysisResult result = test::analyzeHelmFixture(fixture, &directory, &error);
     const auto* channel = test::findChannel(result, 0);
     ASSERT_NE(channel, nullptr) << error.toStdString();
-    EXPECT_EQ(channel->state, AnalysisChannelState::Unavailable);
-    EXPECT_EQ(channel->reasonCode, QStringLiteral("invalid_input"));
+    EXPECT_EQ(result.state, AnalysisState::Completed);
+    EXPECT_EQ(channel->state, AnalysisChannelState::Completed);
+    EXPECT_EQ(result.diagnostics.value(QStringLiteral("invalidInputCount")).toULongLong(),
+              1u);
 }
 
 TEST(HelmPerformanceAnalyzerTest, SerializesVersionedFiniteResultAndFixtureManifestIsTraceable)
@@ -109,6 +135,8 @@ TEST(HelmPerformanceAnalyzerTest, SerializesVersionedFiniteResultAndFixtureManif
               QStringLiteral("1"));
     EXPECT_EQ(document.object().value(QStringLiteral("analyzerId")).toString(),
               QStringLiteral("mbddf.helm.performance"));
+    EXPECT_TRUE(document.object().value(QStringLiteral("analyzerVersion")).toString()
+                    .startsWith(QStringLiteral("mbddf.helm.performance/3;")));
     EXPECT_TRUE(document.object().contains(QStringLiteral("generatedAtUtcUs")));
     EXPECT_TRUE(document.object().contains(QStringLiteral("reproducible")));
     EXPECT_TRUE(document.object().contains(QStringLiteral("sourceArtifact")));

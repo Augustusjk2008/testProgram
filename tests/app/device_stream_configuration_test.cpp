@@ -38,6 +38,36 @@ TEST(DeviceStreamConfigurationTest, HelmKeepsAuthoritativeDeviceTimestamps)
     EXPECT_FALSE(stream.contains(QStringLiteral("hostTimestampIntervalUs")));
 }
 
+TEST(DeviceStreamConfigurationTest, HelmDoesNotExposePcSelfCheckMeasurements)
+{
+    QFile file(QStringLiteral(HWTEST_APP_HELM_STREAM_CONFIG));
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+    ASSERT_EQ(parseError.error, QJsonParseError::NoError);
+    const QVariantList measurements = document.object().toVariantMap()
+        .value(QStringLiteral("reportFields")).toMap()
+        .value(QStringLiteral("measurements")).toList();
+    const QStringList removedSelfCheckFields{
+        QStringLiteral("self_check"),
+        QStringLiteral("self_check_1"),
+        QStringLiteral("self_check_2"),
+        QStringLiteral("self_check_3"),
+        QStringLiteral("self_check_4"),
+        QStringLiteral("self_check_combined"),
+        QStringLiteral("self_check_reserved"),
+        QStringLiteral("self_check_or"),
+        QStringLiteral("self_check_or_timeout"),
+    };
+    QStringList ids;
+    for (const QVariant& measurement : measurements) {
+        ids.push_back(measurement.toMap().value(QStringLiteral("id")).toString());
+    }
+    for (const QString& field : removedSelfCheckFields) {
+        EXPECT_FALSE(ids.contains(field)) << field.toStdString();
+    }
+}
+
 TEST(DeviceStreamConfigurationTest, DhIgniteIsRegisteredAsDedicatedExecutor)
 {
     const MbdDfAlgorithmRegistration* registration = findMbdDfAlgorithm(

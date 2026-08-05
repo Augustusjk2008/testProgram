@@ -19,7 +19,6 @@ PostRunSample captureSample(qint64 elapsedUs, double command, double feedback, i
     }
     sample.values.insert(QStringLiteral("status"), 0);
     sample.values.insert(QStringLiteral("err_code"), 0);
-    sample.values.insert(QStringLiteral("self_check_or"), 0);
     sample.values.insert(QStringLiteral("timeout"), 0);
     sample.values.insert(QStringLiteral("product_frame_sequence"), sequence);
     sample.values.insert(QStringLiteral("serial_a"), sequence);
@@ -54,6 +53,8 @@ TEST(HelmAnalysisCaptureTest, SealIsImmutableAndLateSamplesAreDiagnosticOnly)
     const AnalysisInputSeal firstSeal = session->seal(termination);
 
     ASSERT_TRUE(firstSeal.valid) << firstSeal.message.toStdString();
+    EXPECT_EQ(firstSeal.captureFormatVersion, 1u);
+    EXPECT_EQ(firstSeal.captureRecordBytes, 124u);
     EXPECT_EQ(firstSeal.acceptedSampleCount, 2u);
     EXPECT_TRUE(QFileInfo::exists(firstSeal.captureFilePath));
     const AnalysisAcceptResult late = session->append(

@@ -303,7 +303,7 @@ station/testcfg 表单描述使用轻量契约 `{"contractVersion":1,"mode":"for
 report_index  sample_time_us  seq  response_status  err_code  c_volt_V  b_volt_V  external_vol_V  core_vol_V  assist_vol_V  v28_5_V  js_5V_V  dyt_5V_V  power_24V_V  value_YX_V  activate_bits  bc_activate_good
 ```
 
-实际分隔符是 TAB。其他连续模式配置使用同样的前五列，后续列由已验证 descriptor 的全部 `measurements` 固定投影，并排除已在前缀中的 `status`/`err_code`；单位非空时写入列名后缀。前端图表的显示/隐藏、组合、时间窗和降采样均不改变该列集合。响应 `status != 0` 或 `err_code != 0` 时仍保存状态和错误码，测量列写 `NA`。协议 F32 在内部保留来源类型，TXT 使用能够往返为同一 F32 的最短十进制表示；真实 Double 继续使用既有双精度格式，不统一截断为 F32 位数。
+实际分隔符是 TAB。其他连续模式配置使用同样的前五列，后续列由已验证 descriptor 的全部 `measurements` 固定投影，并排除已在前缀中的 `status`/`err_code`；单位非空时写入列名后缀。前端图表的显示/隐藏、组合、时间窗和降采样均不改变该列集合。一般响应在 `status != 0` 或 `err_code != 0` 时仍保存状态和错误码，测量列写 `NA`；`mbddf.helm_stream` 是显式例外，其状态、超时和指令/反馈都属于需观察的连续数据，即使状态或错误码非零也原值写入，不由 PC 端改写为 `NA`。DUT 六项自检及相关派生值不进入舵机 descriptor 或 TXT 列。协议 F32 在内部保留来源类型，TXT 使用能够往返为同一 F32 的最短十进制表示；真实 Double 继续使用既有双精度格式，不统一截断为 F32 位数。
 
 运行期数据逐样本刷新到同目录排他创建的 `.partial` 文件，避免不限 PC 周期或设备持续回告在内存累积。显式文件名在工作文件成功打开后即可通过 `dataFilePath` 投影当前候选最终目标；若终态前出现同名文件，最终路径可按 `_N` 规则调整。默认名依赖结束时间，运行中 `dataFilePath` 保持为空。正常完成、用户停止或错误终态时，后端先排他占位最终名，再使用 `QSaveFile` 把元数据和 TSV 原子提交为最终 TXT；成功终态投影最终绝对路径，并尽力删除已无用途的 `.partial`。写入或提交失败时保留 `.partial` 供恢复，将其绝对路径投影到 `dataFilePath` 并在 `dataSaveError` 返回诊断；后续启动不得删除该恢复文件。目录、工作文件不能创建时 `start` 返回 `data_storage`；目标值不合法时在打开夹具或启动任务前返回 `ParameterRangeError`。未勾选或 `single` 均不解释两个目标字段且不创建数据文件。
 

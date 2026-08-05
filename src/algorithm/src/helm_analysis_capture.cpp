@@ -13,6 +13,9 @@
 namespace hwtest::algorithm::mbddf {
 namespace {
 
+// Capture v1 allocated one quint32 to the former PC self-check projection.
+// Keep that on-disk slot zeroed and ignore it on read so retained captures stay
+// readable without restoring self-check semantics to the analysis model.
 constexpr quint16 kCaptureFormatVersion = 1;
 constexpr quint16 kRecordBytes = 124;
 constexpr qint64 kFooterBytes = 64;
@@ -99,7 +102,8 @@ QByteArray encodeRecord(const HelmCaptureRecord& record)
     stream << record.acceptedSequence << record.streamElapsedUs;
     for (double value : record.command) stream << value;
     for (double value : record.feedback) stream << value;
-    stream << record.status << record.errorCode << record.selfCheck << record.timeout
+    const quint32 legacyReservedSlot = 0;
+    stream << record.status << record.errorCode << legacyReservedSlot << record.timeout
            << record.productSequence << record.serialA << record.serialB
            << record.ddsSequence << record.batchIndex << record.flags;
     return stream.status() == QDataStream::Ok ? bytes : QByteArray{};
@@ -116,7 +120,8 @@ bool decodeRecord(const QByteArray& bytes, HelmCaptureRecord* record)
     stream >> record->acceptedSequence >> record->streamElapsedUs;
     for (double& value : record->command) stream >> value;
     for (double& value : record->feedback) stream >> value;
-    stream >> record->status >> record->errorCode >> record->selfCheck >> record->timeout
+    quint32 ignoredLegacyReservedSlot = 0;
+    stream >> record->status >> record->errorCode >> ignoredLegacyReservedSlot >> record->timeout
            >> record->productSequence >> record->serialA >> record->serialB
            >> record->ddsSequence >> record->batchIndex >> record->flags;
     return stream.status() == QDataStream::Ok && buffer.pos() == bytes.size();
@@ -220,20 +225,11 @@ HelmCaptureRecord HelmAnalysisCapture::decodeSample(const PostRunSample& sample,
         record.command[static_cast<size_t>(channel)] = command;
         record.feedback[static_cast<size_t>(channel)] = feedback;
     }
-    // Health fields are required because they decide whether a captured
-    // channel is trustworthy.  Transport/product sequence values remain
-    // optional diagnostics: they must never turn an otherwise valid sample
-    // into an unavailable analysis result.
+    // Status and timeout values remain diagnostic inputs.  DUT self-check
+    // fields are intentionally absent from the PC analysis representation.
     bool diagnosticsValid = uintValue(sample.values, QStringLiteral("status"), &record.status) &&
         uintValue(sample.values, QStringLiteral("err_code"), &record.errorCode) &&
         uintValue(sample.values, QStringLiteral("timeout"), &record.timeout);
-    if (sample.values.contains(QStringLiteral("self_check_or"))) {
-        diagnosticsValid = uintValue(sample.values, QStringLiteral("self_check_or"),
-                                      &record.selfCheck) && diagnosticsValid;
-    } else {
-        diagnosticsValid = uintValue(sample.values, QStringLiteral("self_check_or_timeout"),
-                                      &record.selfCheck) && diagnosticsValid;
-    }
     if (sample.values.contains(QStringLiteral("product_frame_sequence"))) {
         uintValue(sample.values, QStringLiteral("product_frame_sequence"),
                   &record.productSequence);

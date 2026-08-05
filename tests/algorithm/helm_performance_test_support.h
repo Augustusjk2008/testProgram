@@ -57,8 +57,6 @@ inline HelmPerformanceFixture loadHelmPerformanceFixture(const QString& name)
                              object.value(QStringLiteral("status")).toInt());
         sample.values.insert(QStringLiteral("err_code"),
                              object.value(QStringLiteral("errCode")).toInt());
-        sample.values.insert(QStringLiteral("self_check_or"),
-                             object.value(QStringLiteral("selfCheck")).toInt());
         sample.values.insert(QStringLiteral("timeout"),
                              object.value(QStringLiteral("timeout")).toInt());
         sample.values.insert(QStringLiteral("product_frame_sequence"),

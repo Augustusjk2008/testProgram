@@ -19,7 +19,6 @@ struct HelmCaptureRecord {
     std::array<double, 4> feedback{};
     quint32 status = 0;
     quint32 errorCode = 0;
-    quint32 selfCheck = 0;
     quint32 timeout = 0;
     quint32 productSequence = 0;
     quint32 serialA = 0;

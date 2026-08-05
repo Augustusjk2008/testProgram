@@ -268,7 +268,7 @@ DDS 时间来自设备单调时钟而非 UTC。宿主保留每条原始值为 `d
 
 独立目标 `MB_DDF_v2_HelmControl` 使用 `dut/src/HelmControl/ProtocolModel` 定义的 DDS 主题和 27/41 字节协议模型，用户可按任意顺序独立启动或停止。舵控进程打开 PWM 后首先直接禁止四路输出，随后关闭 update gate 并写入零 duty；首次解锁请求将高有效 DIDO DO0 置高，从写入成功起使用单调时钟至少等待 30 ms 才使能 PWM。成功后在进程内单向锁存，重复请求、字段回落或 STOP 都不重新上锁、禁止 PWM 或重置 30 ms 计时。DUT 服务只启停本次 DDS bridge，不创建、终止、探测或占有舵控进程；`HELM_BOARD_TEST 07/02` 继续走直接板级硬件路径且不包含舵锁流程，与设备流没有生命周期、互斥、忙状态或其他形式的绑定。DDS 端点使用 create-or-get 语义，启动顺序不构成协议约束。
 
-宿主算法校验 START ACK 后持续读取 `07/01`；请求停止后发送一次 STOP 并校验 ACK。停止时零有效样本判为 `SampleFail`，一条及以上通过。完整原始样本与生效参数进入独立的应用后处理 sidecar；其性能计算、伯德图和只读结果投影不改变采集 verdict、`TestResult` 或 STOP 硬件语义，具体 DTO 和查询边界见 [WebSocket 前端协议](websocket-frontend-protocol.md)。
+宿主算法校验 START ACK 后持续读取 `07/01`；请求停止后发送一次 STOP 并校验 ACK。DUT 反馈协议中的六项自检及保留位继续由协议 CSV 定义和解码，但 PC 不把它们投影到应用样本、descriptor、连续 TXT 或后处理捕获，也不计算自检 OR 或“自检或超时”派生值。`status`、`err_code`、`timeout`、指令与反馈偏差以及连续性统计仍作为观测数据保留，不作为 PC 端中断采集或拒绝后处理计算的有效性门禁。停止时零样本判为 `SampleFail`，一条及以上可解码样本通过采集；帧无法解码、时间无法安全表示、START/STOP 命令失败和存储损坏等协议或基础设施错误仍保持类型化失败。完整应用样本与生效参数进入独立的后处理 sidecar，通道会先计算公共误差指标，再按波形计算可形成的性能指标；反馈不跟踪指令本身不得把通道改为 `device_reported_error`/`invalid_input`。波形覆盖或数学前提不足仍可形成对应的 partial/unavailable 指标状态。性能计算、伯德图和只读结果投影不改变采集 verdict、`TestResult` 或 STOP 硬件语义，具体 DTO 和查询边界见 [WebSocket 前端协议](websocket-frontend-protocol.md)。
 
 ### 7.4 板级单次测试
 
