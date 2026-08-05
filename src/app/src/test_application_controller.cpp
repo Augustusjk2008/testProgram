@@ -356,12 +356,24 @@ TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
         if (label.isEmpty()) {
             label = id;
         }
-        descriptor.measurements.push_back(TestMeasurementDescriptor{
-            id,
-            label,
-            map.value(QStringLiteral("unit")).toString().trimmed(),
-            map.value(QStringLiteral("primary")).toBool(),
-        });
+        TestMeasurementDescriptor measurement;
+        measurement.id = id;
+        measurement.label = label;
+        measurement.unit = map.value(QStringLiteral("unit")).toString().trimmed();
+        measurement.primary = map.value(QStringLiteral("primary")).toBool();
+        measurement.sourceId = map.value(QStringLiteral("sourceId")).toString().trimmed();
+        bool bitIndexValid = false;
+        const int bitIndex = map.value(QStringLiteral("bitIndex")).toInt(&bitIndexValid);
+        if (!measurement.sourceId.isEmpty() && bitIndexValid &&
+            bitIndex >= 0 && bitIndex <= 31) {
+            measurement.bitIndex = bitIndex;
+        } else {
+            measurement.sourceId.clear();
+        }
+        if (map.contains(QStringLiteral("taskVisible"))) {
+            measurement.taskVisible = map.value(QStringLiteral("taskVisible")).toBool();
+        }
+        descriptor.measurements.push_back(std::move(measurement));
         seenMeasurements.insert(id);
     }
     if (descriptor.measurements.isEmpty()) {
@@ -373,6 +385,32 @@ TestDescriptor makeTestDescriptor(const hwtest::biz::TestConfig& config,
                 seenMeasurements.insert(id);
             }
         }
+    }
+
+    QSet<QString> seenTaskMeasurements;
+    for (const QVariant& measurementValue :
+         presentation.value(QStringLiteral("taskMeasurements")).toList()) {
+        const QVariantMap map = measurementValue.toMap();
+        const QString id = map.value(QStringLiteral("id")).toString().trimmed();
+        if (id.isEmpty() || seenTaskMeasurements.contains(id)) {
+            continue;
+        }
+        TestMeasurementDescriptor measurement;
+        measurement.id = id;
+        measurement.label = map.value(QStringLiteral("label")).toString().trimmed();
+        if (measurement.label.isEmpty()) measurement.label = id;
+        measurement.unit = map.value(QStringLiteral("unit")).toString().trimmed();
+        measurement.primary = true;
+        measurement.sourceId = map.value(QStringLiteral("sourceId")).toString().trimmed();
+        bool bitIndexValid = false;
+        const int bitIndex = map.value(QStringLiteral("bitIndex")).toInt(&bitIndexValid);
+        if (measurement.sourceId.isEmpty() || !bitIndexValid ||
+            bitIndex < 0 || bitIndex > 31) {
+            continue;
+        }
+        measurement.bitIndex = bitIndex;
+        descriptor.taskMeasurements.push_back(std::move(measurement));
+        seenTaskMeasurements.insert(id);
     }
 
     const auto* schema =

@@ -33,7 +33,7 @@
 - 服务器发送紧凑 JSON，不依赖空白或对象成员顺序。
 - 每个有效请求恰好产生一个相同 `id` 的 reply。快照和样本是独立异步事件，可以出现在请求与 reply 之间。
 - 所有对浏览器可见的事件序号必须是 `0..9007199254740991` 内的整数。服务端不得把超出 JavaScript 安全整数范围的 `snapshot.seq`、`sample.seq`、`sampleBatch.firstSeq` 或 `sampleBatch.lastSeq` 转成 JSON number 后发送。
-- `selectAuxiliarySerialPort`、`snapshot.auxiliarySerialPortName`、`setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`start.dataDirectory`、`start.dataFileName`、`setTelemetryDelivery`、descriptor 中的 `stoppable`/`postRunAnalysis`/`runParameters[].persistValues`、快照 `rawData.boardTest`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。旧客户端省略两个保存目标字段时继续使用 6.1 节默认规则；不认识它们的旧服务端会按严格参数白名单返回 `invalid_envelope`，客户端不得删除用户指定的目标后静默重试。新客户端收到旧服务端缺失的辅助串口字段时回退为空字符串，缺失 `stoppable` 时兼容回退为 true；缺失后处理字段时安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。显式 `stoppable` 与 `persistValues` 必须为 boolean，其他类型是协议边界错误。
+- `selectAuxiliarySerialPort`、`snapshot.auxiliarySerialPortName`、`setDigitalStimulus`、`resetDigitalStimulus`、`start.saveData`、`start.dataDirectory`、`start.dataFileName`、`setTelemetryDelivery`、descriptor 中的 `stoppable`/`postRunAnalysis`/`runParameters[].persistValues`/`taskMeasurements`/`measurements[].taskVisible`、快照 `rawData.boardTest`、快照中的 `analysis` 和只读 `analysisResult` 都是版本 1 的追加式扩展；旧客户端可忽略新增快照字段，未识别动作不能自行推断为可用。旧客户端省略两个保存目标字段时继续使用 6.1 节默认规则；不认识它们的旧服务端会按严格参数白名单返回 `invalid_envelope`，客户端不得删除用户指定的目标后静默重试。新客户端收到旧服务端缺失的辅助串口字段时回退为空字符串，缺失 `stoppable` 时兼容回退为 true，缺失 `taskMeasurements` 时回退为空数组；缺失后处理字段时安全回退为 `supported=false`、`state=none`、`analysisGeneration=0` 和空摘要。显式 `stoppable`、`persistValues` 与 `taskVisible` 必须为 boolean，其他类型是协议边界错误。
 
 ## 4. 消息结构
 
@@ -114,13 +114,14 @@
 | `title`、`description` | string | 当前测试的展示名称和说明 |
 | `supportedRunModes` | string[] | 当前配置声明的运行模式；元素只能是 `single`、`pc_periodic` 或 `device_stream`，且不得同时包含 `pc_periodic` 与 `device_stream`；字段缺失时后端只投影 `single` |
 | `stoppable` | boolean | 当前测试在活动态是否允许 pause/resume/stop/shutdown；配置缺失时为 true，false 只允许恰好支持 `device_stream` 的配置，当前用于 DH 点火有限流 |
-| `measurements` | object[] | 待测量元数据；每项包含 `id`、`label`、`unit`、`primary` |
+| `measurements` | object[] | 通用测量元数据；每项包含 `id`、`label`、`unit`、`primary`，可选 `taskVisible` |
+| `taskMeasurements` | object[] | 仅供任务面板使用的派生显示项；每项包含 `id`、`label`、`unit`、`primary=true`、`sourceId` 和 `bitIndex`；旧服务端缺失时按空数组处理 |
 | `runParameterSchemaVersion` | string | 算法层运行参数 Schema 版本；无可编辑参数时为空 |
 | `runParameters` | object[] | 参数定义；每项包含 `id`、`label`、`description`、`kind`、`unit`、`required`、独占边界标志和 `choices`，可选 `minimum`、`maximum`、`visibleWhen`、`persistValues`。后者缺失时按 true 兼容；显式 false 时浏览器不得读写该项 localStorage，但仍发送本次有效参数 |
 | `runParameterDefaults` | object | 当前配置值覆盖算法 Schema 默认值后得到的完整默认参数 |
 | `postRunAnalysis` | object | `{supported, analyzerId, schemaVersion}`；仅当前测试支持后处理时 `supported=true`，旧服务端/非支持配置安全回退为 false 和空字符串 |
 
-`measurements` 只描述展示标签、单位和首页主指标候选，不改变算法判定或硬件安全语义。`runParameters` 由算法层定义语义，`kind` 只能是 `integer`、`number`、`boolean` 或 `choice`；`visibleWhen` 只控制界面显示，隐藏字段仍按 Schema 校验并随完整参数传递。首条样本可能包含 descriptor 未列出的数值字段，前端仍应自动发现并显示该字段；descriptor 缺失时，兼容客户端可以使用空 descriptor 和样本字段回退。
+`measurements` 描述通用展示标签、单位和首页主指标候选；`taskVisible=false` 只从任务面板排除对应原始值，不改变曲线字段、连续数据列、算法判定或硬件安全语义。`taskMeasurements` 非空时替代通用 `primary` 候选：客户端从同一条样本的 `sourceId` 无符号 32 位整数中提取 `bitIndex=0..31` 的单个位并显示为 0/1；`sourceId` 与 `bitIndex` 必须成对出现。派生项不进入通用 `measurements`，因此不扩展算法指标、曲线或连续数据列。`runParameters` 由算法层定义语义，`kind` 只能是 `integer`、`number`、`boolean` 或 `choice`；`visibleWhen` 只控制界面显示，隐藏字段仍按 Schema 校验并随完整参数传递。首条样本可能包含 descriptor 未列出的数值字段，前端仍应自动发现并显示该字段；descriptor 缺失时，兼容客户端可以使用空 descriptor 和样本字段回退。
 
 `digitalStimulus` 是受 WebSocket v1 数值边界约束的应用 DTO 公开投影，不暴露 `resourceId`、设备 alias、`adapterId`、端口、厂家设置或 DLL 路径：
 

@@ -99,6 +99,64 @@ TEST(BoardTestConfigurationTest, TimerJitterUsesExactEightBucketLabels)
     }
 }
 
+TEST(BoardTestConfigurationTest, DiReadDisplaysSixteenConfiguredBitStates)
+{
+    const QVariantMap json = loadBoardJson(QStringLiteral(HWTEST_APP_DI_CONFIG));
+    const QVariantList measurements = json.value(QStringLiteral("reportFields")).toMap()
+                                          .value(QStringLiteral("measurements")).toList();
+    ASSERT_EQ(measurements.size(), 4);
+    const QVariantList taskMeasurements = json.value(QStringLiteral("reportFields")).toMap()
+                                              .value(QStringLiteral("taskMeasurements")).toList();
+    ASSERT_EQ(taskMeasurements.size(), 16);
+
+    const QStringList expectedLabels{
+        QStringLiteral("DI0 联锁、电气弹动"),
+        QStringLiteral("DI1 引信报警"),
+        QStringLiteral("DI2 引信起爆指令"),
+        QStringLiteral("DI3 锁相环锁定指示"),
+        QStringLiteral("DI4"),
+        QStringLiteral("DI5"),
+        QStringLiteral("DI6"),
+        QStringLiteral("DI7"),
+        QStringLiteral("DI8 投放允许"),
+        QStringLiteral("DI9"),
+        QStringLiteral("DI10"),
+        QStringLiteral("DI11"),
+        QStringLiteral("DI12"),
+        QStringLiteral("DI13"),
+        QStringLiteral("DI14"),
+        QStringLiteral("DI15")};
+    for (int bit = 0; bit < expectedLabels.size(); ++bit) {
+        const QVariantMap measurement = taskMeasurements.at(bit).toMap();
+        EXPECT_EQ(measurement.value(QStringLiteral("id")).toString(),
+                  QStringLiteral("di%1").arg(bit));
+        EXPECT_EQ(measurement.value(QStringLiteral("label")).toString(),
+                  expectedLabels.at(bit));
+        EXPECT_EQ(measurement.value(QStringLiteral("sourceId")).toString(),
+                  QStringLiteral("di_state[0]"));
+        EXPECT_EQ(measurement.value(QStringLiteral("bitIndex")).toInt(), bit);
+        EXPECT_TRUE(measurement.value(QStringLiteral("primary")).toBool());
+    }
+
+    for (int index = 2; index < measurements.size(); ++index) {
+        const QVariantMap source = measurements.at(index).toMap();
+        EXPECT_EQ(source.value(QStringLiteral("primary")).toBool(), index == 2);
+        EXPECT_TRUE(source.contains(QStringLiteral("taskVisible")));
+        EXPECT_FALSE(source.value(QStringLiteral("taskVisible")).toBool());
+    }
+
+    const QVariantList channels = json.value(QStringLiteral("executionConfig")).toMap()
+                                      .value(QStringLiteral("digitalStimulus")).toMap()
+                                      .value(QStringLiteral("channels")).toList();
+    ASSERT_EQ(channels.size(), 3);
+    EXPECT_EQ(channels.at(0).toMap().value(QStringLiteral("label")).toString(),
+              QStringLiteral("DI3 锁相环锁定指示"));
+    EXPECT_EQ(channels.at(1).toMap().value(QStringLiteral("label")).toString(),
+              QStringLiteral("DI1 引信报警"));
+    EXPECT_EQ(channels.at(2).toMap().value(QStringLiteral("label")).toString(),
+              QStringLiteral("DI2 引信起爆指令"));
+}
+
 TEST(BoardTestConfigurationTest, HelmManualAndAutomaticShareSingleConfig)
 {
     hwtest::biz::TestConfigManager manager;

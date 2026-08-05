@@ -71,6 +71,23 @@ function recordValue(value: unknown): Record<string, unknown> | null {
     : null
 }
 
+function measurementNumericValue(
+  measurement: TestMeasurementDescriptor,
+  values: Record<string, unknown>,
+): number | undefined {
+  const direct = values[measurement.id]
+  if (typeof direct === 'number') return direct
+  if (measurement.sourceId === undefined || measurement.bitIndex === undefined) return undefined
+  const source = values[measurement.sourceId]
+  if (typeof source !== 'number' || !Number.isSafeInteger(source) ||
+      source < 0 || source > 0xffff_ffff ||
+      !Number.isInteger(measurement.bitIndex) ||
+      measurement.bitIndex < 0 || measurement.bitIndex > 31) {
+    return undefined
+  }
+  return Number((BigInt(source) >> BigInt(measurement.bitIndex)) & 1n)
+}
+
 function hasTimerBucket(values: Record<string, unknown>): boolean {
   return TIMER_BUCKET_KEYS.some((key) => Object.prototype.hasOwnProperty.call(values, key))
 }
@@ -163,16 +180,28 @@ export function OverviewPage() {
   const timerDistribution = isTimerJitter
     ? timerJitterDistribution(timerValues, snapshot.verdict)
     : null
-  const numericValues = Object.entries(values).filter((entry): entry is [string, number] => (
-    typeof entry[1] === 'number'
-  ))
-  const numericFields = numericValues.map(([field]) => field)
   const measurements = snapshot.descriptor.measurements
-  const primaryFields = measurements.filter(({ primary }) => primary).map(({ id }) => id)
-  const visibleFields = (primaryFields.length > 0
-    ? primaryFields
-    : numericFields.slice(0, 6))
-    .filter((field) => typeof values[field] === 'number')
+  const taskMeasurements = snapshot.descriptor.taskMeasurements
+  const displayMeasurements = [...measurements, ...taskMeasurements]
+  const hiddenFields = new Set(measurements
+    .filter(({ taskVisible }) => taskVisible === false)
+    .map(({ id }) => id))
+  const numericValues = Object.entries(values).filter((entry): entry is [string, number] => (
+    typeof entry[1] === 'number' && !hiddenFields.has(entry[0])
+  ))
+  const primaryMeasurements = taskMeasurements.length > 0
+    ? taskMeasurements
+    : measurements.filter(({ primary, taskVisible }) => (
+      primary && taskVisible !== false
+    ))
+  const visibleValues: Array<[string, number]> = primaryMeasurements.length > 0
+    ? primaryMeasurements
+      .map((measurement): [string, number | undefined] => (
+        [measurement.id, measurementNumericValue(measurement, values)]
+      ))
+      .filter((entry): entry is [string, number] => entry[1] !== undefined)
+    : numericValues.slice(0, 6)
+  const visibleFields = visibleValues.map(([field]) => field)
   const secondaryValues = numericValues.filter(([field]) => (
     !visibleFields.includes(field) &&
     !(timerDistribution !== null && TIMER_BUCKET_KEYS.includes(field))
@@ -219,8 +248,8 @@ export function OverviewPage() {
       </section>
 
       <section className="metric-grid" aria-label="最新状态量">
-        {visibleFields.length > 0 ? visibleFields.map((field) => (
-          <MetricCard field={field} key={field} value={values[field]} measurements={measurements} />
+        {visibleValues.length > 0 ? visibleValues.map(([field, value]) => (
+          <MetricCard field={field} key={field} value={value} measurements={displayMeasurements} />
         )) : (
           <div className="empty-state panel metric-grid__empty">
             <Pulse size={22} />

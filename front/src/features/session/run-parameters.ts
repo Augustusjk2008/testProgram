@@ -21,9 +21,15 @@ export function normalizeGuardedRunParameterValues(
   descriptor: TestDescriptor,
   values: RunParameterValues,
 ): RunParameterValues {
-  const normalized = { ...values }
+  const normalized: RunParameterValues = {}
+  for (const parameter of descriptor.runParameters) {
+    if (Object.prototype.hasOwnProperty.call(values, parameter.id)) {
+      normalized[parameter.id] = values[parameter.id]
+    }
+  }
   if (descriptor.algorithmId === DH_IGNITE_ALGORITHM_ID) {
     for (const id of ['power_enable', 'return_enable']) {
+      if (!Object.prototype.hasOwnProperty.call(normalized, id)) continue
       normalized[id] = normalized[id] === 1 || normalized[id] === true ? 1 : 0
     }
   }

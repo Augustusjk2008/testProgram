@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { TestDescriptor } from '../../shared/protocol'
 import {
   loadRunParameterValues,
+  normalizeGuardedRunParameterValues,
   persistableRunParameterValues,
   runParameterStorageKey,
   validateRunParameterValues,
@@ -22,6 +23,7 @@ const descriptor: TestDescriptor = {
   stoppable: true,
   supportedRunModes: ['device_stream'],
   measurements: [],
+  taskMeasurements: [],
   runParameterSchemaVersion: '1',
   runParameters: [
     {
@@ -109,6 +111,23 @@ describe('algorithm-owned run parameters', () => {
       max_freq: 80,
       test_mode: 'manual',
     })).toEqual({ waveform: 4, ampl: 1.8, max_freq: 80 })
+  })
+
+  it('drops stale values when the selected algorithm exposes no editable run parameters', () => {
+    const spiFlashDescriptor: TestDescriptor = {
+      ...descriptor,
+      configId: 'mbddf-spi-flash',
+      algorithmId: 'mbddf.spi_flash',
+      runParameterSchemaVersion: '',
+      runParameters: [],
+      runParameterDefaults: {},
+    }
+
+    expect(normalizeGuardedRunParameterValues(spiFlashDescriptor, {
+      memperf_type: 1,
+      length: 4096,
+      seed: 7,
+    })).toEqual({})
   })
 
   it('keeps the disabled DO5 and DO6 channels false when restoring or persisting output parameters', () => {

@@ -48,6 +48,30 @@ inline void expectSemanticallyEquivalentSnapshots(const ApplicationSnapshot& lef
                   right.descriptor.measurements.at(index).unit);
         EXPECT_EQ(left.descriptor.measurements.at(index).primary,
                   right.descriptor.measurements.at(index).primary);
+        EXPECT_EQ(left.descriptor.measurements.at(index).sourceId,
+                  right.descriptor.measurements.at(index).sourceId);
+        EXPECT_EQ(left.descriptor.measurements.at(index).bitIndex,
+                  right.descriptor.measurements.at(index).bitIndex);
+        EXPECT_EQ(left.descriptor.measurements.at(index).taskVisible,
+                  right.descriptor.measurements.at(index).taskVisible);
+    }
+    ASSERT_EQ(left.descriptor.taskMeasurements.size(),
+              right.descriptor.taskMeasurements.size());
+    for (int index = 0; index < left.descriptor.taskMeasurements.size(); ++index) {
+        EXPECT_EQ(left.descriptor.taskMeasurements.at(index).id,
+                  right.descriptor.taskMeasurements.at(index).id);
+        EXPECT_EQ(left.descriptor.taskMeasurements.at(index).label,
+                  right.descriptor.taskMeasurements.at(index).label);
+        EXPECT_EQ(left.descriptor.taskMeasurements.at(index).unit,
+                  right.descriptor.taskMeasurements.at(index).unit);
+        EXPECT_EQ(left.descriptor.taskMeasurements.at(index).primary,
+                  right.descriptor.taskMeasurements.at(index).primary);
+        EXPECT_EQ(left.descriptor.taskMeasurements.at(index).sourceId,
+                  right.descriptor.taskMeasurements.at(index).sourceId);
+        EXPECT_EQ(left.descriptor.taskMeasurements.at(index).bitIndex,
+                  right.descriptor.taskMeasurements.at(index).bitIndex);
+        EXPECT_EQ(left.descriptor.taskMeasurements.at(index).taskVisible,
+                  right.descriptor.taskMeasurements.at(index).taskVisible);
     }
 }
 

@@ -641,8 +641,28 @@ TEST(TestApplicationControllerTest, LoadsDiSwitchDescriptorsWithoutOpeningHardwa
     ASSERT_EQ(stimulus.switches.size(), 3);
     EXPECT_EQ(stimulus.switches.at(0).switchId, QStringLiteral("di3"));
     EXPECT_EQ(stimulus.switches.at(0).dutBit, 3);
+    EXPECT_EQ(stimulus.switches.at(0).label,
+              QStringLiteral("DI3 锁相环锁定指示"));
     EXPECT_EQ(stimulus.switches.at(1).switchId, QStringLiteral("di1"));
+    EXPECT_EQ(stimulus.switches.at(1).label, QStringLiteral("DI1 引信报警"));
     EXPECT_EQ(stimulus.switches.at(2).switchId, QStringLiteral("di2"));
+    EXPECT_EQ(stimulus.switches.at(2).label,
+              QStringLiteral("DI2 引信起爆指令"));
+
+    const TestDescriptor descriptor = controller.snapshot().descriptor;
+    ASSERT_EQ(descriptor.measurements.size(), 4);
+    EXPECT_FALSE(descriptor.measurements.at(2).taskVisible);
+    EXPECT_FALSE(descriptor.measurements.at(3).taskVisible);
+    ASSERT_EQ(descriptor.taskMeasurements.size(), 16);
+    EXPECT_EQ(descriptor.taskMeasurements.first().id, QStringLiteral("di0"));
+    EXPECT_EQ(descriptor.taskMeasurements.first().label,
+              QStringLiteral("DI0 联锁、电气弹动"));
+    EXPECT_EQ(descriptor.taskMeasurements.first().sourceId,
+              QStringLiteral("di_state[0]"));
+    EXPECT_EQ(descriptor.taskMeasurements.first().bitIndex, 0);
+    EXPECT_EQ(descriptor.taskMeasurements.at(8).label,
+              QStringLiteral("DI8 投放允许"));
+    EXPECT_EQ(descriptor.taskMeasurements.last().bitIndex, 15);
 
     const ActionResult rejected = controller.setDigitalStimulus(
         QStringLiteral("di3"), true, 0);

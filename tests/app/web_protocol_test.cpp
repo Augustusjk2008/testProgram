@@ -232,6 +232,13 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
                                   QStringLiteral("CPU 占用率"),
                                   QStringLiteral("%"),
                                   true}};
+    TestMeasurementDescriptor taskMeasurement;
+    taskMeasurement.id = QStringLiteral("di0");
+    taskMeasurement.label = QStringLiteral("DI0 联锁、电气弹动");
+    taskMeasurement.primary = true;
+    taskMeasurement.sourceId = QStringLiteral("di_state[0]");
+    taskMeasurement.bitIndex = 0;
+    snapshot.descriptor.taskMeasurements = {taskMeasurement};
     snapshot.descriptor.runParameterSchemaVersion = QStringLiteral("1");
     TestRunParameterDescriptor frequency;
     frequency.id = QStringLiteral("freq");
@@ -334,8 +341,17 @@ TEST(WebProtocolTest, ProjectsEverySnapshotFieldAndRawData)
                   .first()
                   .toObject()
                   .value(QStringLiteral("unit"))
-                  .toString(),
+              .toString(),
               QStringLiteral("%"));
+    const QJsonArray taskMeasurements =
+        descriptor.value(QStringLiteral("taskMeasurements")).toArray();
+    ASSERT_EQ(taskMeasurements.size(), 1);
+    EXPECT_EQ(taskMeasurements.first().toObject()
+                  .value(QStringLiteral("sourceId")).toString(),
+              QStringLiteral("di_state[0]"));
+    EXPECT_EQ(taskMeasurements.first().toObject()
+                  .value(QStringLiteral("bitIndex")).toInt(),
+              0);
     EXPECT_EQ(descriptor.value(QStringLiteral("runParameterSchemaVersion")).toString(),
               QStringLiteral("1"));
     const QJsonArray runParameters =

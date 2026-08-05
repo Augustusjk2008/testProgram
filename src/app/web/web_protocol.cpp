@@ -141,11 +141,30 @@ QJsonObject descriptorObject(const TestDescriptor& descriptor)
     }
     QJsonArray measurements;
     for (const TestMeasurementDescriptor& measurement : descriptor.measurements) {
-        measurements.push_back(QJsonObject{
+        QJsonObject projected{
             {QStringLiteral("id"), measurement.id},
             {QStringLiteral("label"), measurement.label},
             {QStringLiteral("unit"), measurement.unit},
             {QStringLiteral("primary"), measurement.primary},
+        };
+        if (!measurement.sourceId.isEmpty() && measurement.bitIndex >= 0) {
+            projected.insert(QStringLiteral("sourceId"), measurement.sourceId);
+            projected.insert(QStringLiteral("bitIndex"), measurement.bitIndex);
+        }
+        if (!measurement.taskVisible) {
+            projected.insert(QStringLiteral("taskVisible"), false);
+        }
+        measurements.push_back(projected);
+    }
+    QJsonArray taskMeasurements;
+    for (const TestMeasurementDescriptor& measurement : descriptor.taskMeasurements) {
+        taskMeasurements.push_back(QJsonObject{
+            {QStringLiteral("id"), measurement.id},
+            {QStringLiteral("label"), measurement.label},
+            {QStringLiteral("unit"), measurement.unit},
+            {QStringLiteral("primary"), true},
+            {QStringLiteral("sourceId"), measurement.sourceId},
+            {QStringLiteral("bitIndex"), measurement.bitIndex},
         });
     }
     QJsonArray runParameters;
@@ -206,6 +225,7 @@ QJsonObject descriptorObject(const TestDescriptor& descriptor)
         {QStringLiteral("supportedRunModes"), supportedRunModes},
         {QStringLiteral("stoppable"), descriptor.stoppable},
         {QStringLiteral("measurements"), measurements},
+        {QStringLiteral("taskMeasurements"), taskMeasurements},
         {QStringLiteral("runParameterSchemaVersion"),
          descriptor.runParameterSchemaVersion},
         {QStringLiteral("runParameters"), runParameters},

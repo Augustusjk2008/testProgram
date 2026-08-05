@@ -75,6 +75,9 @@ struct TestMeasurementDescriptor {
     QString label;
     QString unit;
     bool primary = false;
+    QString sourceId;
+    int bitIndex = -1;
+    bool taskVisible = true;
 };
 
 struct TestRunParameterChoice {
@@ -183,6 +186,7 @@ struct TestDescriptor {
     PostRunAnalysisCapability postRunAnalysis;
     bool stoppable = true;
     QString reportTitle;
+    QVector<TestMeasurementDescriptor> taskMeasurements;
 };
 
 struct DigitalSwitchDescriptor {

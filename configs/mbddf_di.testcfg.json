@@ -3,7 +3,7 @@
   "configId": "mbddf-di-read",
   "productModel": "MB_DDF_v2",
   "productName": "MB_DDF digital input",
-  "configVersion": "1.1.0",
+  "configVersion": "1.2.0",
   "steps": [
     {
       "stepId": "DI_READ",
@@ -46,9 +46,9 @@
       "deviceId": "ni6259_stimulus",
       "settlingMs": 20,
       "channels": [
-        {"switchId": "di3", "dutBit": 3, "resourceId": "DUT_DI3_STIM", "label": "DI3 PLL锁定", "activeLevel": "High"},
-        {"switchId": "di1", "dutBit": 1, "resourceId": "DUT_DI1_STIM", "label": "DI1 保险告警", "activeLevel": "High"},
-        {"switchId": "di2", "dutBit": 2, "resourceId": "DUT_DI2_STIM", "label": "DI2 保险点火指令", "activeLevel": "High"}
+        {"switchId": "di3", "dutBit": 3, "resourceId": "DUT_DI3_STIM", "label": "DI3 锁相环锁定指示", "activeLevel": "High"},
+        {"switchId": "di1", "dutBit": 1, "resourceId": "DUT_DI1_STIM", "label": "DI1 引信报警", "activeLevel": "High"},
+        {"switchId": "di2", "dutBit": 2, "resourceId": "DUT_DI2_STIM", "label": "DI2 引信起爆指令", "activeLevel": "High"}
       ]
     }
   },
@@ -61,8 +61,26 @@
     "measurements": [
       {"id": "status", "label": "设备状态", "unit": "", "primary": false},
       {"id": "err_code", "label": "设备错误码", "unit": "", "primary": false},
-      {"id": "di_state[0]", "label": "DI0..DI31 回读位图", "unit": "bitmask", "primary": true},
-      {"id": "di_state[1]", "label": "DI32..DI63 诊断位图", "unit": "bitmask", "primary": false}
+      {"id": "di_state[0]", "label": "DI0..DI31 回读位图", "unit": "bitmask", "primary": true, "taskVisible": false},
+      {"id": "di_state[1]", "label": "DI32..DI63 诊断位图", "unit": "bitmask", "primary": false, "taskVisible": false}
+    ],
+    "taskMeasurements": [
+      {"id": "di0", "label": "DI0 联锁、电气弹动", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 0},
+      {"id": "di1", "label": "DI1 引信报警", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 1},
+      {"id": "di2", "label": "DI2 引信起爆指令", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 2},
+      {"id": "di3", "label": "DI3 锁相环锁定指示", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 3},
+      {"id": "di4", "label": "DI4", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 4},
+      {"id": "di5", "label": "DI5", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 5},
+      {"id": "di6", "label": "DI6", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 6},
+      {"id": "di7", "label": "DI7", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 7},
+      {"id": "di8", "label": "DI8 投放允许", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 8},
+      {"id": "di9", "label": "DI9", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 9},
+      {"id": "di10", "label": "DI10", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 10},
+      {"id": "di11", "label": "DI11", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 11},
+      {"id": "di12", "label": "DI12", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 12},
+      {"id": "di13", "label": "DI13", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 13},
+      {"id": "di14", "label": "DI14", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 14},
+      {"id": "di15", "label": "DI15", "unit": "", "primary": true, "sourceId": "di_state[0]", "bitIndex": 15}
     ]
   }
 }

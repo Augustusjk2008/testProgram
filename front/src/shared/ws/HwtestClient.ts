@@ -301,17 +301,43 @@ function parseDescriptor(value: JsonObject): TestDescriptor {
     ))) {
       throw new Error('supportedRunModes')
     }
-    const measurementValue = value.measurements
-    if (!Array.isArray(measurementValue)) throw new Error('measurements')
-    const measurements: TestMeasurementDescriptor[] = measurementValue.map((item) => {
-      if (!isObject(item)) throw new Error('measurement')
-      return {
-        id: requiredString(item, 'id'),
-        label: requiredString(item, 'label'),
-        unit: requiredString(item, 'unit'),
-        primary: requiredBoolean(item, 'primary'),
-      }
-    })
+    const parseMeasurements = (
+      measurementValue: unknown,
+      requireBitSource = false,
+    ): TestMeasurementDescriptor[] => {
+      if (!Array.isArray(measurementValue)) throw new Error('measurements')
+      return measurementValue.map((item) => {
+        if (!isObject(item)) throw new Error('measurement')
+        const hasSourceId = Object.prototype.hasOwnProperty.call(item, 'sourceId')
+        const hasBitIndex = Object.prototype.hasOwnProperty.call(item, 'bitIndex')
+        if (hasSourceId !== hasBitIndex || (requireBitSource && !hasSourceId)) {
+          throw new Error('measurement bit source')
+        }
+        const sourceId = hasSourceId ? requiredNonEmptyString(item, 'sourceId') : undefined
+        const bitIndex = hasBitIndex ? requiredSafeInteger(item, 'bitIndex', 0, 31) : undefined
+        const taskVisible = Object.prototype.hasOwnProperty.call(item, 'taskVisible')
+          ? requiredBoolean(item, 'taskVisible')
+          : undefined
+        const primary = requiredBoolean(item, 'primary')
+        if (requireBitSource && !primary) throw new Error('task measurement primary')
+        const measurement: TestMeasurementDescriptor = {
+          id: requiredString(item, 'id'),
+          label: requiredString(item, 'label'),
+          unit: requiredString(item, 'unit'),
+          primary,
+        }
+        if (sourceId !== undefined && bitIndex !== undefined) {
+          measurement.sourceId = sourceId
+          measurement.bitIndex = bitIndex
+        }
+        if (taskVisible !== undefined) measurement.taskVisible = taskVisible
+        return measurement
+      })
+    }
+    const measurements = parseMeasurements(value.measurements)
+    const taskMeasurements = value.taskMeasurements === undefined
+      ? []
+      : parseMeasurements(value.taskMeasurements, true)
     const schemaVersion = Object.prototype.hasOwnProperty.call(value, 'runParameterSchemaVersion')
       ? requiredString(value, 'runParameterSchemaVersion')
       : ''
@@ -390,6 +416,7 @@ function parseDescriptor(value: JsonObject): TestDescriptor {
         : true,
       supportedRunModes: modeValue as RunMode[],
       measurements,
+      taskMeasurements,
       runParameterSchemaVersion: schemaVersion,
       runParameters,
       runParameterDefaults,

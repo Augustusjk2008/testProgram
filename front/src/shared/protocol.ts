@@ -15,6 +15,9 @@ export interface TestMeasurementDescriptor {
   label: string
   unit: string
   primary: boolean
+  sourceId?: string
+  bitIndex?: number
+  taskVisible?: boolean
 }
 
 export type RunParameterKind = 'integer' | 'number' | 'boolean' | 'choice'
@@ -213,6 +216,7 @@ export interface TestDescriptor {
   stoppable: boolean
   supportedRunModes: RunMode[]
   measurements: TestMeasurementDescriptor[]
+  taskMeasurements: TestMeasurementDescriptor[]
   runParameterSchemaVersion: string
   runParameters: TestRunParameterDescriptor[]
   runParameterDefaults: Record<string, unknown>
@@ -463,6 +467,7 @@ export const EMPTY_TEST_DESCRIPTOR: TestDescriptor = {
   stoppable: true,
   supportedRunModes: [],
   measurements: [],
+  taskMeasurements: [],
   runParameterSchemaVersion: '',
   runParameters: [],
   runParameterDefaults: {},

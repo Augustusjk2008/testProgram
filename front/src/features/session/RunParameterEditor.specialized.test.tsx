@@ -44,6 +44,7 @@ function descriptor(
     stoppable: true,
     supportedRunModes: ['single'],
     measurements: [],
+    taskMeasurements: [],
     runParameterSchemaVersion: '1',
     runParameters,
     runParameterDefaults,

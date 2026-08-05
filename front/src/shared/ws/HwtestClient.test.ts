@@ -523,6 +523,57 @@ describe('HwtestClient protocol boundary', () => {
     }
   })
 
+  it('preserves configured bitmap-bit measurement presentation metadata', () => {
+    const message = snapshotWithDescriptor(descriptorPayload({
+      measurements: [
+        {
+          id: 'di_state[0]',
+          label: 'DI0..DI31 回读位图',
+          unit: 'bitmask',
+          primary: false,
+          taskVisible: false,
+        },
+      ],
+      taskMeasurements: [
+        {
+          id: 'di0',
+          label: 'DI0 联锁、电气弹动',
+          unit: '',
+          primary: true,
+          sourceId: 'di_state[0]',
+          bitIndex: 0,
+        },
+      ],
+    }))
+
+    expect(message.type).toBe('snapshot')
+    if (message.type === 'snapshot') {
+      const derived = message.snapshot.descriptor.taskMeasurements[0] as unknown as Record<string, unknown>
+      const source = message.snapshot.descriptor.measurements[0] as unknown as Record<string, unknown>
+      expect(derived).toMatchObject({ sourceId: 'di_state[0]', bitIndex: 0 })
+      expect(source).toMatchObject({ taskVisible: false })
+    }
+  })
+
+  it('rejects malformed bitmap-bit measurement presentation metadata', () => {
+    const invalidMeasurements = [
+      {},
+      { sourceId: 'di_state[0]' },
+      { bitIndex: 0 },
+      { sourceId: 'di_state[0]', bitIndex: 32 },
+      { sourceId: 'di_state[0]', bitIndex: 0, primary: false },
+      { taskVisible: 'false' },
+    ]
+
+    for (const invalid of invalidMeasurements) {
+      expect(() => snapshotWithDescriptor(descriptorPayload({
+        taskMeasurements: [{
+          id: 'di0', label: 'DI0', unit: '', primary: true, ...invalid,
+        }],
+      }))).toThrow(/descriptor/i)
+    }
+  })
+
   it('rejects a non-boolean descriptor stoppable value', () => {
     expect(() => snapshotWithDescriptor(descriptorPayload({ stoppable: 'false' })))
       .toThrow(/descriptor.*stoppable/i)
