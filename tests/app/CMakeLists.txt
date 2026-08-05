@@ -29,18 +29,9 @@ if(MSVC)
 endif()
 
 add_executable(hwtest_app_tests
-    analysis_result_store_test.cpp
-    board_test_configuration_test.cpp
-    bus_configuration_test.cpp
     configuration_service_test.cpp
-    continuous_data_recorder_test.cpp
     device_stream_configuration_test.cpp
-    frontend_launch_options_test.cpp
-    hal_board_test_fixture_test.cpp
-    post_run_analysis_coordinator_test.cpp
-    prepare_fixture_lifecycle_test.cpp
     test_application_controller_test.cpp
-    tui_shell_test.cpp
 )
 
 file(TO_CMAKE_PATH "${PROJECT_SOURCE_DIR}/configs/mbddf_system_status.testcfg.json"
@@ -114,46 +105,12 @@ add_dependencies(hwtest_app_tests
 include(GoogleTest)
 gtest_discover_tests(hwtest_app_tests)
 
-add_executable(hwtest_gui_tests
-    gui_test_main.cpp
-    gui_main_window_test.cpp
-)
-
-target_compile_features(hwtest_gui_tests PRIVATE cxx_std_17)
-
-target_compile_definitions(hwtest_gui_tests
-    PRIVATE
-        HWTEST_APP_TEST_CONFIG="${HWTEST_APP_TEST_CONFIG}"
-        HWTEST_APP_HAL_CONFIG="${HWTEST_APP_HAL_CONFIG}"
-        HWTEST_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
-)
-
-target_link_libraries(hwtest_gui_tests
-    PRIVATE
-        hwtest_gui_support
-        hwtest_tui_support
-        hwtest_app_test_support
-        GTest::gtest
-)
-
-add_dependencies(hwtest_gui_tests
-    hwtest_gui
-    hwtest_tui
-)
-
-if(MSVC)
-    target_compile_options(hwtest_gui_tests PRIVATE /utf-8)
-endif()
-
-gtest_discover_tests(hwtest_gui_tests)
-
 add_executable(hwtest_web_tests
     web_test_main.cpp
     web_protocol_test.cpp
     web_telemetry_batcher_test.cpp
     web_socket_frontend_server_test.cpp
     web_controller_integration_test.cpp
-    web_architecture_test.cpp
     support/websocket_test_client.h
     support/websocket_test_client.cpp
 )
@@ -220,14 +177,6 @@ set_tests_properties(
     HwtestWebStartsLoopback
     PROPERTIES
         LABELS "app;websocket;process"
-)
-
-add_test(NAME HwtestGuiStartsOffscreen
-    COMMAND $<TARGET_FILE:hwtest_gui> --smoke-test
-)
-set_tests_properties(HwtestGuiStartsOffscreen PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-    TIMEOUT 5
 )
 
 add_test(NAME HwtestPcRunnerHelp

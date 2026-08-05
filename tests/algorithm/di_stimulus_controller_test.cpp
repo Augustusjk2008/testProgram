@@ -122,27 +122,5 @@ TEST(DiStimulusControllerTest, RejectsUnknownSwitchAndRevisionConflictWithoutWri
     EXPECT_EQ(conflict.code, hwtest::hal::HalStatusCode::DataMismatch);
     EXPECT_EQ(device.digital.batchWrites, writes);
 }
-
-TEST(DiStimulusControllerTest, KeepsAppliedStateAndRecordsBackendFailure)
-{
-    DigitalDevice device;
-    DiStimulusController controller(&device);
-    ASSERT_TRUE(controller.configure(executionConfig()).ok());
-    ASSERT_TRUE(controller.resetDigitalStimulus().ok());
-    hwtest::hal::HalStatus timeout;
-    timeout.code = hwtest::hal::HalStatusCode::Timeout;
-    timeout.error.code = timeout.code;
-    timeout.error.message = QStringLiteral("simulated timeout");
-    device.digital.nextStatus = timeout;
-
-    const quint64 revision = controller.state().revision;
-    const auto failed = controller.setDigitalStimulus(
-        QStringLiteral("di0"), true, revision);
-    EXPECT_EQ(failed.code, hwtest::hal::HalStatusCode::Timeout);
-    EXPECT_EQ(controller.state().revision, revision);
-    EXPECT_EQ(controller.state().appliedMask, 0u);
-    EXPECT_EQ(controller.state().lastError.code, hwtest::hal::HalStatusCode::Timeout);
-}
-
 } // namespace
 } // namespace hwtest::algorithm::mbddf

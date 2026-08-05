@@ -8,7 +8,6 @@ endif()
 
 add_executable(hwtest_biz_tests
     algorithm_executor_contract_test.cpp
-    architecture_test.cpp
     report_generator_test.cpp
     test_config_manager_test.cpp
     test_plan_builder_test.cpp

@@ -24,7 +24,7 @@
 #include <mutex>
 
 // 版本号
-const char sast_app_version[] __attribute__((section(".myversion"), used)) = "1.0.0";
+const char sast_app_version[] __attribute__((section(".myversion"), used)) = "1.0.1";
 
 // 舵机程序分配的核心号
 #define SERVO_CORE 7

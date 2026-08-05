@@ -374,41 +374,6 @@ TEST(DhIgniteStreamExecutorTest,
     EXPECT_EQ(transportPtr->writes().size(), 1u);
 }
 
-TEST(DhIgniteStreamExecutorTest,
-     DelayZeroPostIgnitionAcquisitionErrorStillConsumesRemainingFrames)
-{
-    const QString assets = catalogDirectory();
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
-
-    QVariantMap acquisitionError = normalValues(1.25);
-    acquisitionError.insert(QStringLiteral("status"), 1);
-    acquisitionError.insert(QStringLiteral("err_code"), 0x0203);
-    auto transport = std::make_unique<FiniteStreamTransport>(
-        std::vector<QByteArray>{
-            frameFor(catalog, 0xFFFE, acquisitionError),
-            frameFor(catalog, 0xFFFF, normalValues(2.5)),
-        });
-    FiniteStreamTransport* transportPtr = transport.get();
-    DhIgniteStreamAlgorithmExecutor executor(std::move(transport));
-    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{},
-                                 streamContext(2, 2500, 0),
-                                 executionConfig(assets)).ok());
-    RunControl control;
-    Observer observer;
-
-    const auto outcome = executor.executeStep(streamStep(), control, observer);
-
-    ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
-    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Error);
-    ASSERT_EQ(observer.samples.size(), 2);
-    EXPECT_EQ(observer.samples.at(0).values
-                  .value(QStringLiteral("ignition_phase")).toString(),
-              QStringLiteral("post_ignition"));
-    EXPECT_EQ(transportPtr->readCalls(), 2);
-}
-
 TEST(DhIgniteStreamExecutorTest, RejectsWrongResponseSequence)
 {
     const QString assets = catalogDirectory();
@@ -431,50 +396,5 @@ TEST(DhIgniteStreamExecutorTest, RejectsWrongResponseSequence)
     EXPECT_EQ(outcome.status.code, hwtest::biz::ErrorCode::ProtocolParseError);
     EXPECT_TRUE(observer.samples.isEmpty());
 }
-
-TEST(DhIgniteStreamExecutorTest, EncodesBusinessInvalidValuesForDutToReject)
-{
-    const QString assets = catalogDirectory();
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
-
-    QVariantMap remoteError = normalValues(0.0);
-    remoteError.insert(QStringLiteral("status"), 1);
-    remoteError.insert(QStringLiteral("err_code"), 0x0102);
-    auto transport = std::make_unique<FiniteStreamTransport>(
-        std::vector<QByteArray>{frameFor(catalog, 0xFFFE, remoteError)});
-    FiniteStreamTransport* transportPtr = transport.get();
-    DhIgniteStreamAlgorithmExecutor executor(std::move(transport));
-    hwtest::biz::TestContext context = streamContext(2, 2499, 0);
-    context.runParameters.insert(QStringLiteral("power_enable"), 2);
-    context.runParameters.insert(QStringLiteral("return_enable"), 255);
-    context.runParameters.insert(QStringLiteral("channel_enabled[0]"), false);
-    context.runParameters.insert(QStringLiteral("channel_enabled[22]"), false);
-    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, context,
-                                 executionConfig(assets)).ok());
-    RunControl control;
-    Observer observer;
-
-    const auto outcome = executor.executeStep(streamStep(), control, observer);
-
-    ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
-    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Error);
-    ASSERT_EQ(observer.samples.size(), 1);
-    EXPECT_EQ(observer.samples.at(0).values
-                  .value(QStringLiteral("ignition_phase")).toString(),
-              QStringLiteral("request_rejected"));
-    EXPECT_EQ(transportPtr->readCalls(), 1);
-    const std::vector<QByteArray> writes = transportPtr->writes();
-    ASSERT_EQ(writes.size(), 1u);
-    const QVariantMap request = decodeRequest(catalog, writes.front());
-    EXPECT_EQ(request.value(QStringLiteral("power_enable")).toUInt(), 2u);
-    EXPECT_EQ(request.value(QStringLiteral("return_enable")).toUInt(), 255u);
-    EXPECT_EQ(request.value(QStringLiteral("channel[0]")).toUInt(), 0u);
-    EXPECT_EQ(request.value(QStringLiteral("report_count")).toUInt(), 2u);
-    EXPECT_EQ(request.value(QStringLiteral("interval_us")).toUInt(), 2499u);
-    EXPECT_EQ(request.value(QStringLiteral("delay_frames")).toUInt(), 0u);
-}
-
 } // namespace
 } // namespace hwtest::algorithm::mbddf

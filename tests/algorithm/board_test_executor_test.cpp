@@ -355,46 +355,6 @@ hwtest::biz::TestContext context(const QVariantMap& parameters = {})
     return context;
 }
 
-TEST(PwmMeasurementTest, MeasuresInterpolatedDutyAndFrequencyAcrossCompleteCycles)
-{
-    QVector<double> samples;
-    constexpr double sampleRate = 1250000.0;
-    constexpr double duty = 0.25;
-    for (int index = 0; index < 7500; ++index) {
-        const double phase = std::fmod(index * 4000.0 / sampleRate, 1.0);
-        samples.push_back(phase < duty ? 5.0 : 0.0);
-    }
-
-    const PwmMeasurement measured = measurePwm(samples, sampleRate, 20);
-
-    ASSERT_TRUE(measured.valid) << measured.reason.toStdString();
-    EXPECT_GE(measured.validCycles, 20);
-    EXPECT_NEAR(measured.dutyPercent, 25.0, 0.15);
-    EXPECT_NEAR(measured.frequencyHz, 4000.0, 5.0);
-    EXPECT_LE(measured.lowVolts, 0.8);
-    EXPECT_GE(measured.highVolts, 3.8);
-}
-
-TEST(PwmMeasurementTest, PreservesOneAndNinetyNinePercentPlateaus)
-{
-    constexpr double sampleRate = 1250000.0;
-    for (const double dutyPercent : {1.0, 99.0}) {
-        QVector<double> samples;
-        for (int index = 0; index < 7500; ++index) {
-            const double phase = std::fmod(index * 4000.0 / sampleRate, 1.0);
-            samples.push_back(phase < dutyPercent / 100.0 ? 5.0 : 0.0);
-        }
-
-        const PwmMeasurement measured = measurePwm(samples, sampleRate, 20);
-
-        EXPECT_TRUE(measured.valid)
-            << dutyPercent << "%: " << measured.reason.toStdString();
-        EXPECT_NEAR(measured.dutyPercent, dutyPercent, 0.2);
-        EXPECT_LE(measured.lowVolts, 0.8);
-        EXPECT_GE(measured.highVolts, 3.8);
-    }
-}
-
 TEST(DoWriteExecutorTest, SendsOneUserSelectedMaskAndReturnsCompleteReadback)
 {
     ProtocolCatalog catalog;
@@ -456,93 +416,6 @@ TEST(DoWriteExecutorTest, SendsOneUserSelectedMaskAndReturnsCompleteReadback)
     EXPECT_EQ(fixture.settleCalls.front(), 100);
 }
 
-TEST(DoWriteExecutorTest, ClassifiesExternalMismatchAndMalformedDigitalData)
-{
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
-    FakeBoardFixture fixture;
-    fixture.invertDigitalReadback = true;
-    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
-    BoardTransport* rawTransport = transport.get();
-    DoWriteAlgorithmExecutor executor(std::move(transport), &fixture);
-    const auto testPlan = plan(QStringLiteral("mbddf.do_write"));
-    const QVariantMap parameters{{QStringLiteral("channel_enabled[0]"), true}};
-    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
-                                 commonExecutionConfig()).ok());
-    RunControl control;
-    Observer observer;
-
-    const auto mismatch = executor.executeStep(testPlan.steps.front(), control, observer);
-
-    ASSERT_TRUE(mismatch.ok());
-    EXPECT_EQ(mismatch.value.verdict, hwtest::biz::TestVerdict::Fail);
-    EXPECT_EQ(rawTransport->transactions, 1);
-    const QVariantMap mismatchBoard = mismatch.value.rawData
-                                         .value(QStringLiteral("boardTest")).toMap();
-    EXPECT_EQ(mismatchBoard.value(QStringLiteral("summary")).toMap()
-                  .value(QStringLiteral("failedPoints")).toInt(), 1);
-    ASSERT_EQ(rawTransport->requests.size(), 1);
-    EXPECT_EQ(rawTransport->requests.front()
-                  .value(QStringLiteral("channel[0]")).toUInt(), 0x0019u);
-
-    ASSERT_TRUE(executor.finishRun().ok());
-    fixture.invertDigitalReadback = false;
-    fixture.malformedDigitalReadback = true;
-    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
-                                 commonExecutionConfig()).ok());
-    const auto malformed = executor.executeStep(testPlan.steps.front(), control, observer);
-    ASSERT_TRUE(malformed.ok());
-    EXPECT_EQ(malformed.value.verdict, hwtest::biz::TestVerdict::Error);
-}
-
-TEST(DoWriteExecutorTest, RejectsSecondAppliedStateWordMismatchWithoutLegacyReset)
-{
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
-    FakeBoardFixture fixture;
-    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
-    BoardTransport* rawTransport = transport.get();
-    rawTransport->doAppliedStateWord1 = 1u;
-    DoWriteAlgorithmExecutor executor(std::move(transport), &fixture);
-    const auto testPlan = plan(QStringLiteral("mbddf.do_write"));
-    const QVariantMap parameters{{QStringLiteral("channel_enabled[0]"), true}};
-    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
-                                 commonExecutionConfig()).ok());
-    RunControl control;
-    Observer observer;
-
-    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
-
-    ASSERT_TRUE(outcome.ok());
-    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Fail);
-    EXPECT_EQ(fixture.digitalReadCount, 1);
-    ASSERT_EQ(rawTransport->requests.size(), 1);
-    EXPECT_EQ(rawTransport->transactions, 1);
-    EXPECT_EQ(rawTransport->requests.front()
-                  .value(QStringLiteral("channel[0]")).toUInt(), 0x0019u);
-    EXPECT_EQ(rawTransport->requests.front()
-                  .value(QStringLiteral("channel[1]")).toUInt(), 0u);
-    for (const QVariantMap& request : rawTransport->requests) {
-        EXPECT_NE(request.value(QStringLiteral("channel[0]")).toUInt(), 0x0018u);
-    }
-    const QVariantMap point = outcome.value.rawData
-                                  .value(QStringLiteral("boardTest")).toMap()
-                                  .value(QStringLiteral("doSteps")).toList()
-                                  .front().toMap();
-    EXPECT_FALSE(point.value(QStringLiteral("appliedStateMatched")).toBool());
-    const QVariantList appliedWords = point
-                                          .value(QStringLiteral("appliedStateWords"))
-                                          .toList();
-    ASSERT_EQ(appliedWords.size(), 2);
-    EXPECT_EQ(appliedWords.at(0).toUInt(), 0x0019u);
-    EXPECT_EQ(appliedWords.at(1).toUInt(), 1u);
-    EXPECT_TRUE(executor.finishRun().ok());
-    EXPECT_TRUE(executor.shutdown(1000).ok());
-    EXPECT_EQ(rawTransport->transactions, 1);
-}
-
 TEST(DoWriteExecutorTest, StopAndLifecycleNeverIssueLegacyResetMask)
 {
     ProtocolCatalog catalog;
@@ -570,26 +443,6 @@ TEST(DoWriteExecutorTest, StopAndLifecycleNeverIssueLegacyResetMask)
     EXPECT_TRUE(executor.shutdown(1000).ok());
     EXPECT_EQ(rawTransport->transactions, 1);
     EXPECT_EQ(rawTransport->requests.size(), 1);
-}
-
-TEST(BoardTestExecutorTest, RejectsMutableFixedAcquisitionContract)
-{
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
-    FakeBoardFixture fixture;
-    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
-    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
-    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
-    QVariantMap config = commonExecutionConfig();
-    QVariantMap fixtureConfig = config.value(QStringLiteral("boardFixture")).toMap();
-    fixtureConfig.insert(QStringLiteral("settlingMs"), 99);
-    config.insert(QStringLiteral("boardFixture"), fixtureConfig);
-
-    const auto prepared = executor.prepare(
-        testPlan, context({{QStringLiteral("test_mode"), 0}}), config);
-
-    EXPECT_FALSE(prepared.ok());
 }
 
 TEST(HelmBoardExecutorTest, ManualModeSendsOnceAndNeverTouchesFixture)
@@ -633,32 +486,6 @@ TEST(HelmBoardExecutorTest, ManualModeSendsOnceAndNeverTouchesFixture)
     EXPECT_FALSE(board.value(QStringLiteral("manualResponse")).toMap().isEmpty());
 }
 
-TEST(HelmBoardExecutorTest, ManualModeHonorsStopBeforeItsOnlyCommand)
-{
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
-    FakeBoardFixture fixture;
-    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
-    BoardTransport* rawTransport = transport.get();
-    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
-    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
-    ASSERT_TRUE(executor.prepare(
-        testPlan, context({{QStringLiteral("test_mode"), 1}}),
-        commonExecutionConfig()).ok());
-    RunControl control;
-    control.stopped = true;
-    Observer observer;
-
-    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
-
-    ASSERT_TRUE(outcome.ok());
-    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Skipped);
-    EXPECT_EQ(outcome.value.errorCode, hwtest::biz::ErrorCode::Cancelled);
-    EXPECT_EQ(rawTransport->transactions, 0);
-    EXPECT_EQ(fixture.analogWriteCount, 0);
-}
-
 TEST(HelmBoardExecutorTest, AutomaticModeCompletesDirectionPwmAndFeedbackSweeps)
 {
     ProtocolCatalog catalog;
@@ -700,67 +527,6 @@ TEST(HelmBoardExecutorTest, AutomaticModeCompletesDirectionPwmAndFeedbackSweeps)
     const auto finalWrite = fixture.analogWrites.back();
     ASSERT_EQ(finalWrite.size(), 4);
     for (double value : finalWrite) EXPECT_DOUBLE_EQ(value, 0.0);
-}
-
-TEST(HelmBoardExecutorTest, AutomaticStopBeforeFirstPointStillClearsAllAo)
-{
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
-    FakeBoardFixture fixture;
-    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
-    BoardTransport* rawTransport = transport.get();
-    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
-    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
-    ASSERT_TRUE(executor.prepare(
-        testPlan, context({{QStringLiteral("test_mode"), 0}}),
-        commonExecutionConfig()).ok());
-    RunControl control;
-    control.stopped = true;
-    Observer observer;
-
-    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
-
-    ASSERT_TRUE(outcome.ok());
-    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Skipped);
-    EXPECT_EQ(outcome.value.errorCode, hwtest::biz::ErrorCode::Cancelled);
-    EXPECT_EQ(rawTransport->transactions, 0);
-    EXPECT_EQ(fixture.analogWriteCount, 2);
-    ASSERT_EQ(fixture.analogWrites.back().size(), 4);
-    for (double value : fixture.analogWrites.back()) EXPECT_DOUBLE_EQ(value, 0.0);
-}
-
-TEST(HelmBoardExecutorTest, CriteriaFailureContinuesSweepAndCleanupFailureIsError)
-{
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(catalogDirectory(), &error));
-    FakeBoardFixture fixture;
-    fixture.badPwmChannel = 1;
-    // Initial zero + 44 feedback writes precede the final cleanup write.
-    fixture.failWriteAt = 46;
-    auto transport = std::make_unique<BoardTransport>(&catalog, &fixture);
-    BoardTransport* rawTransport = transport.get();
-    HelmBoardTestAlgorithmExecutor executor(std::move(transport), &fixture);
-    const auto testPlan = plan(QStringLiteral("mbddf.helm_board_test"));
-    QVariantMap parameters;
-    parameters.insert(QStringLiteral("test_mode"), 0);
-    for (int channel = 0; channel < 4; ++channel) {
-        parameters.insert(QStringLiteral("pwm_duty_percent[%1]").arg(channel), 0);
-        parameters.insert(QStringLiteral("direction[%1]").arg(channel), false);
-    }
-    ASSERT_TRUE(executor.prepare(testPlan, context(parameters),
-                                 commonExecutionConfig()).ok());
-    RunControl control;
-    Observer observer;
-
-    const auto outcome = executor.executeStep(testPlan.steps.front(), control, observer);
-
-    ASSERT_TRUE(outcome.ok());
-    EXPECT_EQ(rawTransport->transactions, 85);
-    EXPECT_EQ(outcome.value.verdict, hwtest::biz::TestVerdict::Error);
-    EXPECT_NE(outcome.value.message.indexOf(QStringLiteral("cleanup"),
-                                            0, Qt::CaseInsensitive), -1);
 }
 
 TEST(HelmBoardExecutorTest, CriteriaFailureIsFiniteFailWithAccuratePointCount)

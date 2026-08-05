@@ -11,20 +11,20 @@
 
 ## 2. 当前测试清单
 
-根 CMake 在 `BUILD_TESTING=ON` 时加入 `tests/`。当前有七个 GoogleTest 可执行目标，构建后由 `gtest_discover_tests` 发现；应用目录另注册十个自退出的进程测试；NI-DAQmx Fake 另有一个 CTest。`front/` 的 Vitest 独立运行，不进入 CTest。
+根 CMake 在 `BUILD_TESTING=ON` 时加入 `tests/`。当前有六个 GoogleTest 可执行目标，构建后由 `gtest_discover_tests` 发现；应用目录另注册九个自退出的进程测试（Windows）；NI-DAQmx Fake 另有一个 CTest。`front/` 的 Vitest 独立运行，不进入 CTest。
 
 | 范围 | CMake/测试目标 | 测试源文件 | 源级 GoogleTest 定义 | 当前验证重点 |
 | --- | --- | ---: | ---: | --- |
 | `tests/hal/` | `hwtest_hal_tests` | 11 | 62 | HAL 会话、资源、安全态、Provider、Mock、C ABI 和 Adapter 路由 |
 | `tests/log/` | `hwtest_log_tests` | 3 | 7 | 日志服务、JSONL sink、HAL 日志桥接 |
-| `tests/biz/` | `hwtest_biz_tests` | 6 | 45 | 配置、计划、三种运行模式、调度、线程、状态和报告 |
-| `tests/algorithm/` | `hwtest_algorithm_tests` | 16 | 135 | 协议 CSV、编解码、运行参数、串口、DH、DI、板级流程、流式算法和后处理 |
-| `tests/app/` | `hwtest_app_tests`、`hwtest_gui_tests`、`hwtest_web_tests` | 18 | 223 | 控制器、配置发现与持久化、进程级日志文件、TUI/GUI/WebSocket、连续保存、fixture、分析与 Web 出站边界 |
+| `tests/biz/` | `hwtest_biz_tests` | 5 | 42 | 配置、计划、三种运行模式、调度、线程、状态和报告 |
+| `tests/algorithm/` | `hwtest_algorithm_tests` | 11 | 53 | 协议 CSV、编解码、运行参数、串口、DH、DI、板级流程、流式算法和后处理的代表性路径 |
+| `tests/app/` | `hwtest_app_tests`、`hwtest_web_tests` | 7 | 68 | 控制器、配置发现与持久化、进程级日志文件、WebSocket、设备流和 Web 出站边界 |
 | `src/adapters/ni_daqmx/tests/` | `hwtest_ni_daqmx_adapter_fake_tests` | 1 | 0 | 生产 Adapter 源码配合 Fake NIDAQmx 的软件路径 |
 
-- 合计为 55 个测试源文件：54 个含 GoogleTest 定义的源文件和 1 个 NI Fake 自定义 main；GoogleTest 定义数为 472。
-- 在一个已完成发现的构建树中，当前应有 483 条 CTest：472 条动态 GoogleTest、10 条应用进程测试和 1 条 NI Fake CTest。`ctest -N` 只核对该清单，不证明通过。
-- 浏览器前端当前有 35 个 `*.test.ts`/`*.test.tsx` 文件和 150 条 Vitest；它们不计入 483 条 CTest。
+- 合计为 37 个含 GoogleTest 定义的测试源文件和 1 个 NI Fake 自定义 main；GoogleTest 定义数为 232。
+- 在 Windows 的一个已完成发现的构建树中，当前应有 242 条 CTest：232 条动态 GoogleTest、9 条应用进程测试和 1 条 NI Fake CTest；非 Windows 构建因不注册 3 条 PowerShell 脚本测试，当前应有 239 条。`ctest -N` 只核对该清单，不证明通过。
+- 浏览器前端当前有 35 个 `*.test.ts`/`*.test.tsx` 文件和 150 条 Vitest；它们不计入上述 CTest 数量。
 
 ### 2.1 当前配置与运行模式门禁
 

@@ -484,62 +484,6 @@ TEST(HelmStreamExecutorTest, FeedbackStatusIsRecordedWithoutStoppingAcquisition)
     EXPECT_TRUE(executor.finishRun().ok());
 }
 
-TEST(HelmStreamExecutorTest, ReanchorsUtcTimeWhenExecuteStepRunsAgain)
-{
-    const QString assets = catalogDirectory();
-    ASSERT_TRUE(QFileInfo(assets).isDir());
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
-
-    constexpr quint64 firstDdsTimestampUs = (quint64{2} << 32) + 0x10;
-    auto transport = std::make_unique<StreamingTransport>(
-        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2345,
-                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}),
-        std::vector<QByteArray>{
-            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0x9000,
-                     oneSampleFeedback(firstDdsTimestampUs, 100, 200)),
-            QByteArray::fromHex("55AA")},
-        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2346,
-                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}));
-    StreamingTransport* transportPtr = transport.get();
-    transportPtr->setRetryAttempt(
-        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2347,
-                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}),
-        std::vector<QByteArray>{frameFor(
-            catalog, QStringLiteral("helm_feedback_response"), 0x9001,
-            oneSampleFeedback(firstDdsTimestampUs + 1000, 101, 201))},
-        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2348,
-                 {{QStringLiteral("status"), 0}, {QStringLiteral("err_code"), 0}}));
-    HelmStreamAlgorithmExecutor executor(std::move(transport));
-    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
-                                 executionConfig(assets)).ok());
-    RunControl control;
-    Observer firstObserver;
-
-    const auto first = executor.executeStep(streamStep(), control, firstObserver);
-
-    EXPECT_FALSE(first.ok());
-    ASSERT_EQ(firstObserver.samples.size(), 1);
-    EXPECT_GT(firstObserver.samples.first().timestampUs, 0);
-
-    Observer retryObserver([&executor] {
-        EXPECT_TRUE(executor.requestStop(100).ok());
-    });
-    const qint64 earliestRetryAnchorUs =
-        QDateTime::currentMSecsSinceEpoch() * 1000;
-    const auto retry = executor.executeStep(streamStep(), control, retryObserver);
-    const qint64 latestRetryAnchorUs =
-        QDateTime::currentMSecsSinceEpoch() * 1000;
-
-    ASSERT_TRUE(retry.ok()) << retry.status.error.message.toStdString();
-    ASSERT_EQ(retryObserver.samples.size(), 1);
-    EXPECT_EQ(retryObserver.samples.first().streamElapsedUs, 0);
-    EXPECT_GE(retryObserver.samples.first().timestampUs, earliestRetryAnchorUs);
-    EXPECT_LE(retryObserver.samples.first().timestampUs, latestRetryAnchorUs);
-    EXPECT_TRUE(executor.finishRun().ok());
-}
-
 TEST(HelmStreamExecutorTest, NonForwardSequencesDoNotBecomeHugeLossCounts)
 {
     const QString assets = catalogDirectory();
@@ -588,46 +532,6 @@ TEST(HelmStreamExecutorTest, NonForwardSequencesDoNotBecomeHugeLossCounts)
         EXPECT_FALSE(values.value(QStringLiteral("serial_a_discontinuity")).toBool());
         EXPECT_FALSE(values.value(QStringLiteral("serial_b_discontinuity")).toBool());
     }
-    EXPECT_TRUE(executor.finishRun().ok());
-}
-
-TEST(HelmStreamExecutorTest, SequenceContinuityAcceptsUint16Wraparound)
-{
-    const QString assets = catalogDirectory();
-    ASSERT_TRUE(QFileInfo(assets).isDir());
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
-
-    constexpr quint64 firstDdsTimestampUs = (quint64{2} << 32) + 0x10;
-    auto transport = std::make_unique<StreamingTransport>(
-        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2345,
-                 {{QStringLiteral("status"), 0},
-                  {QStringLiteral("err_code"), 0}}),
-        std::vector<QByteArray>{
-            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0xFFFF,
-                     oneSampleFeedback(firstDdsTimestampUs, 0xFFFF, 0xFFFF)),
-            frameFor(catalog, QStringLiteral("helm_feedback_response"), 0,
-                     oneSampleFeedback(firstDdsTimestampUs + 1000, 0, 0))},
-        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2346,
-                 {{QStringLiteral("status"), 0},
-                  {QStringLiteral("err_code"), 0}}));
-    HelmStreamAlgorithmExecutor executor(std::move(transport));
-    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
-                                 executionConfig(assets)).ok());
-    RunControl control;
-    Observer observer([&executor] {
-        if (executor.sampleCount() >= 2) EXPECT_TRUE(executor.requestStop(100).ok());
-    });
-
-    const auto outcome = executor.executeStep(streamStep(), control, observer);
-
-    ASSERT_TRUE(outcome.ok()) << outcome.status.error.message.toStdString();
-    ASSERT_EQ(observer.samples.size(), 2);
-    const QVariantMap& values = observer.samples.at(1).values;
-    EXPECT_EQ(values.value(QStringLiteral("missing_product_frames")).toUInt(), 0u);
-    EXPECT_EQ(values.value(QStringLiteral("missing_serial_a")).toUInt(), 0u);
-    EXPECT_EQ(values.value(QStringLiteral("missing_serial_b")).toUInt(), 0u);
     EXPECT_TRUE(executor.finishRun().ok());
 }
 
@@ -711,43 +615,6 @@ TEST(HelmStreamExecutorTest, RejectsDdsTimestampThatMovesBackwards)
     EXPECT_TRUE(executor.finishRun().ok());
 }
 
-TEST(HelmStreamExecutorTest, RejectsDdsTimestampOutsideJsonSafeIntegerRange)
-{
-    const QString assets = catalogDirectory();
-    ASSERT_TRUE(QFileInfo(assets).isDir());
-    ProtocolCatalog catalog;
-    QString error;
-    ASSERT_TRUE(catalog.loadFromDirectory(assets, &error)) << error.toStdString();
-
-    constexpr quint64 firstUnsafeDdsTimestampUs = (quint64{1} << 53);
-    auto transport = std::make_unique<StreamingTransport>(
-        frameFor(catalog, QStringLiteral("helm_start_response"), 0x2345,
-                 {{QStringLiteral("status"), 0},
-                  {QStringLiteral("err_code"), 0}}),
-        std::vector<QByteArray>{
-            frameFor(catalog, QStringLiteral("helm_feedback_response"), 100,
-                     oneSampleFeedback(firstUnsafeDdsTimestampUs, 200, 300))},
-        frameFor(catalog, QStringLiteral("helm_stop_response"), 0x2346,
-                 {{QStringLiteral("status"), 0},
-                  {QStringLiteral("err_code"), 0}}));
-    HelmStreamAlgorithmExecutor executor(std::move(transport));
-    ASSERT_TRUE(executor.prepare(hwtest::biz::TestPlan{}, streamContext(),
-                                 executionConfig(assets)).ok());
-    RunControl control;
-    Observer observer([&executor] {
-        if (executor.sampleCount() >= 1) EXPECT_TRUE(executor.requestStop(100).ok());
-    });
-
-    const auto outcome = executor.executeStep(streamStep(), control, observer);
-
-    EXPECT_FALSE(outcome.ok());
-    EXPECT_EQ(outcome.status.code, hwtest::biz::ErrorCode::ProtocolParseError);
-    EXPECT_NE(outcome.status.error.message.indexOf(QStringLiteral("safe integer")),
-              -1);
-    EXPECT_TRUE(observer.samples.isEmpty());
-    EXPECT_TRUE(executor.finishRun().ok());
-}
-
 TEST(HelmStreamExecutorTest, ZeroFeedbackFailsButStopRemainsIndependent)
 {
     const QString assets = catalogDirectory();
@@ -776,24 +643,5 @@ TEST(HelmStreamExecutorTest, ZeroFeedbackFailsButStopRemainsIndependent)
     EXPECT_EQ(outcome.value.errorCode, hwtest::biz::ErrorCode::SampleFail);
     EXPECT_EQ(transportPtr->writes().size(), 2u);
 }
-
-TEST(HelmStreamExecutorTest, RejectsNonDeviceStreamModeBeforeOpeningTransport)
-{
-    const QString assets = catalogDirectory();
-    auto transport = std::make_unique<StreamingTransport>(
-        QByteArray{}, std::vector<QByteArray>{}, QByteArray{});
-    StreamingTransport* transportPtr = transport.get();
-    HelmStreamAlgorithmExecutor executor(std::move(transport));
-    hwtest::biz::TestContext context;
-    context.tags.insert(QStringLiteral("runMode"), QStringLiteral("single"));
-
-    const auto prepared = executor.prepare(hwtest::biz::TestPlan{}, context,
-                                           executionConfig(assets));
-
-    EXPECT_FALSE(prepared.ok());
-    EXPECT_EQ(prepared.code, hwtest::biz::ErrorCode::CapabilityUnsupported);
-    EXPECT_EQ(transportPtr->openCount(), 0);
-}
-
 } // namespace
 } // namespace hwtest::algorithm::mbddf

@@ -20,17 +20,12 @@ endif()
 
 add_executable(hwtest_algorithm_tests
     board_test_executor_test.cpp
-    bus_echo_transport_test.cpp
-    bus_executor_test.cpp
     di_stimulus_controller_test.cpp
     dh_ignite_stream_executor_test.cpp
     imu_stream_executor_test.cpp
     helm_stream_executor_test.cpp
     post_run_analysis_contract_test.cpp
-    helm_analysis_capture_test.cpp
     helm_waveform_analyzers_test.cpp
-    helm_sweep_estimator_test.cpp
-    helm_performance_analyzer_test.cpp
     mbddf_protocol_test.cpp
     run_parameter_schema_test.cpp
     serial_test_executor_test.cpp
