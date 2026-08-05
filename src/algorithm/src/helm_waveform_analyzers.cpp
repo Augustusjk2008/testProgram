@@ -279,7 +279,231 @@ void appendEdgeMetrics(const QString& prefix, const EdgeMetrics& values,
     }
 }
 
+int signWithTolerance(double value, double tolerance)
+{
+    if (value > tolerance) return 1;
+    if (value < -tolerance) return -1;
+    return 0;
+}
+
+bool cycleDurationPlausible(const HelmSeries& series, int begin, int end,
+                            double frequencyHz)
+{
+    if (begin < 0 || end <= begin || end >= series.timeSeconds.size() ||
+        !finite(frequencyHz) || frequencyHz <= 0.0) {
+        return false;
+    }
+    const double duration = series.timeSeconds.at(end) - series.timeSeconds.at(begin);
+    const double period = 1.0 / frequencyHz;
+    return duration >= period * 0.5 && duration <= period * 1.5;
+}
+
+HelmCycleWindow sineCycleWindow(const HelmSeries& series,
+                                const HelmAnalysisParameters& parameters)
+{
+    if (!seriesIsUsable(series)) return {};
+    const double low = minimum(series.command);
+    const double high = maximum(series.command);
+    const double range = high - low;
+    if (!finite(range) || range <= 0.0) return {};
+    const double center = parameters.offset;
+    const double tolerance = qMax(1e-12, range * 1e-6);
+    QVector<int> upwardCrossings;
+    int lastNonZeroSign = signWithTolerance(series.command.first() - center,
+                                            tolerance);
+    int zeroBoundary = lastNonZeroSign == 0 ? 0 : -1;
+    for (int index = 1; index < series.command.size(); ++index) {
+        const int sign = signWithTolerance(series.command.at(index) - center,
+                                           tolerance);
+        if (sign == 0) {
+            zeroBoundary = index;
+            continue;
+        }
+        if (sign > 0 &&
+            (lastNonZeroSign < 0 || lastNonZeroSign == 0)) {
+            upwardCrossings.push_back(zeroBoundary >= 0 ? zeroBoundary : index);
+        }
+        lastNonZeroSign = sign;
+        zeroBoundary = -1;
+    }
+    for (int index = 1; index < upwardCrossings.size(); ++index) {
+        const int begin = upwardCrossings.at(index - 1);
+        const int boundary = upwardCrossings.at(index);
+        if (cycleDurationPlausible(series, begin, boundary,
+                                   parameters.frequencyHz)) {
+            return {begin, boundary + 1, true};
+        }
+    }
+    return {};
+}
+
+struct SquareCycleSelection {
+    HelmCycleWindow window;
+    int contextBegin = 0;
+    int firstEdge = 0;
+    int secondEdge = 0;
+    int endBoundary = 0;
+};
+
+SquareCycleSelection squareCycleSelection(
+    const HelmSeries& series,
+    const HelmAnalysisParameters& parameters)
+{
+    SquareCycleSelection selection;
+    if (!seriesIsUsable(series) || !finite(parameters.frequencyHz) ||
+        parameters.frequencyHz <= 0.0) {
+        return selection;
+    }
+    const double threshold = qMax(helmExcitationFloor(parameters.configuredAmplitude),
+                                  1e-12);
+    const double levelTolerance = qMax(threshold * 2.0,
+                                       (maximum(series.command) -
+                                        minimum(series.command)) * 1e-6);
+    QVector<int> edges;
+    QVector<int> directions;
+    for (int index = 1; index < series.command.size(); ++index) {
+        const double delta = series.command.at(index) - series.command.at(index - 1);
+        if (std::abs(delta) > threshold) {
+            edges.push_back(index);
+            directions.push_back(delta > 0.0 ? 1 : -1);
+        }
+    }
+    const double halfPeriod = 0.5 / parameters.frequencyHz;
+    for (int index = 0; index + 2 < edges.size(); ++index) {
+        if (directions.at(index) == directions.at(index + 1) ||
+            directions.at(index) != directions.at(index + 2)) {
+            continue;
+        }
+        const int first = edges.at(index);
+        const int second = edges.at(index + 1);
+        const int end = edges.at(index + 2);
+        const double firstHalf = series.timeSeconds.at(second) -
+                                 series.timeSeconds.at(first);
+        const double secondHalf = series.timeSeconds.at(end) -
+                                  series.timeSeconds.at(second);
+        if (firstHalf < halfPeriod * 0.5 || firstHalf > halfPeriod * 1.5 ||
+            secondHalf < halfPeriod * 0.5 || secondHalf > halfPeriod * 1.5) {
+            continue;
+        }
+        const auto sameLevel = [&](int left, int right) {
+            return std::abs(series.command.at(left) -
+                            series.command.at(right)) <= levelTolerance;
+        };
+        if (!sameLevel(first - 1, second) ||
+            !sameLevel(first, second - 1) ||
+            !sameLevel(first - 1, end - 1) ||
+            !sameLevel(first, end)) {
+            continue;
+        }
+        const int contextBegin = index == 0 ? 0 : edges.at(index - 1);
+        if (first < 1 ||
+            series.timeSeconds.at(first - 1) -
+                    series.timeSeconds.at(contextBegin) < halfPeriod * 0.2) {
+            continue;
+        }
+        selection.window = {first, end + 1, true};
+        selection.contextBegin = contextBegin;
+        selection.firstEdge = first;
+        selection.secondEdge = second;
+        selection.endBoundary = end;
+        return selection;
+    }
+    return selection;
+}
+
+HelmCycleWindow triangleCycleWindow(const HelmSeries& series,
+                                    const HelmAnalysisParameters& parameters)
+{
+    if (!seriesIsUsable(series)) return {};
+    const double low = minimum(series.command);
+    const double high = maximum(series.command);
+    const double range = high - low;
+    if (!finite(range) || range <= 0.0) return {};
+    const double tolerance = qMax(1e-12, range * 1e-6);
+    const double configuredHalfRange = std::abs(parameters.configuredAmplitude);
+    const double expectedLow = parameters.offset - configuredHalfRange;
+    const double expectedHigh = parameters.offset + configuredHalfRange;
+    const double endpointTolerance = qMax(tolerance, configuredHalfRange * 0.02);
+    struct Extremum {
+        int index = 0;
+        int kind = 0; // -1 valley, +1 peak
+    };
+    QVector<Extremum> extrema;
+    const auto appendExtremum = [&](int index, int kind) {
+        if (extrema.isEmpty() || extrema.last().index != index) {
+            extrema.push_back({index, kind});
+        }
+    };
+    int firstSign = 0;
+    for (int index = 1; index < series.command.size() && firstSign == 0; ++index) {
+        firstSign = signWithTolerance(series.command.at(index) -
+                                          series.command.at(index - 1),
+                                      tolerance);
+    }
+    if (firstSign > 0 &&
+        std::abs(series.command.first() - expectedLow) <= endpointTolerance) {
+        appendExtremum(0, -1);
+    } else if (firstSign < 0 &&
+               std::abs(series.command.first() - expectedHigh) <= endpointTolerance) {
+        appendExtremum(0, 1);
+    }
+    int previousSign = 0;
+    for (int index = 1; index < series.command.size(); ++index) {
+        const int sign = signWithTolerance(series.command.at(index) -
+                                               series.command.at(index - 1),
+                                           tolerance);
+        if (sign == 0) continue;
+        if (previousSign != 0 && sign != previousSign) {
+            appendExtremum(index - 1, previousSign > 0 ? 1 : -1);
+        }
+        previousSign = sign;
+    }
+    for (int index = 0; index + 2 < extrema.size(); ++index) {
+        const Extremum& first = extrema.at(index);
+        const Extremum& middle = extrema.at(index + 1);
+        const Extremum& last = extrema.at(index + 2);
+        if (first.kind == middle.kind || first.kind != last.kind) continue;
+        if (cycleDurationPlausible(series, first.index, last.index,
+                                   parameters.frequencyHz)) {
+            return {first.index, last.index + 1, true};
+        }
+    }
+    return {};
+}
+
+HelmSeries seriesRange(const HelmSeries& series, int begin, int end)
+{
+    HelmSeries selected;
+    begin = qBound(0, begin, series.timeSeconds.size());
+    end = qBound(begin, end, series.timeSeconds.size());
+    selected.timeSeconds.reserve(end - begin);
+    selected.command.reserve(end - begin);
+    selected.feedback.reserve(end - begin);
+    for (int index = begin; index < end; ++index) {
+        selected.timeSeconds.push_back(series.timeSeconds.at(index));
+        selected.command.push_back(series.command.at(index));
+        selected.feedback.push_back(series.feedback.at(index));
+    }
+    return selected;
+}
+
 } // namespace
+
+HelmCycleWindow selectFirstCompleteHelmCycle(
+    const HelmSeries& series,
+    const HelmAnalysisParameters& parameters)
+{
+    switch (parameters.waveform) {
+    case 0:
+        return sineCycleWindow(series, parameters);
+    case 1:
+        return squareCycleSelection(series, parameters).window;
+    case 2:
+        return triangleCycleWindow(series, parameters);
+    default:
+        return {};
+    }
+}
 
 AnalysisMetric helmMetric(const QString& key, const QString& label, const QString& unit,
                           double value, AnalysisMetricStatus status, const QString& detail)
@@ -488,28 +712,33 @@ HelmWaveformOutcome analyzeHelmSine(const HelmSeries& series,
         outcome.reasonCode = QStringLiteral("invalid_parameters");
         return outcome;
     }
-    const double stableStart = series.timeSeconds.first() + 2.0 / parameters.frequencyHz;
-    int begin = 0;
-    while (begin < series.timeSeconds.size() && series.timeSeconds.at(begin) < stableStart) ++begin;
-    if (begin >= series.timeSeconds.size() - 3 ||
-        series.timeSeconds.last() - series.timeSeconds.at(begin) < 3.0 / parameters.frequencyHz) {
-        outcome.state = AnalysisChannelState::Partial;
-        outcome.reasonCode = QStringLiteral("insufficient_cycles");
-        outcome.message = QStringLiteral("Sine analysis needs three stable cycles after warmup");
+    const double floor = helmExcitationFloor(parameters.configuredAmplitude);
+    const double floorTolerance = qMax(1e-12, floor * 2e-4);
+    const double actualHalfPeak = (maximum(series.command) - minimum(series.command)) * 0.5;
+    outcome.diagnostics.insert(QStringLiteral("excitationFloor"), floor);
+    outcome.diagnostics.insert(QStringLiteral("actualHalfPeak"), actualHalfPeak);
+    if (actualHalfPeak < floor - floorTolerance) {
+        outcome.reasonCode = QStringLiteral("weak_excitation");
         return outcome;
     }
-    const SineFit commandFit = fitSine(series, series.command, begin, series.command.size(),
+    const HelmCycleWindow window = selectFirstCompleteHelmCycle(series, parameters);
+    if (!window.complete || window.end - window.begin < 4) {
+        outcome.state = AnalysisChannelState::Partial;
+        outcome.reasonCode = QStringLiteral("insufficient_cycles");
+        outcome.message = QStringLiteral("Sine analysis needs one complete command cycle");
+        return outcome;
+    }
+    const int begin = window.begin;
+    const int end = window.end;
+    const SineFit commandFit = fitSine(series, series.command, begin, end,
                                        parameters.frequencyHz);
-    const SineFit feedbackFit = fitSine(series, series.feedback, begin, series.feedback.size(),
+    const SineFit feedbackFit = fitSine(series, series.feedback, begin, end,
                                         parameters.frequencyHz);
     if (!commandFit.valid || !feedbackFit.valid) {
         outcome.state = AnalysisChannelState::Partial;
         outcome.reasonCode = QStringLiteral("fit_failed");
         return outcome;
     }
-    const double floor = helmExcitationFloor(parameters.configuredAmplitude);
-    const double floorTolerance = qMax(1e-12, floor * 2e-4);
-    outcome.diagnostics.insert(QStringLiteral("excitationFloor"), floor);
     if (commandFit.amplitude < floor - floorTolerance) {
         outcome.reasonCode = QStringLiteral("weak_excitation");
         return outcome;
@@ -551,9 +780,9 @@ HelmWaveformOutcome analyzeHelmSine(const HelmSeries& series,
                                              QStringLiteral("Principal delay"), QStringLiteral("ms"), delayMs));
     }
     QVector<double> error;
-    error.reserve(series.timeSeconds.size() - begin);
+    error.reserve(end - begin);
     double maxError = 0.0;
-    for (int index = begin; index < series.timeSeconds.size(); ++index) {
+    for (int index = begin; index < end; ++index) {
         const double value = series.feedback.at(index) - series.command.at(index);
         error.push_back(value);
         maxError = qMax(maxError, std::abs(value));
@@ -566,7 +795,7 @@ HelmWaveformOutcome analyzeHelmSine(const HelmSeries& series,
     outcome.diagnostics.insert(QStringLiteral("analysisStartUs"),
                                qRound64(series.timeSeconds.at(begin) * 1000000.0));
     outcome.diagnostics.insert(QStringLiteral("analysisEndUs"),
-                               qRound64(series.timeSeconds.last() * 1000000.0));
+                               qRound64(series.timeSeconds.at(end - 1) * 1000000.0));
     outcome.diagnostics.insert(QStringLiteral("analysisSampleCount"), error.size());
     outcome.state = AnalysisChannelState::Completed;
     return outcome;
@@ -585,10 +814,8 @@ HelmWaveformOutcome analyzeHelmSquare(const HelmSeries& series,
         outcome.reasonCode = QStringLiteral("invalid_parameters");
         return outcome;
     }
-    QVector<int> edges;
     const double excitationFloor = helmExcitationFloor(parameters.configuredAmplitude);
     const double excitationTolerance = qMax(1e-12, excitationFloor * 2e-4);
-    const double threshold = qMax(excitationFloor, 1e-12);
     const double actualHalfStep = (maximum(series.command) - minimum(series.command)) * 0.5;
     outcome.diagnostics.insert(QStringLiteral("excitationFloor"), excitationFloor);
     outcome.diagnostics.insert(QStringLiteral("actualHalfStep"), actualHalfStep);
@@ -600,17 +827,17 @@ HelmWaveformOutcome analyzeHelmSquare(const HelmSeries& series,
     if (std::abs(actualHalfStep - excitationFloor) <= excitationTolerance) {
         outcome.warnings.push_back(QStringLiteral("near_excitation_floor"));
     }
-    for (int index = 1; index < series.command.size(); ++index) {
-        if ((index & 1023) == 0 && cancel.isCancellationRequested()) {
-            outcome.reasonCode = QStringLiteral("cancelled");
-            return outcome;
-        }
-        if (std::abs(series.command.at(index) - series.command.at(index - 1)) > threshold) {
-            edges.push_back(index);
-        }
-    }
     EdgeMetrics rising;
     EdgeMetrics falling;
+    const SquareCycleSelection selection = squareCycleSelection(series, parameters);
+    if (!selection.window.complete) {
+        appendEdgeMetrics(QStringLiteral("rising"), rising, &outcome.metrics);
+        appendEdgeMetrics(QStringLiteral("falling"), falling, &outcome.metrics);
+        outcome.state = AnalysisChannelState::Partial;
+        outcome.reasonCode = QStringLiteral("insufficient_complete_edges");
+        return outcome;
+    }
+    const QVector<int> edges{selection.firstEdge, selection.secondEdge};
     const double halfPeriod = 0.5 / parameters.frequencyHz;
     for (int edgeNumber = 0; edgeNumber < edges.size(); ++edgeNumber) {
         if (cancel.isCancellationRequested()) {
@@ -618,9 +845,10 @@ HelmWaveformOutcome analyzeHelmSquare(const HelmSeries& series,
             return outcome;
         }
         const int edge = edges.at(edgeNumber);
-        const int previousEdge = edgeNumber == 0 ? 0 : edges.at(edgeNumber - 1);
+        const int previousEdge = edgeNumber == 0
+            ? selection.contextBegin : edges.at(edgeNumber - 1);
         const int nextEdge = edgeNumber + 1 < edges.size() ? edges.at(edgeNumber + 1)
-                                                             : series.command.size();
+                                                             : selection.endBoundary;
         const int preBegin = previousEdge;
         const int preEnd = edge;
         const int postBegin = edge;
@@ -734,12 +962,27 @@ HelmWaveformOutcome analyzeHelmTriangle(const HelmSeries& series,
         outcome.reasonCode = QStringLiteral("invalid_parameters");
         return outcome;
     }
-    const double commandMin = minimum(series.command);
-    const double commandMax = maximum(series.command);
-    const double commandRange = commandMax - commandMin;
-    const double actualHalfPeak = commandRange * 0.5;
     const double excitationFloor = helmExcitationFloor(parameters.configuredAmplitude);
     const double excitationTolerance = qMax(1e-12, excitationFloor * 2e-4);
+    const HelmCycleWindow window = selectFirstCompleteHelmCycle(series, parameters);
+    if (!window.complete) {
+        outcome.state = AnalysisChannelState::Partial;
+        outcome.reasonCode = QStringLiteral("insufficient_direction_segments");
+        return outcome;
+    }
+    // Exclude the repeated end extremum from the computation slice.  The
+    // common-metric window still includes it so its reported duration is one
+    // complete command period.
+    const HelmSeries cycleSeries = seriesRange(series, window.begin, window.end - 1);
+    if (!seriesIsUsable(cycleSeries)) {
+        outcome.state = AnalysisChannelState::Partial;
+        outcome.reasonCode = QStringLiteral("insufficient_direction_segments");
+        return outcome;
+    }
+    const double commandMin = minimum(cycleSeries.command);
+    const double commandMax = maximum(cycleSeries.command);
+    const double commandRange = commandMax - commandMin;
+    const double actualHalfPeak = commandRange * 0.5;
     outcome.diagnostics.insert(QStringLiteral("excitationFloor"), excitationFloor);
     outcome.diagnostics.insert(QStringLiteral("actualHalfPeak"), actualHalfPeak);
     if (actualHalfPeak < excitationFloor - excitationTolerance) {
@@ -760,16 +1003,19 @@ HelmWaveformOutcome analyzeHelmTriangle(const HelmSeries& series,
         int cycleBucket = -1;
     };
     QVector<SlopeSample> slopes;
-    slopes.reserve(series.command.size() - 1);
+    slopes.reserve(cycleSeries.command.size() - 1);
     QVector<CycleBucket> cycleBuckets;
-    for (int index = 1; index < series.command.size(); ++index) {
+    for (int index = 1; index < cycleSeries.command.size(); ++index) {
         if ((index & 1023) == 0 && cancel.isCancellationRequested()) {
             outcome.reasonCode = QStringLiteral("cancelled");
             return outcome;
         }
-        const double slope = (series.command.at(index) - series.command.at(index - 1)) /
-                             (series.timeSeconds.at(index) - series.timeSeconds.at(index - 1));
-        const double cyclePosition = (series.timeSeconds.at(index) - series.timeSeconds.first()) *
+        const double slope = (cycleSeries.command.at(index) -
+                              cycleSeries.command.at(index - 1)) /
+                             (cycleSeries.timeSeconds.at(index) -
+                              cycleSeries.timeSeconds.at(index - 1));
+        const double cyclePosition = (cycleSeries.timeSeconds.at(index) -
+                                      cycleSeries.timeSeconds.first()) *
                                      parameters.frequencyHz;
         if (!finite(cyclePosition) || cyclePosition < 0.0 ||
             cyclePosition > static_cast<double>(std::numeric_limits<qint64>::max())) {
@@ -836,8 +1082,9 @@ HelmWaveformOutcome analyzeHelmTriangle(const HelmSeries& series,
     std::array<QVector<double>, 32> fallingBins;
     const auto appendSegment = [&](const Segment& segment) -> bool {
         const int begin = segment.begin;
-        const int end = qMin(series.timeSeconds.size(), segment.end + 1);
-        if (end - begin < 3 || series.timeSeconds.at(end - 1) - series.timeSeconds.at(begin) <
+        const int end = qMin(cycleSeries.timeSeconds.size(), segment.end + 1);
+        if (end - begin < 3 || cycleSeries.timeSeconds.at(end - 1) -
+                                   cycleSeries.timeSeconds.at(begin) <
                                0.25 / parameters.frequencyHz) {
             return true;
         }
@@ -847,14 +1094,14 @@ HelmWaveformOutcome analyzeHelmTriangle(const HelmSeries& series,
         for (int index = begin; index < end; ++index) {
             if (((index - begin) & 1023) == 0 && cancel.isCancellationRequested()) return false;
             const double normalized = commandRange > 0.0
-                ? (series.command.at(index) - commandMin) / commandRange : 0.5;
+                ? (cycleSeries.command.at(index) - commandMin) / commandRange : 0.5;
             if (normalized <= 0.1 || normalized >= 0.9) continue;
-            time.push_back(series.timeSeconds.at(index));
-            command.push_back(series.command.at(index));
-            feedback.push_back(series.feedback.at(index));
+            time.push_back(cycleSeries.timeSeconds.at(index));
+            command.push_back(cycleSeries.command.at(index));
+            feedback.push_back(cycleSeries.feedback.at(index));
             const int bin = qBound(0, static_cast<int>(normalized * 32.0), 31);
             (segment.rising ? risingBins : fallingBins)[static_cast<size_t>(bin)]
-                .push_back(series.feedback.at(index));
+                .push_back(cycleSeries.feedback.at(index));
         }
         const double commandSlope = weightedLinearSlope(time, command);
         const double feedbackSlope = weightedLinearSlope(time, feedback);

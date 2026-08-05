@@ -136,7 +136,7 @@ TEST(HelmPerformanceAnalyzerTest, SerializesVersionedFiniteResultAndFixtureManif
     EXPECT_EQ(document.object().value(QStringLiteral("analyzerId")).toString(),
               QStringLiteral("mbddf.helm.performance"));
     EXPECT_TRUE(document.object().value(QStringLiteral("analyzerVersion")).toString()
-                    .startsWith(QStringLiteral("mbddf.helm.performance/3;")));
+                    .startsWith(QStringLiteral("mbddf.helm.performance/4;")));
     EXPECT_TRUE(document.object().contains(QStringLiteral("generatedAtUtcUs")));
     EXPECT_TRUE(document.object().contains(QStringLiteral("reproducible")));
     EXPECT_TRUE(document.object().contains(QStringLiteral("sourceArtifact")));

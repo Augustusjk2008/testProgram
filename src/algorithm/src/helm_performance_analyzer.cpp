@@ -15,7 +15,8 @@ namespace {
 
 const QString kAnalyzerId = QStringLiteral("mbddf.helm.performance");
 const QString kAnalyzerVersion =
-    QStringLiteral("mbddf.helm.performance/3;cyclesPerEstimate=4;maxDelayMs=100;"
+    QStringLiteral("mbddf.helm.performance/4;periodicWindow=first_complete_command_cycle;"
+                   "cyclesPerEstimate=4;maxDelayMs=100;"
                    "frequencyPointCount=96;candidateSamples=2048;"
                    "candidateSampling=time_stratified;"
                    "minCommandCorrelation=0.95;absoluteExcitationFloor=1e-6;"
@@ -107,6 +108,16 @@ QPair<int, int> commonAnalysisWindow(const HelmSeries& series,
 {
     const int rawEnd = series.timeSeconds.size();
     if (rawEnd < 2) return {0, rawEnd};
+    const bool singleFrequencySweep = parameters.waveform == 4 &&
+        parameters.frequencyHz == parameters.maximumFrequencyHz;
+    if ((parameters.waveform >= 0 && parameters.waveform <= 2) ||
+        singleFrequencySweep) {
+        HelmAnalysisParameters cycleParameters = parameters;
+        if (singleFrequencySweep) cycleParameters.waveform = 0;
+        const HelmCycleWindow window =
+            selectFirstCompleteHelmCycle(series, cycleParameters);
+        if (window.complete) return {window.begin, window.end};
+    }
     if (parameters.waveform == 3) {
         const double duration = series.timeSeconds.last() - series.timeSeconds.first();
         if (duration < 1.0) return {0, rawEnd};
@@ -115,18 +126,6 @@ QPair<int, int> commonAnalysisWindow(const HelmSeries& series,
         const auto begin = std::lower_bound(series.timeSeconds.cbegin(), series.timeSeconds.cend(), start);
         const int index = static_cast<int>(begin - series.timeSeconds.cbegin());
         return rawEnd - index >= 2 ? qMakePair(index, rawEnd) : qMakePair(0, rawEnd);
-    }
-    const bool singleFrequencySweep = parameters.waveform == 4 &&
-        parameters.frequencyHz == parameters.maximumFrequencyHz;
-    if (parameters.waveform == 0 || singleFrequencySweep) {
-        const double stableStart = series.timeSeconds.first() + 2.0 / parameters.frequencyHz;
-        const auto begin = std::lower_bound(series.timeSeconds.cbegin(), series.timeSeconds.cend(), stableStart);
-        const int index = static_cast<int>(begin - series.timeSeconds.cbegin());
-        if (index < rawEnd - 3 &&
-            series.timeSeconds.last() - series.timeSeconds.at(index) >=
-                3.0 / parameters.frequencyHz) {
-            return {index, rawEnd};
-        }
     }
     return {0, rawEnd};
 }

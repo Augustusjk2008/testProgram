@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parent
 PI = math.pi
 GENERATOR_VERSION = "1"
 ANALYZER_VERSION = (
-    "mbddf.helm.performance/3;cyclesPerEstimate=4;maxDelayMs=100;"
+    "mbddf.helm.performance/4;periodicWindow=first_complete_command_cycle;"
+    "cyclesPerEstimate=4;maxDelayMs=100;"
     "frequencyPointCount=96;candidateSamples=2048;"
     "candidateSampling=time_stratified;"
     "minCommandCorrelation=0.95;absoluteExcitationFloor=1e-6;"

@@ -135,6 +135,86 @@ private:
     QString m_analyzerVersion;
 };
 
+hwtest::algorithm::mbddf::AnalysisMetric publishedMetric(const QString& key,
+                                                          int channel)
+{
+    hwtest::algorithm::mbddf::AnalysisMetric metric;
+    metric.key = key;
+    metric.label = QStringLiteral("Published %1 for helm channel %2").arg(key).arg(channel);
+    metric.unit = QStringLiteral("degree");
+    metric.status = AnalysisMetricStatus::Valid;
+    metric.hasValue = true;
+    metric.value = static_cast<double>(channel + 1);
+    metric.detail = QStringLiteral("First complete command cycle");
+    return metric;
+}
+
+class FullSquareMetricsAnalyzer final : public IPostRunAnalyzer {
+public:
+    AnalysisResult analyze(const AnalysisInputSeal& input,
+                           const AnalysisProgressCallback&,
+                           const AnalysisCancelToken&) override
+    {
+        static const QStringList commonKeys{
+            QStringLiteral("raw_sample_count"),
+            QStringLiteral("raw_duration_s"),
+            QStringLiteral("analysis_sample_count"),
+            QStringLiteral("analysis_duration_s"),
+            QStringLiteral("sampling_frequency_hz"),
+            QStringLiteral("command_peak"),
+            QStringLiteral("command_range"),
+            QStringLiteral("command_rms"),
+            QStringLiteral("feedback_peak"),
+            QStringLiteral("feedback_range"),
+            QStringLiteral("feedback_rms"),
+            QStringLiteral("mean_error"),
+            QStringLiteral("mae"),
+            QStringLiteral("rmse"),
+            QStringLiteral("max_abs_error"),
+            QStringLiteral("correlation_coefficient"),
+        };
+        static const QStringList edgeSuffixes{
+            QStringLiteral("edge_count"),
+            QStringLiteral("not_settled_edge_count"),
+            QStringLiteral("delay_ms_mean"),
+            QStringLiteral("delay_ms_mean_worst"),
+            QStringLiteral("rise_time_ms_mean"),
+            QStringLiteral("rise_time_ms_mean_worst"),
+            QStringLiteral("overshoot_percent_mean"),
+            QStringLiteral("overshoot_percent_mean_worst"),
+            QStringLiteral("settling_time_ms_mean"),
+            QStringLiteral("settling_time_ms_mean_worst"),
+            QStringLiteral("steady_state_error_mean"),
+        };
+
+        AnalysisResult result;
+        result.schemaVersion = QStringLiteral("1");
+        result.analyzerId = QStringLiteral("mbddf.helm.performance");
+        result.analyzerVersion = QStringLiteral("full-square-test");
+        result.identity = input.identity;
+        result.state = AnalysisState::Completed;
+        result.acceptedSampleCount = input.acceptedSampleCount;
+        for (int channelIndex = 0; channelIndex < 4; ++channelIndex) {
+            AnalysisChannelResult channel;
+            channel.channel = channelIndex;
+            channel.enabled = true;
+            channel.state = AnalysisChannelState::Completed;
+            for (const QString& key : commonKeys) {
+                channel.commonMetrics.push_back(publishedMetric(key, channelIndex));
+            }
+            for (const QString& prefix : {QStringLiteral("rising"),
+                                          QStringLiteral("falling")}) {
+                for (const QString& suffix : edgeSuffixes) {
+                    channel.waveformMetrics.push_back(
+                        publishedMetric(prefix + QLatin1Char('_') + suffix, channelIndex));
+                }
+            }
+            result.channels.push_back(channel);
+        }
+        return result;
+    }
+};
+
 class DenseBodeAnalyzer final : public IPostRunAnalyzer {
 public:
     explicit DenseBodeAnalyzer(bool includeHiddenInvalidPoint = false)
@@ -682,6 +762,56 @@ TEST(PostRunAnalysisCoordinatorTest, SummaryLimitIncludesPublishedSourceMetadata
     EXPECT_EQ(coordinator.snapshot().reasonCode,
               QStringLiteral("analysis_summary_limit"));
     EXPECT_TRUE(coordinator.snapshot().resultFilePath.isEmpty());
+}
+
+TEST(PostRunAnalysisCoordinatorTest, PublishesFourChannelFullSquareMetricSummaries)
+{
+    ensureQtApplication();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    auto probe = std::make_shared<AnalysisProbe>();
+    PostRunAnalysisDependencies dependencies;
+    dependencies.sessionFactory = [probe](const AnalysisSessionSpec& spec,
+                                          AnalysisError* error) {
+        if (error != nullptr) *error = {};
+        return std::make_unique<FakeSession>(spec, probe);
+    };
+    dependencies.analyzerFactory = [](const QString&, AnalysisError* error) {
+        if (error != nullptr) *error = {};
+        return std::make_unique<FullSquareMetricsAnalyzer>();
+    };
+    PostRunAnalysisCoordinator coordinator(std::move(dependencies));
+    coordinator.configureCapability(PostRunAnalysisCapability{
+        true, QStringLiteral("mbddf.helm.performance"), QStringLiteral("1")});
+    PostRunAnalysisStartSpec spec;
+    spec.algorithmId = QStringLiteral("mbddf.helm_stream");
+    spec.configId = QStringLiteral("mbddf-helm-stream");
+    spec.sourceStepId = QStringLiteral("HELM_STREAM");
+    spec.dataStorageDirectory = directory.path();
+    spec.resources.minFreeBytes = 0;
+    ASSERT_TRUE(coordinator.preparePending(spec).ok);
+    ASSERT_TRUE(coordinator.bindSuccessfulTask(QStringLiteral("task-full-square")).ok);
+    QEventLoop loop;
+    QTimer guard;
+    guard.setSingleShot(true);
+    QObject::connect(&guard, &QTimer::timeout, &loop, &QEventLoop::quit);
+    coordinator.setUpdateCallback([&] {
+        if (isTerminalAnalysisState(coordinator.snapshot().state)) loop.quit();
+    });
+    AnalysisTermination termination;
+    termination.kind = AnalysisTerminationKind::Finished;
+    coordinator.requestTerminal(termination, false, {});
+    guard.start(5000);
+    loop.exec();
+
+    EXPECT_EQ(coordinator.snapshot().state, QStringLiteral("completed"));
+    EXPECT_TRUE(coordinator.snapshot().reasonCode.isEmpty());
+    EXPECT_FALSE(coordinator.snapshot().resultFilePath.isEmpty());
+    ASSERT_EQ(coordinator.snapshot().channelSummaries.size(), 4);
+    for (const AnalysisChannelSummary& channel : coordinator.snapshot().channelSummaries) {
+        EXPECT_EQ(channel.commonMetrics.size(), 11);
+        EXPECT_EQ(channel.waveformMetrics.size(), 22);
+    }
 }
 
 } // namespace

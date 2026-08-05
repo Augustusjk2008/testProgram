@@ -1,6 +1,6 @@
 {
   "fixtureSchemaVersion": "1",
-  "analyzerVersion": "mbddf.helm.performance/3;cyclesPerEstimate=4;maxDelayMs=100;frequencyPointCount=96;candidateSamples=2048;candidateSampling=time_stratified;minCommandCorrelation=0.95;absoluteExcitationFloor=1e-6;relativeExcitationRatio=0.01",
+  "analyzerVersion": "mbddf.helm.performance/4;periodicWindow=first_complete_command_cycle;cyclesPerEstimate=4;maxDelayMs=100;frequencyPointCount=96;candidateSamples=2048;candidateSampling=time_stratified;minCommandCorrelation=0.95;absoluteExcitationFloor=1e-6;relativeExcitationRatio=0.01",
   "name": "sweep_first_order",
   "parameters": {
     "waveform": 4,

@@ -22,6 +22,12 @@ struct HelmAnalysisParameters {
     double sweepDurationSeconds = 0.0;
 };
 
+struct HelmCycleWindow {
+    int begin = 0;
+    int end = 0;
+    bool complete = false;
+};
+
 struct HelmWaveformOutcome {
     AnalysisChannelState state = AnalysisChannelState::Unavailable;
     QString reasonCode;
@@ -36,6 +42,10 @@ void appendHelmCommonMetrics(const HelmSeries& series,
                              int analysisEnd,
                              QVector<AnalysisMetric>* metrics,
                              QVariantMap* diagnostics);
+
+HelmCycleWindow selectFirstCompleteHelmCycle(
+    const HelmSeries& series,
+    const HelmAnalysisParameters& parameters);
 
 HelmWaveformOutcome analyzeHelmConstant(const HelmSeries& series,
                                         const HelmAnalysisParameters& parameters,

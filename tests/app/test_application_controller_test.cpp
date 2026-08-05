@@ -21,6 +21,7 @@
 #include <QThread>
 #include <QTimer>
 
+#include <cmath>
 #include <thread>
 
 namespace hwtest::app {
@@ -1238,14 +1239,18 @@ TEST(TestApplicationControllerTest, HelmSamplesFlowThroughCaptureAnalysisAndQuer
         &error)) << error.toStdString();
 
     for (int index = 0; index < 12; ++index) {
+        constexpr double pi = 3.14159265358979323846;
+        const double timeSeconds = static_cast<double>(index) * 0.1;
+        const double command = 1.8 * std::sin(2.0 * pi * timeSeconds);
+        const double feedback = 1.7 * std::sin(2.0 * pi * timeSeconds - 0.1);
         ASSERT_TRUE(peer.sendToLastRequester(
             QStringLiteral("helm_feedback_response"),
             static_cast<quint16>(0x8000 + index),
             helmOneSampleFeedback(static_cast<quint64>(index) * 100000ULL,
-                                  static_cast<quint16>(100 + index),
-                                  static_cast<quint16>(200 + index),
-                                  1.8,
-                                  1.7),
+                                   static_cast<quint16>(100 + index),
+                                   static_cast<quint16>(200 + index),
+                                   command,
+                                   feedback),
             &error)) << error.toStdString();
     }
     QEventLoop sampleLoop;

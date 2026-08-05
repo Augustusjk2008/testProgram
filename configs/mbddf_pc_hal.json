@@ -21,7 +21,7 @@
       "maxResultBytes": 16777216,
       "maxProjectedPoints": 256,
       "maxProjectedBytes": 16384,
-      "maxAnalysisSummaryBytes": 8192,
+      "maxAnalysisSummaryBytes": 32768,
       "diagnosticRetentionDays": 7
     }
   },

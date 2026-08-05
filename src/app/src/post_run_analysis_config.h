@@ -16,7 +16,7 @@ struct PostRunAnalysisConfig {
     quint64 maxResultBytes = 16777216ULL;
     int maxProjectedPoints = 256;
     int maxProjectedBytes = 16384;
-    int maxAnalysisSummaryBytes = 8192;
+    int maxAnalysisSummaryBytes = 32768;
     int diagnosticRetentionDays = 7;
 };
 

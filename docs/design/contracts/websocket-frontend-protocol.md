@@ -152,7 +152,7 @@ WebSocket v1 的刺激通道边界固定为最多 16 路且 `dutBit` 只能是 0
 
 每个 `channelSummaries[]` 元素为 `{channel, enabled, status, warnings, omittedWarningCount, commonMetrics, waveformMetrics, bodeAvailable, bodePointCount}`。`channel` 只能是 `0..3`；通道状态只能为 `not_applicable`、`completed`、`partial` 或 `unavailable`。metric 统一为 `{key,label,unit,status,value,detail}`，其中 `value` 是有限 number 或 `null`，绝不以字符串、`NaN`、`Inf` 或伪造的 `0` 表示无效结果。
 
-摘要不携带完整伯德数组，避免每次快照或重连重复广播大载荷。摘要在结果提交前按 `maxAnalysisSummaryBytes` 验证，每通道警告最多 16 条、单条 UTF-8 最多 512 字节，超出部分只反映为 `omittedWarningCount`；无法满足限制时整体进入 `failed`。`failed`/`cancelled` 只能是整体基础设施终态，不得携带半成品曲线。
+摘要不携带完整伯德数组，避免每次快照或重连重复广播大载荷。摘要在结果提交前按 `maxAnalysisSummaryBytes` 验证；当前默认值和配置上限均为 32768 字节，可容纳四通道完整公共指标与方波指标摘要。每通道警告最多 16 条、单条 UTF-8 最多 512 字节，超出部分只反映为 `omittedWarningCount`；显式配置更小预算且无法满足限制时整体进入 `failed`。`failed`/`cancelled` 只能是整体基础设施终态，不得携带半成品曲线。
 
 分析状态独立于 `snapshot.phase` 和 BIZ `TestState`：性能结果不改变采集 `verdict`、`errorCode`、`TestResult` 或 STOP 硬件语义。`[当前实现]` 控制器已接通 STOP 尾样本封存、`queued` 起写门禁、硬件收尾栅栏、后台分析/持久化/取消和终态投影；Web 只按当前 `{taskId, analysisGeneration}` 暴露摘要与只读查询结果。
 

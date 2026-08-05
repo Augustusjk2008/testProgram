@@ -117,7 +117,7 @@ bool parsePostRunAnalysisConfig(const QVariantMap& halConfig,
                   &parsed.maxProjectedPoints, error) ||
         !parseInt(values, QStringLiteral("maxProjectedBytes"), 1, 16384,
                   &parsed.maxProjectedBytes, error) ||
-        !parseInt(values, QStringLiteral("maxAnalysisSummaryBytes"), 1, 8192,
+        !parseInt(values, QStringLiteral("maxAnalysisSummaryBytes"), 1, 32768,
                   &parsed.maxAnalysisSummaryBytes, error) ||
         !parseInt(values, QStringLiteral("diagnosticRetentionDays"), 0, 36500,
                   &parsed.diagnosticRetentionDays, error)) {

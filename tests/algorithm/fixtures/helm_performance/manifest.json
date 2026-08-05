@@ -1,16 +1,16 @@
 {
   "fixtureSchemaVersion": "1",
-  "analyzerVersion": "mbddf.helm.performance/3;cyclesPerEstimate=4;maxDelayMs=100;frequencyPointCount=96;candidateSamples=2048;candidateSampling=time_stratified;minCommandCorrelation=0.95;absoluteExcitationFloor=1e-6;relativeExcitationRatio=0.01",
+  "analyzerVersion": "mbddf.helm.performance/4;periodicWindow=first_complete_command_cycle;cyclesPerEstimate=4;maxDelayMs=100;frequencyPointCount=96;candidateSamples=2048;candidateSampling=time_stratified;minCommandCorrelation=0.95;absoluteExcitationFloor=1e-6;relativeExcitationRatio=0.01",
   "generator": {
     "path": "generate_fixtures.py",
     "version": "1",
-    "sha256": "6cfddf2a87470e1559b08465a34c68ef77b43ec1cbff8bc1fcec57931bdc643a",
+    "sha256": "034044720c3efe40141cd82511b8fd692ae8f04a9446e2465c34d224b810712f",
     "method": "independent standard-library closed-form and explicit-Euler models"
   },
   "files": [
     {
       "name": "constant",
-      "sha256": "06c0e587e3f733ab60918c1996c07fec2ef51422fc72adf3c53f237d044288e9",
+      "sha256": "156334d5ef3ac4a238f9b2b346958bdeec8978d80df78f7dd4169135dc6f3657",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 3,
@@ -32,7 +32,7 @@
     },
     {
       "name": "sine",
-      "sha256": "e6609bc646283b4bb933171bb0d1c21e1bbe4cf993582a47e483ae47b687cad1",
+      "sha256": "9b264688135644ad1b1db16ba3f202bad77fb44248bf5c4aeb49bfd8d10d1381",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 0,
@@ -54,7 +54,7 @@
     },
     {
       "name": "square",
-      "sha256": "5ff29c2b1eb7c6bbb4cad170e1645bebdb3dcdaf70a89f572221ad4a1017c853",
+      "sha256": "8af8bfde1d2df54bf71dbbd7239395b2a918dcbf313922113c702646d4e784fd",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 1,
@@ -77,7 +77,7 @@
     },
     {
       "name": "triangle",
-      "sha256": "187b0d7610063d334a9d4ff64d42700c232efdb595f0c1bb62021b99dc8188cb",
+      "sha256": "8205738678ba78f9e209e2e177c53242569781b7c85b572bb9d63dfc2ea3c93c",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 2,
@@ -99,7 +99,7 @@
     },
     {
       "name": "sweep_first_order",
-      "sha256": "44425125a1b58f42a399805f421464b7d7609bf1d48ea0c55959ffe918fbcb6b",
+      "sha256": "3fef0481b607c6a3a95ac5ac9406dc4b477b3e384409a7a1e355d772b2d8e71f",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 4,
@@ -122,7 +122,7 @@
     },
     {
       "name": "sweep_delay_truncated",
-      "sha256": "02adfb4bef6a3772d7ee7bfb9e47b2d671568c87c35af95a7883369b1a957732",
+      "sha256": "24289d1d21c31015708ee7e45fc537f246e8120e36d9a1131cf0a02166626a92",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 4,
@@ -145,7 +145,7 @@
     },
     {
       "name": "sweep_reverse_complete",
-      "sha256": "265a137db2840edd2321f0ff54f4bba087cd99f707f0c815ead3a02f79f758dd",
+      "sha256": "dbe31c66bf81c3af329643253cd63ea391605cca2a5b1144e73f53ec2ccd5272",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 4,
@@ -168,7 +168,7 @@
     },
     {
       "name": "sweep_reverse_truncated",
-      "sha256": "48ed3d35e165c03a562e2e9922d2dceeacd475d1817458dcc4f44f9e50fa4871",
+      "sha256": "ae51dbfdab688db160350ca12ddb098a7fb6f4f652bc0993db4c6c87fcced8e5",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 4,
@@ -191,7 +191,7 @@
     },
     {
       "name": "sweep_second_order",
-      "sha256": "37055fe7685c10670618ad894632ba69f61f6aa6f818780b2e1e963ec96ada65",
+      "sha256": "ec1532ac251eae89d76fe4d66ea3dae23ba47a941c4f7c8031944480ec76dac6",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 4,
@@ -213,7 +213,7 @@
     },
     {
       "name": "sweep_pure_delay",
-      "sha256": "a1467300f322e5737722c2fc5641083af5f8156d387aba1cf2e23081e5f505ab",
+      "sha256": "81b1e4d5d576fb721824574ada7086cf021f8f130f7122be90c8678114883a3c",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 4,
@@ -235,7 +235,7 @@
     },
     {
       "name": "sweep_early_stop",
-      "sha256": "3a10873a943dc01139b51f5948aac68805f6953245c3588c63464a694edf3224",
+      "sha256": "694b1eae3b740728fcda23f1336891063ecd9b232f541119cb4ea81a4bbf8bdf",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 4,
@@ -257,7 +257,7 @@
     },
     {
       "name": "sequence_diagnostic_a",
-      "sha256": "c9e1e78d03f4e50055914bd6c5451afcf0618a31f0d50f2a646d7421d2e1869a",
+      "sha256": "a7a2721e4f3524d230c42dc67776135e6698230fbca922b6da8fc4ad9fa171ae",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 3,
@@ -278,7 +278,7 @@
     },
     {
       "name": "sequence_diagnostic_b",
-      "sha256": "482a1bff634419293b2c2d3801d1358cc8fb0ad1e364905be677939b03280b7c",
+      "sha256": "382caab7ee471e783d370b8fc3da79ec2859a09aa09353a9aedb3284fadaad85",
       "method": "independently generated; never calls the C++ analyzer",
       "parameters": {
         "waveform": 3,
