@@ -81,6 +81,8 @@ m_mutex         保护内部状态
 
 `JsonLineFileSink` 使用 `QFile` 追加写入。`append()` 在文件未打开时尝试打开，单次写入一行 JSON；`flush()` 显式刷新文件。文件 sink 不写 ANSI 颜色，也不直接写 stdout。
 
+应用控制器负责解析日志路径和 `fileMode`，仓库默认 HAL 配置启用进程级文件；兼容默认值、命名和创建时机以日志契约第 3.1 节为准。进程会话后缀只生成一次，通用 `JsonLineFileSink` 不承担进程生命周期或轮转策略。
+
 ## 5. HAL 日志桥接
 
 当前 `hal_log_bridge` 提供：
@@ -102,6 +104,8 @@ QMetaObject::Connection connectHalLogs(hwtest::hal::IHalService* halService,
 - `LogService` 的默认值规范化、过滤、recent 缓存、signal 和 sink 分发。
 - `JsonLineFileSink` 的 JSONL 结构、context 保留和 `flush()`。
 - `hal_log_bridge` 的字段映射和 signal 连接。
+
+应用层另有控制器回归用例，覆盖进程级日志文件命名以及同一进程重连复用同一文件。
 
 运行示例：
 

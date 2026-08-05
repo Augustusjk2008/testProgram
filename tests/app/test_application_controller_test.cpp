@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 
 #include <QCoreApplication>
@@ -137,6 +138,41 @@ bool setDataStorageDirectory(const QString& halPath,
     root.insert(QStringLiteral("dataStorage"),
                 QJsonObject{{QStringLiteral("directory"), directory}});
     QFile output(halPath);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (error != nullptr) *error = output.errorString();
+        return false;
+    }
+    const QByteArray json = QJsonDocument(root).toJson();
+    const bool written = output.write(json) == json.size();
+    if (!written && error != nullptr) *error = output.errorString();
+    return written;
+}
+
+bool writeHalConfigWithLogPath(const QString& sourcePath,
+                               const QString& outputPath,
+                               const QString& logPath,
+                               const QString& fileMode,
+                               QString* error)
+{
+    QFile source(sourcePath);
+    if (!source.open(QIODevice::ReadOnly)) {
+        if (error != nullptr) *error = source.errorString();
+        return false;
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(source.readAll());
+    source.close();
+    if (!document.isObject()) {
+        if (error != nullptr) *error = QStringLiteral("HAL fixture is not a JSON object");
+        return false;
+    }
+
+    QJsonObject root = document.object();
+    QJsonObject logging{{QStringLiteral("filePath"), logPath}};
+    if (!fileMode.isEmpty()) {
+        logging.insert(QStringLiteral("fileMode"), fileMode);
+    }
+    root.insert(QStringLiteral("logging"), logging);
+    QFile output(outputPath);
     if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (error != nullptr) *error = output.errorString();
         return false;
@@ -298,6 +334,130 @@ TEST(TestApplicationControllerTest, RejectsPreparationBeforeConfigurationsAreLoa
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.code, QStringLiteral("invalid_state"));
     EXPECT_EQ(controller.snapshot().phase, QStringLiteral("empty"));
+}
+
+TEST(TestApplicationControllerTest, UsesOneProcessScopedLogFileAcrossReconnects)
+{
+    ensureQtApplication();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString halConfigPath = directory.filePath(QStringLiteral("hal.json"));
+    QString error;
+    ASSERT_TRUE(writeHalConfigWithLogPath(
+        QStringLiteral(HWTEST_APP_HAL_CONFIG),
+        halConfigPath,
+        QStringLiteral("logs/backend.jsonl"),
+        QStringLiteral("per_process"),
+        &error)) << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(controller.prepare().ok);
+    ASSERT_TRUE(controller.shutdown().ok);
+
+    const QDir logDirectory(directory.filePath(QStringLiteral("logs")));
+    const QStringList firstSessionFiles = logDirectory.entryList(
+        {QStringLiteral("backend_*.jsonl")}, QDir::Files, QDir::Name);
+    ASSERT_EQ(firstSessionFiles.size(), 1);
+    EXPECT_FALSE(QFileInfo(logDirectory.filePath(
+        QStringLiteral("backend.jsonl"))).exists());
+    EXPECT_TRUE(firstSessionFiles.first().contains(
+        QStringLiteral("_p%1").arg(QCoreApplication::applicationPid())));
+    EXPECT_TRUE(QRegularExpression(
+        QStringLiteral("^backend_[0-9]{8}_[0-9]{6}_[0-9]{3}_p[0-9]+_"
+                       "[0-9a-fA-F-]{36}\\.jsonl$"))
+                    .match(firstSessionFiles.first()).hasMatch());
+
+    const QString sessionPath = logDirectory.filePath(firstSessionFiles.first());
+    QFile sentinel(sessionPath);
+    ASSERT_TRUE(sentinel.open(QIODevice::WriteOnly | QIODevice::Append));
+    ASSERT_EQ(sentinel.write("{\"sentinel\":true}\n"), 18);
+    sentinel.close();
+
+    ASSERT_TRUE(controller.prepare().ok);
+    ASSERT_TRUE(controller.shutdown().ok);
+
+    const QStringList secondSessionFiles = logDirectory.entryList(
+        {QStringLiteral("backend_*.jsonl")}, QDir::Files, QDir::Name);
+    ASSERT_EQ(secondSessionFiles.size(), 1);
+    EXPECT_EQ(secondSessionFiles.first(), firstSessionFiles.first());
+
+    QFile reopened(sessionPath);
+    ASSERT_TRUE(reopened.open(QIODevice::ReadOnly));
+    EXPECT_TRUE(reopened.readAll().contains("{\"sentinel\":true}\n"));
+
+    TestApplicationController secondController;
+    ASSERT_TRUE(secondController.loadConfigurations(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG), halConfigPath).ok);
+    ASSERT_TRUE(secondController.prepare().ok);
+    ASSERT_TRUE(secondController.shutdown().ok);
+    const QStringList sameProcessFiles = logDirectory.entryList(
+        {QStringLiteral("backend_*.jsonl")}, QDir::Files, QDir::Name);
+    ASSERT_EQ(sameProcessFiles.size(), 1);
+    EXPECT_EQ(sameProcessFiles.first(), firstSessionFiles.first());
+}
+
+TEST(TestApplicationControllerTest, KeepsFixedLogFileForMissingOrBlankMode)
+{
+    ensureQtApplication();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QStringList modes{QString{}, QStringLiteral("   ")};
+    for (int index = 0; index < modes.size(); ++index) {
+        const QString caseDirectory = directory.filePath(
+            QStringLiteral("case_%1").arg(index));
+        ASSERT_TRUE(QDir().mkpath(caseDirectory));
+        const QString halConfigPath = QDir(caseDirectory).filePath(
+            QStringLiteral("hal.json"));
+        QString error;
+        ASSERT_TRUE(writeHalConfigWithLogPath(
+            QStringLiteral(HWTEST_APP_HAL_CONFIG),
+            halConfigPath,
+            QStringLiteral("logs/backend.jsonl"),
+            modes.at(index),
+            &error)) << error.toStdString();
+
+        TestApplicationController controller;
+        ASSERT_TRUE(controller.loadConfigurations(
+            QStringLiteral(HWTEST_APP_TEST_CONFIG), halConfigPath).ok);
+        ASSERT_TRUE(controller.prepare().ok);
+        ASSERT_TRUE(controller.shutdown().ok);
+
+        const QDir logDirectory(QDir(caseDirectory).filePath(
+            QStringLiteral("logs")));
+        EXPECT_TRUE(QFileInfo(logDirectory.filePath(
+            QStringLiteral("backend.jsonl"))).isFile());
+        EXPECT_TRUE(logDirectory.entryList(
+            {QStringLiteral("backend_*.jsonl")}, QDir::Files).isEmpty());
+    }
+}
+
+TEST(TestApplicationControllerTest, RejectsUnknownLogFileMode)
+{
+    ensureQtApplication();
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString halConfigPath = directory.filePath(QStringLiteral("hal.json"));
+    QString error;
+    ASSERT_TRUE(writeHalConfigWithLogPath(
+        QStringLiteral(HWTEST_APP_HAL_CONFIG),
+        halConfigPath,
+        {},
+        QStringLiteral("per_test"),
+        &error)) << error.toStdString();
+
+    TestApplicationController controller;
+    ASSERT_TRUE(controller.loadConfigurations(
+        QStringLiteral(HWTEST_APP_TEST_CONFIG), halConfigPath).ok);
+
+    const ActionResult prepared = controller.prepare();
+
+    EXPECT_FALSE(prepared.ok);
+    EXPECT_EQ(prepared.code, QStringLiteral("logging"));
+    if (prepared.ok) {
+        controller.shutdown();
+    }
 }
 
 TEST(TestApplicationControllerTest, RejectsOutOfRangePostRunAnalysisResources)

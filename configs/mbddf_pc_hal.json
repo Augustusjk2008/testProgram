@@ -5,7 +5,10 @@
     "resourceId": "CONTROL_SERIAL",
     "runTimeoutMs": 180000
   },
-  "logging": {"filePath": "../logs/mbddf_pc.jsonl"},
+  "logging": {
+    "filePath": "../logs/mbddf_pc.jsonl",
+    "fileMode": "per_process"
+  },
   "dataStorage": {
     "directory": "../data",
     "analysis": {

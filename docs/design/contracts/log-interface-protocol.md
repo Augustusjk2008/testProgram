@@ -95,6 +95,17 @@ signals:
 
 `[当前实现]` `LogService` 负责等级过滤、有界 recent 缓存、sink 分发和 `logAppended`。它在释放内部锁后调用 sink 和发射信号；sink 生命周期由调用方管理。
 
+### 3.1 JSONL 文件配置
+
+宿主 HAL 配置中的 `logging` 对象控制 JSONL 文件 sink：
+
+| 字段 | 语义 |
+| --- | --- |
+| `filePath` | 文件路径；相对路径以 HAL 配置文件所在目录为基准。缺失或 trim 后为空时不启用文件 sink。 |
+| `fileMode` | 可选值为 `fixed` 或 `per_process`；缺失或 trim 后为空时兼容回退为 `fixed`，其他值在 `prepare()` 时返回 `logging` 错误。 |
+
+`fixed` 直接打开 `filePath` 并追加，保持旧配置行为。`per_process` 把 `filePath` 作为基础文件名，在扩展名前插入一次生成的 `<本地时间 yyyyMMdd_HHmmss_zzz>_p<PID>_<UUID>` 后缀；同一后端进程内断开、重新 `prepare()` 以及同进程内的控制器重建仍复用同一路径，重新启动后端则使用新 UUID 和新路径。两种模式均使用追加写入，不截断既有文件。文件及目录在首次成功执行到 `prepare()` 的日志初始化阶段创建；仅启动 WebSocket 监听尚不会创建日志文件。
+
 ## 4. 来源与追踪约定
 
 | `source` | 语义 |

@@ -27,6 +27,8 @@
 #include <logging/log_file_sink.h>
 #include <logging/log_service.h>
 
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -38,6 +40,7 @@
 #include <QSet>
 #include <QThread>
 #include <QTimer>
+#include <QUuid>
 
 #include <algorithm>
 #include <exception>
@@ -106,6 +109,34 @@ QString resolvedPath(const QString& configPath, const QString& value)
         return value;
     }
     return QDir(QFileInfo(configPath).absolutePath()).absoluteFilePath(value);
+}
+
+QString backendLogSessionSuffix()
+{
+    static const QString suffix = QStringLiteral("%1_p%2_%3")
+                                      .arg(QDateTime::currentDateTime().toString(
+                                          QStringLiteral("yyyyMMdd_HHmmss_zzz")))
+                                      .arg(QCoreApplication::applicationPid())
+                                      .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    return suffix;
+}
+
+QString runScopedLogPath(const QString& configuredPath, const QString& sessionSuffix)
+{
+    const QFileInfo info(configuredPath);
+    const QString fileName = info.fileName();
+    if (fileName.isEmpty() || sessionSuffix.isEmpty()) {
+        return configuredPath;
+    }
+
+    const int extensionIndex = fileName.lastIndexOf(QLatin1Char('.'));
+    const QString sessionFileName = extensionIndex > 0
+        ? QStringLiteral("%1_%2%3")
+              .arg(fileName.left(extensionIndex),
+                   sessionSuffix,
+                   fileName.mid(extensionIndex))
+        : QStringLiteral("%1_%2").arg(fileName, sessionSuffix);
+    return QDir(info.absolutePath()).filePath(sessionFileName);
 }
 
 ActionResult bizFailure(const hwtest::biz::Status& status, const QString& fallback)
@@ -482,6 +513,7 @@ public:
     TestServicePtr runner{nullptr, &hwtest::biz::destroyTestRunService};
     hwtest::logging::LogService logService;
     std::unique_ptr<hwtest::logging::JsonLineFileSink> fileSink;
+    const QString logSessionSuffix = backendLogSessionSuffix();
     ContinuousDataRecorder dataRecorder;
     PostRunAnalysisCoordinator analysisCoordinator;
     ActionResult latchedShutdownFailure;
@@ -1455,10 +1487,31 @@ ActionResult TestApplicationController::prepare()
 
     const quint64 generation = ++m_impl->generation;
 
-    const QString configuredLogPath = m_impl->halConfig.value(QStringLiteral("logging")).toMap()
+    const QVariantMap loggingConfig = m_impl->halConfig
+                                          .value(QStringLiteral("logging")).toMap();
+    const QString configuredLogPath = loggingConfig
                                           .value(QStringLiteral("filePath")).toString().trimmed();
+    const QString fileMode = loggingConfig
+                                 .value(QStringLiteral("fileMode")).toString().trimmed();
+    const QString configuredMode = fileMode.isEmpty()
+        ? QStringLiteral("fixed")
+        : fileMode;
+    if (configuredMode != QStringLiteral("fixed") &&
+        configuredMode != QStringLiteral("per_process")) {
+        const ActionResult result = failure(
+            QStringLiteral("logging"),
+            QStringLiteral("Unsupported logging.fileMode '%1'; expected 'fixed' or 'per_process'")
+                .arg(configuredMode));
+        shutdown();
+        return result;
+    }
+
     if (!configuredLogPath.isEmpty()) {
-        const QString logPath = resolvedPath(m_impl->halConfigPath, configuredLogPath);
+        const QString resolvedLogPath = resolvedPath(
+            m_impl->halConfigPath, configuredLogPath);
+        const QString logPath = configuredMode == QStringLiteral("per_process")
+            ? runScopedLogPath(resolvedLogPath, m_impl->logSessionSuffix)
+            : resolvedLogPath;
         QDir().mkpath(QFileInfo(logPath).absolutePath());
         m_impl->fileSink = std::make_unique<hwtest::logging::JsonLineFileSink>(logPath);
         if (!m_impl->fileSink->open()) {
