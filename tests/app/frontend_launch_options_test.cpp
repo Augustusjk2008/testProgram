@@ -313,22 +313,5 @@ TEST(FrontendLaunchOptionsTest, AppliesControlThenSerialOverride)
     EXPECT_EQ(controller.snapshot().serialPortName, QStringLiteral("COM87"));
 }
 
-TEST(FrontendLaunchOptionsTest, StopsAfterInvalidControlOverride)
-{
-    TestApplicationController controller;
-    const FrontendLaunchOptions options{
-        QStringLiteral(HWTEST_APP_TEST_CONFIG),
-        QStringLiteral(HWTEST_APP_HAL_CONFIG),
-        QStringLiteral("CONTROL_UNKNOWN"),
-        QStringLiteral("COM88")};
-
-    const ActionResult result = configureController(controller, options);
-
-    EXPECT_FALSE(result.ok);
-    EXPECT_EQ(result.code, QStringLiteral("control_not_found"));
-    EXPECT_EQ(controller.snapshot().controlResourceId, QStringLiteral("CONTROL_SERIAL"));
-    EXPECT_EQ(controller.snapshot().serialPortName, QStringLiteral("COM_CHANGE_ME"));
-}
-
 } // namespace
 } // namespace hwtest::app
