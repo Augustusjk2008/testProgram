@@ -26,6 +26,16 @@ QByteArray readAll(const QString& path)
     return file.readAll();
 }
 
+QVariantMap readJsonMap(const QString& path)
+{
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(readAll(path), &error);
+    EXPECT_EQ(error.error, QJsonParseError::NoError)
+        << path.toStdString() << ": " << error.errorString().toStdString();
+    EXPECT_TRUE(document.isObject()) << path.toStdString();
+    return document.object().toVariantMap();
+}
+
 QVariantMap sectionById(const QVariantMap& schema, const QString& id)
 {
     for (const QVariant& value : schema.value(QStringLiteral("sections")).toList()) {
@@ -112,6 +122,45 @@ TEST(ConfigurationServiceTest, CatalogUsesPersistedOrderAndDisablesUnregisteredF
     EXPECT_FALSE(catalog.items.at(1).enabled);
     EXPECT_TRUE(catalog.items.at(1).valid);
     EXPECT_FALSE(catalog.revision.isEmpty());
+}
+
+TEST(ConfigurationServiceTest, DoWriteSenseMapsBit2ToP04AndBit1ToP05)
+{
+    const QVariantMap hal = readJsonMap(QString::fromUtf8(HWTEST_APP_HAL_CONFIG));
+    const QVariantMap resources = hal.value(QStringLiteral("hardware")).toMap()
+                                      .value(QStringLiteral("resources")).toMap();
+    const QVariantMap tx = resources.value(
+        QStringLiteral("DUT_TX_ENABLE_SENSE")).toMap();
+    const QVariantMap attenuator = resources.value(
+        QStringLiteral("DUT_ATTENUATOR_SENSE")).toMap();
+    const QVariantMap txProperties = tx.value(QStringLiteral("properties")).toMap();
+    const QVariantMap attenuatorProperties =
+        attenuator.value(QStringLiteral("properties")).toMap();
+
+    EXPECT_EQ(txProperties.value(QStringLiteral("portNumber")).toInt(), 0);
+    EXPECT_EQ(txProperties.value(QStringLiteral("lineNumber")).toInt(), 4);
+    EXPECT_EQ(txProperties.value(QStringLiteral("connectorPin")).toInt(), 19);
+    EXPECT_EQ(attenuatorProperties.value(QStringLiteral("portNumber")).toInt(), 0);
+    EXPECT_EQ(attenuatorProperties.value(QStringLiteral("lineNumber")).toInt(), 5);
+    EXPECT_EQ(attenuatorProperties.value(QStringLiteral("connectorPin")).toInt(), 51);
+
+    const QVariantMap station = readJsonMap(
+        QDir(QStringLiteral(HWTEST_PROJECT_SOURCE_DIR))
+            .filePath(QStringLiteral("configs/mbddf_station.json")));
+    const QVariantMap stationResources =
+        station.value(QStringLiteral("resources")).toMap();
+    EXPECT_EQ(stationResources.value(QStringLiteral("DUT_TX_ENABLE_SENSE")).toMap()
+                  .value(QStringLiteral("portNumber")).toInt(),
+              0);
+    EXPECT_EQ(stationResources.value(QStringLiteral("DUT_TX_ENABLE_SENSE")).toMap()
+                  .value(QStringLiteral("lineNumber")).toInt(),
+              4);
+    EXPECT_EQ(stationResources.value(QStringLiteral("DUT_ATTENUATOR_SENSE")).toMap()
+                  .value(QStringLiteral("portNumber")).toInt(),
+              0);
+    EXPECT_EQ(stationResources.value(QStringLiteral("DUT_ATTENUATOR_SENSE")).toMap()
+                  .value(QStringLiteral("lineNumber")).toInt(),
+              5);
 }
 
 TEST(ConfigurationServiceTest, SaveRejectsStaleRevisionAndKeepsImmutableIdentity)

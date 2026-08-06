@@ -2,6 +2,7 @@
 
 #include <QMetaType>
 #include <QSet>
+#include <QStringList>
 
 #include <cmath>
 
@@ -129,10 +130,21 @@ const RunParameterSchema& doWriteSchema()
     static const RunParameterSchema schema = [] {
         RunParameterSchema result;
         result.version = QStringLiteral("1");
+        const QStringList labels{
+            QStringLiteral("DO0 舵锁使能"),
+            QStringLiteral("DO1 数控衰减器控制"),
+            QStringLiteral("DO2 数遥发送使能"),
+            QStringLiteral("DO3 #24V_EN"),
+            QStringLiteral("DO4 #DYT_5V_EN"),
+            QStringLiteral("DO5 DI_EN1（恒低）"),
+            QStringLiteral("DO6 DO_EN使能（恒低）"),
+        };
         for (int channel = 0; channel < 16; ++channel) {
             RunParameterDescriptor enabled = booleanParameter(
                 QStringLiteral("channel_enabled[%1]").arg(channel),
-                QStringLiteral("DO%1").arg(channel),
+                channel < labels.size()
+                    ? labels.at(channel)
+                    : QStringLiteral("DO%1").arg(channel),
                 channel == 3 || channel == 4);
             if (channel == 3 || channel == 4) {
                 enabled.description = QStringLiteral(

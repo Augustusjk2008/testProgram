@@ -217,11 +217,31 @@ TEST(RunParameterSchemaTest, DoWriteSchemaExposesSafeSixteenChannelMask)
     EXPECT_EQ(schema->version, QStringLiteral("1"));
     ASSERT_EQ(schema->parameters.size(), 16);
 
+    const QStringList expectedLabels{
+        QStringLiteral("DO0 舵锁使能"),
+        QStringLiteral("DO1 数控衰减器控制"),
+        QStringLiteral("DO2 数遥发送使能"),
+        QStringLiteral("DO3 #24V_EN"),
+        QStringLiteral("DO4 #DYT_5V_EN"),
+        QStringLiteral("DO5 DI_EN1（恒低）"),
+        QStringLiteral("DO6 DO_EN使能（恒低）"),
+        QStringLiteral("DO7"),
+        QStringLiteral("DO8"),
+        QStringLiteral("DO9"),
+        QStringLiteral("DO10"),
+        QStringLiteral("DO11"),
+        QStringLiteral("DO12"),
+        QStringLiteral("DO13"),
+        QStringLiteral("DO14"),
+        QStringLiteral("DO15"),
+    };
+
     for (int channel = 0; channel < 16; ++channel) {
         const RunParameterDescriptor* enabled = parameter(
             *schema, QStringLiteral("channel_enabled[%1]").arg(channel));
         ASSERT_NE(enabled, nullptr) << channel;
         EXPECT_EQ(enabled->kind, RunParameterKind::Boolean);
+        EXPECT_EQ(enabled->label, expectedLabels.at(channel));
         EXPECT_EQ(enabled->defaultValue.toBool(), channel == 3 || channel == 4);
     }
 

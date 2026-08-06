@@ -34,7 +34,7 @@
             "stopBits": 1
         },
         "DUT_ATTENUATOR_SENSE": {
-            "lineNumber": 4,
+            "lineNumber": 5,
             "portNumber": 0
         },
         "DUT_DI1_STIM": {
@@ -50,7 +50,7 @@
             "portNumber": 0
         },
         "DUT_TX_ENABLE_SENSE": {
-            "lineNumber": 3,
+            "lineNumber": 4,
             "portNumber": 0
         },
         "HELM_DIR1_SENSE": {

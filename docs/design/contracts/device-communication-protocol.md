@@ -276,7 +276,7 @@ DDS 时间来自设备单调时钟而非 UTC。宿主保留每条原始值为 `d
 
 `DO_WRITE` 与 `HELM_BOARD_TEST` 都只声明 BIZ `single`；后者的 `automatic`/`manual` 是 `mbddf.helm_board_test` 的运行参数，不是额外的 BIZ run mode。
 
-- `mbddf.do_write` 的运行参数投影 16 个原始输出位。DO5/DO6 必须为 0；低有效电源控制 DO3/DO4 默认原始位为 1，其余默认 0。每轮只发送一次用户掩码，要求 DUT `applied_state[0]` 完整等于指令且 `applied_state[1]==0`；成功应答后固定等待 `100 ms`，再读取 PXI-6259 的 `DUT_TX_ENABLE_SENSE` 与 `DUT_ATTENUATOR_SENSE`（物理 P0.3/P0.4），分别验证 bit2 与 bit1。其他位只有 DUT 回读证据，不得描述为外部物理闭环。协议、DUT 或夹具 I/O 错误为 `Error`，任一受检回读不一致为 `Fail`。该流程在运行完成、停止、断开或退出时均不发送额外 DUT DO 复位，产品保持最后一次已应用状态。
+- `mbddf.do_write` 的运行参数投影 16 个原始输出位。DO5/DO6 必须为 0；低有效电源控制 DO3/DO4 默认原始位为 1，其余默认 0。每轮只发送一次用户掩码，要求 DUT `applied_state[0]` 完整等于指令且 `applied_state[1]==0`；成功应答后固定等待 `100 ms`，再读取 PXI-6259 的 `DUT_TX_ENABLE_SENSE` 与 `DUT_ATTENUATOR_SENSE`（物理 P0.4/P0.5），分别验证 bit2 与 bit1。其他位只有 DUT 回读证据，不得描述为外部物理闭环。协议、DUT 或夹具 I/O 错误为 `Error`，任一受检回读不一致为 `Fail`。该流程在运行完成、停止、断开或退出时均不发送额外 DUT DO 复位，产品保持最后一次已应用状态。
 - `mbddf.helm_board_test` 的 `manual` 只编码四路 PWM/方向参数并交换一次 `HELM_BOARD_TEST 07/02`。它不打开、读取或写入 PXI-6259/PXI-6733，不采样、不写 AO；结果只有这次协议响应及单点完成状态。
 - `automatic` 必须绑定两张夹具卡，按互相独立的方向掩码 `0`、`1`、`2`、`4`、`8` 执行 5 点方向检查；随后对四个 PWM 通道各执行 `1`、`5`、`10`、`25`、`50`、`75`、`90`、`95`、`99 %` 九点检查，共 36 点。PWM 由 PXI-6259 以 `1.25 MS/s`、每通道 `7500` 样本采集，指令/实测占空比误差容差为 `±1 pp`。
 - 自动反馈检查由 PXI-6733 的 AO0..AO3 逐通道驱动 `0.0..5.0 V`、`0.5 V` 步进，共 4 × 11 = 44 点；每个点记录指令、DUT 读回、误差和 `±0.05 V` 容差。自动模式的总点数为 `5 + 36 + 44 = 85`。

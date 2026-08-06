@@ -216,15 +216,15 @@ NI 的 on-demand 数字路径按 `portNumber`、方向和连续 `lineNumber` 分
 | 用途 | 逻辑资源 | 板卡物理端点 | 端子 | 量程/说明 |
 | --- | --- | --- | --- | --- |
 | DI 刺激 | `DUT_DI3_STIM`、`DUT_DI1_STIM`、`DUT_DI2_STIM` | PXI-6259 P0.0、P0.1、P0.2 | 52、17、49 | 数字输出；DI 刺激专用 |
-| DO_WRITE 发送使能读回 | `DUT_TX_ENABLE_SENSE` | PXI-6259 P0.3 | 47 | 数字输入 |
-| DO_WRITE 衰减器读回 | `DUT_ATTENUATOR_SENSE` | PXI-6259 P0.4 | 19 | 数字输入 |
+| DO_WRITE 发送使能读回 | `DUT_TX_ENABLE_SENSE` | PXI-6259 P0.4 | 19 | 数字输入；验证 bit2 |
+| DO_WRITE 衰减器读回 | `DUT_ATTENUATOR_SENSE` | PXI-6259 P0.5 | 51 | 数字输入；验证 bit1 |
 | PWM 采样 | `HELM_PWM1..4_SENSE` | PXI-6259 `ai0..ai3` | 68、33、65、30 | RSE，0..5 V |
 | 方向采样 | `HELM_DIR1..4_SENSE` | PXI-6259 `ai4..ai7` | 28、60、25、57 | RSE，0..5 V |
 | 反馈激励 | `HELM_FK1..4_STIM` | PXI-6733 `ao0..ao3` | 22、21、57、25 | 0..5 V；safe state 全部为 0.0 V |
 
 应用组合根在 `prepare` 阶段打开当前配置无条件需要的夹具：DI 刺激和 `mbddf.do_write` 都打开并保持 PXI-6259，使 Adapter DLL、设备身份、资源和 safe state 错误统一在 Web“连接设备”阶段返回；`start` 不得首次发现 DO fixture 缺失。`mbddf.helm_board_test` 的夹具需求仍由 `test_mode` 决定：`automatic` 使用 PXI-6259/PXI-6733，`manual` 不打开两张卡。自动舵机测试在开始前和任何终态都尽力将四路 AO 清零；清零会逐路尝试 FK1..FK4，即使某路失败也继续其余通道并保留首个错误。HAL 关闭也按已配置 safe state 尽力收尾。这些是软件路径，不保证台架已达到物理零电压，也不改变 DUT DO 保留语义。
 
-`configs/mbddf_pc_hal.json` 当前只是一份部署模板：两张卡的 `serialNumber` 及 `hardware.devices[].properties.vendor.ni.deviceName` 都为 `CONFIGURE_ME`。投影解析明确拒绝占位 serial；占位 MAX 设备名也不会匹配已安装板卡。真机前必须在隔离、明确授权的台架提供实际 `HWTEST_NI_DAQMX_ADAPTER_PATH`/NI SDK、匹配 PXI-6259/PXI-6733 的 MAX 设备名和非占位序列号，并核对上述端点接线、共地、电平、量程与隔离。须记录 PXI-6259 P0.3/P0.4 读回和 AI 采样参数、PXI-6733 AO0..AO3 的输出及正常/异常收尾清零，并以独立参考测量、`rawData.boardTest` 与前端截图形成真机证据。Fake NI、模板解析或构建成功均不满足这些前置条件。
+`configs/mbddf_pc_hal.json` 当前只是一份部署模板：两张卡的 `serialNumber` 及 `hardware.devices[].properties.vendor.ni.deviceName` 都为 `CONFIGURE_ME`。投影解析明确拒绝占位 serial；占位 MAX 设备名也不会匹配已安装板卡。真机前必须在隔离、明确授权的台架提供实际 `HWTEST_NI_DAQMX_ADAPTER_PATH`/NI SDK、匹配 PXI-6259/PXI-6733 的 MAX 设备名和非占位序列号，并核对上述端点接线、共地、电平、量程与隔离。须记录 PXI-6259 P0.4/P0.5 读回和 AI 采样参数、PXI-6733 AO0..AO3 的输出及正常/异常收尾清零，并以独立参考测量、`rawData.boardTest` 与前端截图形成真机证据。Fake NI、模板解析或构建成功均不满足这些前置条件。
 
 目标生命周期：
 
