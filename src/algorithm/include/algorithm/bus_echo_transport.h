@@ -12,8 +12,8 @@ namespace hwtest::algorithm::mbddf {
 
 // Coordinates BUS_ECHO across the MB_DDF control channel and the selected
 // physical COM link. The DUT sends the request payload on the physical link;
-// the PC reads exactly one payload and writes those bytes back before the
-// control response is collected.
+// the PC reads and validates its complete physical frame, echoes that frame
+// unchanged, and then collects the control response.
 class BusEchoTransport final : public IByteTransport {
 public:
     BusEchoTransport(std::unique_ptr<IByteTransport> controlTransport,

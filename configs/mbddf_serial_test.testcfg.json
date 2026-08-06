@@ -74,7 +74,7 @@
   "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 5000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
   "reportFields": {
     "title": "串口测试",
-    "description": "选择 COM1、COM2 或 COM4 后，内部回环由 DUT 一次执行全部次数；PC-DUT 回显由独立本地串口逐轮完成 114 字节往返。COM3 为控制口。",
+    "description": "选择 COM1、COM2 或 COM4 后，内部回环由 DUT 一次执行全部次数；PC-DUT 回显由独立本地串口逐轮原样回送 119 字节物理帧并校验其中 114 字节 payload。COM3 为控制口。",
     "supportedRunModes": ["single"],
     "measurements": [
       {"id": "status", "label": "设备状态", "unit": "", "primary": false},

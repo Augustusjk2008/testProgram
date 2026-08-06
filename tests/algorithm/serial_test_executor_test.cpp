@@ -285,7 +285,13 @@ public:
         if (!decodeFrame(frame, &payload, &error) || payload.size() < 120) {
             return failed(error.isEmpty() ? QStringLiteral("invalid echo request") : error);
         }
-        m_raw->queuePayload(payload.mid(6, 114));
+        QByteArray auxiliaryFrame;
+        if (!encodeFrame(payload.mid(6, 114), &auxiliaryFrame, &error)) {
+            return failed(error.isEmpty()
+                              ? QStringLiteral("unable to frame auxiliary echo payload")
+                              : error);
+        }
+        m_raw->queuePayload(auxiliaryFrame);
         m_response = responseFor(*m_catalog, frame,
                                  QStringLiteral("bus_echo_test_request"),
                                  QStringLiteral("bus_echo_test_response"));
@@ -408,6 +414,13 @@ TEST(SerialTestExecutorTest, EchoLoops0302WithFiveSecondBudgetAndAggregatesSampl
     EXPECT_EQ(result.value.verdict, hwtest::biz::TestVerdict::Pass);
     EXPECT_EQ(transportView->writes, 3);
     ASSERT_EQ(raw.writtenPayloads.size(), 3);
+    for (const QByteArray& echoedFrame : raw.writtenPayloads) {
+        EXPECT_EQ(echoedFrame.size(), 119);
+        QByteArray echoedPayload;
+        ASSERT_TRUE(decodeFrame(echoedFrame, &echoedPayload, &error))
+            << error.toStdString();
+        EXPECT_EQ(echoedPayload.size(), 114);
+    }
     ASSERT_EQ(observer.samples.size(), 3);
     EXPECT_EQ(observer.samples.at(0).cycleIndex, 1u);
     EXPECT_EQ(observer.samples.at(2).cycleIndex, 3u);

@@ -166,7 +166,8 @@ DH、舵控板级输出、DDS 舵机连续实测和 SPI Flash 写操作；本版
 硬件测试模式的关键边界：link 0/1/2/3 分别对应 COM1/2/3/4，只有 link 0/1/3 可测；
 link 2 是 COM3 控制口，必须在打开硬件前返回 `CHANNEL_INVALID`，其余 link 也拒绝。
 BUS_LOOP 使用内部 `loopback=true`，BUS_ECHO 使用 `loopback=false`：DUT 每个请求只发送
-一次完整 114 字节，独立 PC/夹具必须在 5 秒内原样回发，长度或内容不符即失败。BUS 不再
+一次完整 114 字节 payload，线上对应 119 字节物理帧；独立 PC/夹具必须在 5 秒内原样
+回发整帧，长度或内容不符即失败。BUS 不再
 提供网口或 SPI Flash 路径，SPI Flash 仅由独立 `SPI_FLASH_TEST` 处理。DH 路径先配置
 DH0=80 ms、DH1..22=63 ms 的 23 路脉宽，再按电源使能、回线使能、Multiple 模式和通道位图执行 DH 控制；23 路遥测电压
 从 ADS1258 `raw[1]`、`raw[4..25]` 读取，板端完成分段定标后按

@@ -58,7 +58,7 @@
   "runtimeConfig": {"parallelEnabled": false, "maxParallel": 1, "defaultTimeoutMs": 5000, "defaultRetryCount": 0, "retryIntervalMs": 0, "taskPriorityDefault": 2, "stopOnFirstFailure": true, "allowResume": false},
   "reportFields": {
     "title": "PC 与 DUT 串口回显测试",
-    "description": "每个 pc_periodic 周期在所选 COM1、COM2 或 COM4 完成一次 114 字节 PC↔DUT 往返并逐字节校验；COM3 为控制口。",
+    "description": "每个 pc_periodic 周期在所选 COM1、COM2 或 COM4 原样回送 119 字节物理帧，并逐字节校验其中 114 字节 payload；COM3 为控制口。",
     "supportedRunModes": ["pc_periodic"],
     "measurements": [
       {"id": "status", "label": "设备状态", "unit": "", "primary": false},

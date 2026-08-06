@@ -59,7 +59,7 @@ BIZ -> 算法层（CSV、帧、CRC、命令/序号、响应匹配和判定数据
 | `SystemStatusAlgorithmExecutor` | 执行 `mbddf.system_status`，并提供固定命令执行的共享生命周期 |
 | `ElecHealthStatusAlgorithmExecutor` | 执行 `mbddf.elec_health_status` 单步算法 |
 | `MbdDfExchangeAlgorithmExecutor` | 按配置执行 `MEMPERF_TEST`、`SPI_FLASH_TEST`、`DH_PULSE_CONFIG` 等单步请求/响应；可按配置追加一个清理请求（当前用于 `TIMER_JITTER_STOP`） |
-| 串口复合执行器 / `BusEchoTransport` | 在同一个 BIZ `single` 中按模式执行一次 `03/01` 内部回环或多轮 `03/02` 外部回显；每轮回显由 `BusEchoTransport` 在 5 秒事务预算内协调产品控制资源和用户选择的辅助串口，短读累积并原样回写 114 字节后读取控制响应 |
+| 串口复合执行器 / `BusEchoTransport` | 在同一个 BIZ `single` 中按模式执行一次 `03/01` 内部回环或多轮 `03/02` 外部回显；每轮回显由 `BusEchoTransport` 在 5 秒事务预算内协调产品控制资源和用户选择的辅助串口，短读累积、校验并原样回写一帧 119 字节物理帧（114 字节 payload 加 5 字节帧封装）后读取控制响应 |
 | `DhIgniteStreamAlgorithmExecutor` | 执行一次 `06/02` 请求和有限多帧回告；投影 `delay_frames` 基线/点火后分界、U16 回绕序号和理想相对时间轴，受理后不发送 STOP/ABORT |
 | `ImuStreamAlgorithmExecutor` / `HelmStreamAlgorithmExecutor` | 分别执行惯测与舵机 `device_stream` 的一次 START、持续主动反馈和一次 STOP |
 | `RunParameterSchema` | 由算法 ID 声明运行期可编辑字段、默认值、显示条件和语义边界；合并配置值与本次覆盖，拒绝未知、非有限或越界值 |
@@ -224,7 +224,7 @@ index,length,type,name_cn,name_en,lsb,default,is_valid
 
 | 配置 | algorithmId | 请求/响应 | 当前参数和收尾语义 |
 | --- | --- | --- | --- |
-| `configs/mbddf_serial_test.testcfg.json` | `mbddf.serial_test` | `03/01` 回环与 `03/02` 回显请求/响应 | 只允许 link 0/1/3（COM1/COM2/COM4），`test_mode` 为 0/1，统一 `cycle_count=1..100000`、默认 1000且只支持 `single`。回环一次请求把次数映射为 `total_count`，DUT 使用 `loopback=true`，完成/失败数取 DUT 回告；回显逐轮发送固定 114 字节，PC 从系统枚举中选择独立本地串口短读累积并原样回写，每轮再校验控制响应与双向字节，deadline 为 5 秒，轮间检查停止。应用层拒绝未枚举的辅助串口和主辅同口；最终结果保留完整聚合计数，但逐轮诊断最多保存前 15 轮和最后一轮 |
+| `configs/mbddf_serial_test.testcfg.json` | `mbddf.serial_test` | `03/01` 回环与 `03/02` 回显请求/响应 | 只允许 link 0/1/3（COM1/COM2/COM4），`test_mode` 为 0/1，统一 `cycle_count=1..100000`、默认 1000且只支持 `single`。回环一次请求把次数映射为 `total_count`，DUT 使用 `loopback=true`，完成/失败数取 DUT 回告；回显逐轮发送固定 114 字节 payload，PC 从系统枚举中选择独立本地串口，短读累积、校验并原样回写对应的 119 字节完整物理帧，每轮再校验控制响应与双向 payload，deadline 为 5 秒，轮间检查停止。应用层拒绝未枚举的辅助串口和主辅同口；最终结果保留完整聚合计数，但逐轮诊断最多保存前 15 轮和最后一轮 |
 | `configs/mbddf_memperf.testcfg.json` | `mbddf.memperf` | `memperf_test_request/response` | `memperf_type`、`length`、`seed` 由 `step.parameters.protocol.requestValues` 提供；响应 `error_count` 默认要求为 0 |
 | `configs/mbddf_spi_flash.testcfg.json` | `mbddf.spi_flash` | `spi_flash_test_request/response` | 空请求；DUT 擦写固定隔离 4 KiB 测试区，不备份、不恢复，配置仅支持单次 |
 | `configs/mbddf_dh_pulse_config.testcfg.json` | `mbddf.dh_pulse_config` | `dh_pulse_config_request/response` | `config_enable` 与 23 路 `pulse_width[]` 写入后逐项回读并判定 |

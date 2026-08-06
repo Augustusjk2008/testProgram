@@ -8,6 +8,8 @@
 namespace hwtest::algorithm::mbddf {
 namespace {
 
+constexpr int kPhysicalFrameOverheadBytes = 5;
+
 TransportResult failed(const QString& message,
                        TransportResult::Error errorCode = TransportResult::Error::Io)
 {
@@ -240,21 +242,30 @@ TransportResult BusEchoTransport::transact(const QByteArray& frame, int timeoutM
         frame, remainingMs(timer, timeoutMs));
     if (!written.ok) return written;
 
-    QByteArray received;
-    received.reserve(m_payloadBytes);
-    while (received.size() < m_payloadBytes) {
+    const int physicalFrameBytes = m_payloadBytes + kPhysicalFrameOverheadBytes;
+    QByteArray receivedFrame;
+    receivedFrame.reserve(physicalFrameBytes);
+    while (receivedFrame.size() < physicalFrameBytes) {
         const int remaining = remainingMs(timer, timeoutMs);
         if (remaining <= 0) {
             return failed(QStringLiteral("BUS_ECHO auxiliary read timed out after %1 of %2 bytes")
-                              .arg(received.size()).arg(m_payloadBytes),
+                              .arg(receivedFrame.size()).arg(physicalFrameBytes),
                           TransportResult::Error::Timeout);
         }
         const hwtest::hal::HalResult<QByteArray> read = m_rawChannel->readControl(
-            m_rawResourceId, m_payloadBytes - received.size(), timedOptions());
+            m_rawResourceId, physicalFrameBytes - receivedFrame.size(), timedOptions());
         if (!read.ok()) {
             return failed(read.status, QStringLiteral("BUS_ECHO auxiliary read failed"));
         }
-        received.append(read.value);
+        receivedFrame.append(read.value);
+    }
+
+    QByteArray receivedPayload;
+    QString auxiliaryProtocolError;
+    if (!decodeFrame(receivedFrame, &receivedPayload, &auxiliaryProtocolError) ||
+        receivedPayload.size() != m_payloadBytes) {
+        return failed(QStringLiteral("BUS_ECHO auxiliary physical frame is invalid: %1")
+                          .arg(auxiliaryProtocolError));
     }
 
     if (remainingMs(timer, timeoutMs) <= 0) {
@@ -262,7 +273,7 @@ TransportResult BusEchoTransport::transact(const QByteArray& frame, int timeoutM
                       TransportResult::Error::Timeout);
     }
     const hwtest::hal::HalStatus echoed = m_rawChannel->writeControl(
-        m_rawResourceId, received, timedOptions());
+        m_rawResourceId, receivedFrame, timedOptions());
     if (!echoed.ok()) {
         return failed(echoed, QStringLiteral("BUS_ECHO auxiliary write failed"));
     }
@@ -270,10 +281,10 @@ TransportResult BusEchoTransport::transact(const QByteArray& frame, int timeoutM
     const TransportResult response = m_controlTransport->readFrame(
         remainingMs(timer, timeoutMs));
     if (!response.ok) return response;
-    if (received != expectedPayload) {
+    if (receivedPayload != expectedPayload) {
         int mismatchIndex = 0;
-        while (mismatchIndex < received.size() &&
-               received.at(mismatchIndex) == expectedPayload.at(mismatchIndex)) {
+        while (mismatchIndex < receivedPayload.size() &&
+               receivedPayload.at(mismatchIndex) == expectedPayload.at(mismatchIndex)) {
             ++mismatchIndex;
         }
         return failed(QStringLiteral("BUS_ECHO payload mismatch at byte %1")

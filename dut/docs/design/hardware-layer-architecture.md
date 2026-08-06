@@ -652,7 +652,8 @@ PC 只显示 `activate_bits.bit0` 并命名为“BC激活好”；该位读取 D
 - BUS_LOOP 为内部 `loopback=true` 收发，`total_count` 只允许 `1..100000`。每轮接收
   最多等待 5 秒，只有完成次数严格等于请求且错误数为 0 才成功。
 - BUS_ECHO 为 `loopback=false` 的单次外部回显：DUT 发送请求中的 114 字节，独立 PC/夹具
-  必须在 5 秒内原样回发。长度或任一字节不符均失败，响应保留实际接收字节。连续轮次由
+  必须在 5 秒内原样回发对应的 119 字节完整物理帧；FPGA 校验并剥离 5 字节帧封装后，
+  C++ 比较 114 字节 payload。长度或任一字节不符均失败，响应保留实际接收字节。连续轮次由
   根宿主 `mbddf.serial_test` 在同一次 BIZ `single` 运行的 `executeStep()` 中依次发起。
 - BUS 不再包含 UDP 或 SPI Flash；独立 SPI Flash 测试仍走固定隔离测试区的
   `SPI_FLASH_TEST`。

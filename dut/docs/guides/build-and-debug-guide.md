@@ -296,7 +296,7 @@ DDS Core 仅供舵机连续实测 bridge 使用，同一构建另产出用户独
 状态恢复、自动重试、夹具检测或报告导出；只能在已隔离且允许协议所含写操作的目标板运行。
 总线 link 0/1/2/3 分别对应 COM1/2/3/4；COM3 控制口占用 link 2，该 link 必须在打开
 硬件前返回 `CHANNEL_INVALID`，只有 link 0/1/3 可测。BUS_LOOP 使用内部回环；BUS_ECHO
-由独立 PC/夹具在被测 COM 原样回发 114 字节。
+由独立 PC/夹具在被测 COM 原样回发 119 字节完整物理帧，DUT 比较其中的 114 字节 payload。
 
 `debug.ps1 -Run -HardwareTest` 只部署并运行产品测试服务，不代替用户启动或停止
 `MB_DDF_v2_HelmControl`。两者可按任意顺序独立运行，`HELM_BOARD_TEST 07/02` 与
