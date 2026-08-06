@@ -106,7 +106,7 @@ export function DigitalStimulusPanel({
   const backendError = optimistic.errorCode
     ? `${optimistic.errorCode}${optimistic.message ? `: ${optimistic.message}` : ''}`
     : ''
-  const liveMessage = queueError || backendError || optimistic.message || `版本 ${optimistic.revision}`
+  const liveMessage = queueError || backendError || optimistic.message
   const nowUs = Date.now() * 1000
   const diagnostic = readbackGroup(latestSample, 1)
 

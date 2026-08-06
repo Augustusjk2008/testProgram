@@ -47,4 +47,33 @@ describe('OverviewPage digital stimulus', () => {
     expect(markup).toContain('<strong>DI1</strong>')
     expect(markup).toContain('<strong>DI2</strong>')
   })
+
+  it('does not expose the internal digital stimulus revision', () => {
+    sessionHooks.useSession.mockReturnValue({
+      connectionState: 'connected',
+      resetDigitalStimulus: vi.fn(),
+      setDigitalStimulus: vi.fn(),
+      snapshot: {
+        ...EMPTY_SNAPSHOT,
+        digitalStimulus: {
+          available: true,
+          configured: true,
+          switches: [
+            { switchId: 'di3', dutBit: 3, label: 'DI3', activeLevel: 'High' },
+          ],
+          appliedMask: 0,
+          revision: 7,
+          lastWriteTimestampUs: 0,
+          settlingMs: 100,
+          errorCode: '',
+          message: '',
+        },
+      },
+    })
+    sessionHooks.useTelemetry.mockReturnValue({ latestSample: null })
+
+    const markup = renderToStaticMarkup(<OverviewPage />)
+
+    expect(markup).not.toContain('版本 7')
+  })
 })
