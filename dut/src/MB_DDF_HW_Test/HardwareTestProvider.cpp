@@ -134,7 +134,8 @@ struct BusStats {
 };
 
 template <typename Exchange>
-ProductErrorCode run_bus_iterations(uint32_t count,
+ProductErrorCode run_bus_iterations(unsigned com_index, bool loopback,
+                                    uint32_t count,
                                     std::span<const uint8_t> fixed_payload,
                                     Exchange&& exchange, BusStats& stats) {
     const auto start = Clock::now();
@@ -159,13 +160,52 @@ ProductErrorCode run_bus_iterations(uint32_t count,
         }
         // 多给一个字节，使 COM 接收能显式检测“比期望多 1 字节”。
         std::vector<uint8_t> received(transmitted.size() + 1u);
-        const auto error = exchange(transmitted, received);
+        LOG_DEBUG << "[HW-TEST][SERIAL] 轮次开始：mode="
+                  << (loopback ? "loopback" : "echo")
+                  << "，com=COM" << (com_index + 1)
+                  << "，round=" << (iteration + 1) << "/" << count
+                  << "，tx_bytes=" << transmitted.size()
+                  << "，tx_first=0x" << std::hex
+                  << static_cast<unsigned>(transmitted.front())
+                  << "，tx_last=0x"
+                  << static_cast<unsigned>(transmitted.back()) << std::dec;
+        const auto error = exchange(iteration, transmitted, received);
         if (error != ProductErrorCode::Ok) {
             commit_stats();
+            LOG_DEBUG << "[HW-TEST][SERIAL] 轮次失败：mode="
+                      << (loopback ? "loopback" : "echo")
+                      << "，com=COM" << (com_index + 1)
+                      << "，round=" << (iteration + 1) << "/" << count
+                      << "，err_code=0x" << std::hex
+                      << static_cast<uint16_t>(error) << std::dec
+                      << "，completed=" << stats.total_count
+                      << "，errors=" << stats.error_count
+                      << "，elapsed_ms=" << stats.elapsed_ms;
             return error;
         }
-        Detail::record_bus_exchange(counts, transmitted, received,
-                                    stats.last_received);
+        const bool matches = Detail::record_bus_exchange(
+            counts, transmitted, received, stats.last_received);
+        LOG_DEBUG << "[HW-TEST][SERIAL] 轮次结束：mode="
+                  << (loopback ? "loopback" : "echo")
+                  << "，com=COM" << (com_index + 1)
+                  << "，round=" << (iteration + 1) << "/" << count
+                  << "，rx_bytes=" << received.size()
+                  << "，match=" << (matches ? "true" : "false")
+                  << "，errors=" << counts.error_count;
+        if (!matches) {
+            size_t mismatch_index = 0;
+            const size_t common_size = std::min(transmitted.size(), received.size());
+            while (mismatch_index < common_size &&
+                   transmitted[mismatch_index] == received[mismatch_index]) {
+                ++mismatch_index;
+            }
+            LOG_DEBUG << "[HW-TEST][SERIAL] 数据不一致：com=COM"
+                      << (com_index + 1)
+                      << "，round=" << (iteration + 1) << "/" << count
+                      << "，first_mismatch=" << mismatch_index
+                      << "，expected_bytes=" << transmitted.size()
+                      << "，actual_bytes=" << received.size();
+        }
     }
     commit_stats();
     return ProductErrorCode::Ok;
@@ -180,46 +220,114 @@ ProductErrorCode run_com_bus(unsigned com_index, uint32_t count,
         com_index == Detail::kControlComIndex) {
         return ProductErrorCode::ChannelInvalid;
     }
+    LOG_DEBUG << "[HW-TEST][SERIAL] 准备串口：mode="
+              << (loopback ? "loopback" : "echo")
+              << "，com=COM" << (com_index + 1)
+              << "，offset=0x" << std::hex << offsets[com_index] << std::dec
+              << "，event=" << com_index
+              << "，rounds=" << count;
     HW::XdmaTransport transport({std::string(kXdmaDevice), offsets[com_index],
                                  Detail::kComMapLength, -1, -1,
                                  static_cast<int>(com_index)});
     const auto opened = transport.open();
     if (!opened) {
+        LOG_DEBUG << "[HW-TEST][SERIAL] 打开串口失败：com=COM"
+                  << (com_index + 1)
+                  << "，status=" << static_cast<int>(opened.status().code)
+                  << "，errno=" << opened.status().errno_value
+                  << "，message=" << opened.status().message;
         return status_error(opened.status());
     }
     HW::ComDevice device(transport);
     const auto config = Detail::bus_com_config(loopback);
     const auto configured = device.configure(config);
     if (!configured) {
+        LOG_DEBUG << "[HW-TEST][SERIAL] 配置串口失败：com=COM"
+                  << (com_index + 1)
+                  << "，status=" << static_cast<int>(configured.status().code)
+                  << "，message=" << configured.status().message;
         return status_error(configured.status());
     }
     const auto cleared = device.clear_error_status();
     if (!cleared) {
+        LOG_DEBUG << "[HW-TEST][SERIAL] 清除串口错误失败：com=COM"
+                  << (com_index + 1)
+                  << "，status=" << static_cast<int>(cleared.status().code)
+                  << "，message=" << cleared.status().message;
         return status_error(cleared.status());
     }
     const auto enabled = device.enable_receive();
     if (!enabled) {
+        LOG_DEBUG << "[HW-TEST][SERIAL] 使能串口接收失败：com=COM"
+                  << (com_index + 1)
+                  << "，status=" << static_cast<int>(enabled.status().code)
+                  << "，message=" << enabled.status().message;
         return status_error(enabled.status());
     }
+    LOG_DEBUG << "[HW-TEST][SERIAL] 串口已就绪：mode="
+              << (loopback ? "loopback" : "echo")
+              << "，com=COM" << (com_index + 1)
+              << "，baud_counter=0x" << std::hex << config.baudrate_counter
+              << "，byte_format=0x"
+              << static_cast<unsigned>(config.format.byte_format) << std::dec
+              << "，header_bytes="
+              << static_cast<unsigned>(config.frame.send_header_length)
+              << "，length_bytes="
+              << static_cast<unsigned>(config.frame.send_length_bytes);
 
     return run_bus_iterations(
-        count, payload,
-        [&](std::span<const uint8_t> transmitted,
+        com_index, loopback, count, payload,
+        [&](uint32_t iteration, std::span<const uint8_t> transmitted,
             std::vector<uint8_t>& received) -> ProductErrorCode {
             const auto sent = device.send({transmitted.data(), transmitted.size()});
-            if (!sent || sent.value() != transmitted.size()) {
-                return sent ? ProductErrorCode::TaskExecFailed : status_error(sent.status());
+            if (!sent) {
+                LOG_DEBUG << "[HW-TEST][SERIAL] 发送失败：com=COM"
+                          << (com_index + 1)
+                          << "，round=" << (iteration + 1) << "/" << count
+                          << "，status=" << static_cast<int>(sent.status().code)
+                          << "，message=" << sent.status().message;
+                return status_error(sent.status());
             }
+            if (sent.value() != transmitted.size()) {
+                LOG_DEBUG << "[HW-TEST][SERIAL] 发送长度异常：com=COM"
+                          << (com_index + 1)
+                          << "，round=" << (iteration + 1) << "/" << count
+                          << "，expected=" << transmitted.size()
+                          << "，actual=" << sent.value();
+                return ProductErrorCode::TaskExecFailed;
+            }
+            LOG_DEBUG << "[HW-TEST][SERIAL] 发送完成，等待回帧：com=COM"
+                      << (com_index + 1)
+                      << "，round=" << (iteration + 1) << "/" << count
+                      << "，tx_bytes=" << sent.value()
+                      << "，timeout_us=" << Detail::kBusReceiveTimeoutUs;
             const auto result = device.receive(
                 {received.data(), received.size()},
                 HW::Timeout::after_us(Detail::kBusReceiveTimeoutUs));
             if (!result) {
+                LOG_DEBUG << "[HW-TEST][SERIAL] 接收失败：com=COM"
+                          << (com_index + 1)
+                          << "，round=" << (iteration + 1) << "/" << count
+                          << "，status=" << static_cast<int>(result.status().code)
+                          << "，errno=" << result.status().errno_value
+                          << "，message=" << result.status().message;
                 return status_error(result.status());
             }
             if (result.value() == 0) {
+                LOG_DEBUG << "[HW-TEST][SERIAL] 接收超时或无完整帧：com=COM"
+                          << (com_index + 1)
+                          << "，round=" << (iteration + 1) << "/" << count;
                 return ProductErrorCode::TaskExecFailed;
             }
             received.resize(result.value());
+            LOG_DEBUG << "[HW-TEST][SERIAL] 接收完成：com=COM"
+                      << (com_index + 1)
+                      << "，round=" << (iteration + 1) << "/" << count
+                      << "，rx_bytes=" << received.size()
+                      << "，rx_first=0x" << std::hex
+                      << static_cast<unsigned>(received.front())
+                      << "，rx_last=0x"
+                      << static_cast<unsigned>(received.back()) << std::dec;
             return ProductErrorCode::Ok;
         },
         stats);
@@ -942,15 +1050,30 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
         }
         BusStats stats{};
         const auto requested_count = static_cast<uint32_t>(*total);
+        const auto request_sequence = request.get_unsigned("seq").value_or(0);
+        LOG_DEBUG << "[HW-TEST][SERIAL] BUS_LOOP 开始：link_id="
+                  << static_cast<unsigned>(link_id)
+                  << "，com=COM" << (static_cast<unsigned>(link_id) + 1)
+                  << "，seq=" << request_sequence
+                  << "，requested_count=" << requested_count;
         const auto error = run_bus(link_id, requested_count, {}, true, stats);
         (void)response.set_unsigned("error_count", stats.error_count);
         (void)response.set_unsigned("total_count", stats.total_count);
         (void)response.set_unsigned("elapsed_ms", stats.elapsed_ms);
-        if (error != ProductErrorCode::Ok) {
-            return error;
-        }
-        return Detail::bus_completion_error(
-            requested_count, {stats.error_count, stats.total_count});
+        const auto completion = error == ProductErrorCode::Ok
+            ? Detail::bus_completion_error(
+                  requested_count, {stats.error_count, stats.total_count})
+            : error;
+        LOG_DEBUG << "[HW-TEST][SERIAL] BUS_LOOP 结束：link_id="
+                  << static_cast<unsigned>(link_id)
+                  << "，com=COM" << (static_cast<unsigned>(link_id) + 1)
+                  << "，seq=" << request_sequence
+                  << "，result=0x" << std::hex
+                  << static_cast<uint16_t>(completion) << std::dec
+                  << "，completed=" << stats.total_count << "/" << requested_count
+                  << "，errors=" << stats.error_count
+                  << "，elapsed_ms=" << stats.elapsed_ms;
+        return completion;
     }
 
     ProductErrorCode handle_bus_echo(const ProductMessage& request,
@@ -974,6 +1097,16 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
             payload[index] = static_cast<uint8_t>(*value);
         }
         BusStats stats{};
+        const auto request_sequence = request.get_unsigned("seq").value_or(0);
+        LOG_DEBUG << "[HW-TEST][SERIAL] BUS_ECHO 开始：link_id="
+                  << static_cast<unsigned>(link_id)
+                  << "，com=COM" << (static_cast<unsigned>(link_id) + 1)
+                  << "，seq=" << request_sequence
+                  << "，payload_bytes=" << payload.size()
+                  << "，tx_first=0x" << std::hex
+                  << static_cast<unsigned>(payload.front())
+                  << "，tx_last=0x" << static_cast<unsigned>(payload.back())
+                  << std::dec;
         const auto error = run_bus(link_id, 1, payload, false, stats);
         if (!stats.last_received.empty()) {
             for (size_t index = 0;
@@ -982,11 +1115,21 @@ struct HardwareTestProvider::Impl : IK7TemperatureSource {
                                             stats.last_received[index]);
             }
         }
-        if (error != ProductErrorCode::Ok) {
-            return error;
-        }
-        return Detail::bus_completion_error(
-            1, {stats.error_count, stats.total_count});
+        const auto completion = error == ProductErrorCode::Ok
+            ? Detail::bus_completion_error(
+                  1, {stats.error_count, stats.total_count})
+            : error;
+        LOG_DEBUG << "[HW-TEST][SERIAL] BUS_ECHO 结束：link_id="
+                  << static_cast<unsigned>(link_id)
+                  << "，com=COM" << (static_cast<unsigned>(link_id) + 1)
+                  << "，seq=" << request_sequence
+                  << "，result=0x" << std::hex
+                  << static_cast<uint16_t>(completion) << std::dec
+                  << "，completed=" << stats.total_count << "/1"
+                  << "，errors=" << stats.error_count
+                  << "，rx_bytes=" << stats.last_received.size()
+                  << "，elapsed_ms=" << stats.elapsed_ms;
+        return completion;
     }
 
     ProductErrorCode handle_di(ProductMessage& response) {

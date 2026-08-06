@@ -114,7 +114,7 @@ git diff --check
 
 ### 4.4 DUT 侧
 
-`dut/` 使用自己的局部规则、构建树和验证入口。DUT 的交叉构建、主机侧 Python/PyQt、部署和板端运行是独立证据，不能并入宿主 CTest。PyQt 套件即使断言全部通过，`FigureCanvasQTAgg` teardown 仍可能出现 `RuntimeError`；出现该告警的运行不属于完全干净的门禁结果，必须单独记录并处理。
+`dut/` 使用自己的局部规则、构建树和验证入口。DUT 的协议资产校验、交叉构建、部署和板端运行是独立证据，不能并入宿主 CTest。
 
 ## 5. 证据层级与边界
 
@@ -123,7 +123,7 @@ git diff --check
 | 纯单元/协议 | CSV golden、脚本化传输、Fake executor、纯前端状态和解析 | 真机时序、真实串口、物理电平或实际 SDK 安装 |
 | HAL Mock / Provider 集成 | Mock Adapter、动态 Fake C ABI、本机 Qt UDP、隔离 WebSocket | DUT、PXI、DDS、真实串口或台架安全性 |
 | Vendor Adapter Fake | 同一 Adapter 源码配合 Fake NIDAQmx | NI SDK、MAX 身份、PXI-6259/PXI-6733 接线、输出或安全清零 |
-| DUT 主机侧/交叉构建 | Python/PyQt、AArch64 交叉编译、协议资产校验 | 已部署板端运行、真实硬件行为或机械性能 |
+| DUT 协议/交叉构建 | 协议资产校验、AArch64 交叉编译 | 已部署板端运行、真实硬件行为或机械性能 |
 | 真实硬件 | 经明确授权的隔离台架、独立记录和实际接线/仪器数据 | 默认 CTest、CI 或未经授权的自动化 |
 
 - 自动化中的串口回环/回显、Qt UDP、Fake SDK、Mock、浏览器 Vitest 和交叉构建均不构成真实 COM、DH 点火、DDS 舵机、PXI 或目标板验收。

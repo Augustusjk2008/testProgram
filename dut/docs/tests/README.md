@@ -37,18 +37,14 @@
 
 脚本使用独立的 `build/aarch64/tests/<Config>` 构建树，不复用应用画像。目标、筛选参数和部署选项以 `tests/test-deploy.ps1` 的当前帮助及[详细 DDS 测试说明](dds-test-guide.md)为准。
 
-## PC 串口工具测试
+## 协议资产检查
 
-Windows PyQt5 工具使用 `test_pyqt/requirements-win7.txt` 锁定依赖。激活对应 Python 环境后运行：
+在 `dut/` 目录检查 CSV 与生成代码是否一致：
 
 ```powershell
-$env:QT_QPA_PLATFORM = 'offscreen'
-python -m pytest -q .\test_pyqt\tests
 python .\tools\generate_product_protocol.py --check `
   .\docs\design\product_protocol_csv
 ```
-
-`test_pyqt/run.bat`（或 `run.ps1`）是工具运行入口，会拒绝 base/system Python。PC 假后端和界面测试不覆盖宿主 Web 的 `device_stream` 生命周期，也不构成 COM、DDS、舵机或目标板实测。
 
 ## 前置条件
 
@@ -63,7 +59,6 @@ python .\tools\generate_product_protocol.py --check `
 - `MB_DDF_HW_Smoke` 默认只读，不覆盖 COM 回环、DIDO、DH、舵控或 CPU SPI Flash 写入；
   它对 UPDATE image IP version 与 FPGA update state 仅做通信检查和快照读取，不写入或触发
   更新。完整硬件边界见[硬件层详细设计](../design/hardware-layer-architecture.md)。
-- PyQt 断言通过若伴随异步 Qt/Matplotlib teardown 异常，必须单独记录，不能称为完全干净门禁。
 - 协议资产只使用 `dut/docs/design/product_protocol_csv/`；其他目录的结果不构成当前协议证据。
 - 串口、网口、SPI、DH、DDS、舵机和其他硬件结论必须记录目标身份、工具链、命令、日志、退出状态与收尾结果。
 

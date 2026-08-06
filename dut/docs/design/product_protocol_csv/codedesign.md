@@ -331,7 +331,7 @@ BUS_ECHO 的每个 DUT `03/02` 请求只执行一轮：DUT 在所选 COM 以 `lo
 全部 114 字节，独立外部 PC/夹具必须在 5 秒内原样回发。DUT 严格比较接收长度和每一个字节；
 任何不一致都失败，响应中的 `data[114]` 回传实际接收字节供宿主核对。多轮由根宿主
 `mbddf.serial_test` 在同一次 BIZ `single` 的一个 `executeStep()` 内顺序复合，每轮均为独立
-`03/02` 与 5 秒回显事务；旧 PyQt 仅经 COM3 控制口下发单次请求，不能充当外部 ECHO 对端。
+`03/02` 与 5 秒回显事务。
 
 BUS 不再包含网口或 SPI Flash 路径。SPI Flash 仅由独立 `SPI_FLASH_TEST` 在固定隔离测试区
 执行，不承载任意 BUS payload。

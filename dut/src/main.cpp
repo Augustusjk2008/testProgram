@@ -11,7 +11,11 @@
 #include <exception>
 
 int main() {
+#if defined(MB_DDF_APP_HW_TEST) && !defined(NDEBUG)
+    LOG_SET_LEVEL_DEBUG();
+#else
     LOG_SET_LEVEL_INFO();
+#endif
     LOG_DISABLE_TIMESTAMP();
     LOG_DISABLE_FUNCTION_LINE();
 

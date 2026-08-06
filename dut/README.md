@@ -1,13 +1,13 @@
 # MB_DDF_v2
 
 > 项目版本：`2.0.0`
-> 文档最后更新：`2026-08-01`
+> 文档最后更新：`2026-08-06`
 
 共享库 ABI v2 客户端必须重新编译；旧客户端应继续使用真实的 `.so.1`，不得将 `.so.1` 软链接到 `.so.2`。
 ABI v1 与 v2 也不得装入同一进程；需要同时保留两代时，应使用进程边界隔离。
 
 MB_DDF_v2 是面向 AArch64 Linux 的 C++20 工程，包含共享内存 DDS、XDMA 硬件抽象层、
-产品硬件测试服务、只读硬件 Demo，以及配套的 Windows PyQt5 串口工具。Windows 主机
+产品硬件测试服务和只读硬件 Demo。Windows 主机
 负责编译、部署和结果收集；生成的 C++ 二进制只在目标板运行。
 
 ## 主要功能
@@ -34,10 +34,6 @@ CMake 版本，文档不得把任一更高版本写成已经由工程门禁保�
 完整能力测试还需要 `/dev/spidev0.0`。部署目标由 `build.ps1`、`debug.ps1` 的参数指定；
 完整环境变量和工具链参数见
 [编译、运行与调试指南](docs/guides/build-and-debug-guide.md)。
-
-PC 串口工具支持 Windows 7 SP1 x64 和 Python 3.8.18，依赖锁定在
-[`test_pyqt/requirements-win7.txt`](test_pyqt/requirements-win7.txt)。工具使用 PyQt5
-`QtSerialPort`，不依赖 `pyserial`。
 
 ## 快速开始
 
@@ -93,35 +89,6 @@ build\aarch64\hw_test\Release\MB_DDF_v2_HelmControl
 
 `MB_DDF_HW_Smoke` 默认只读，不启用 COM 回环、产品硬件测试服务或 DH 点火；它对
 UPDATE image IP version 与 FPGA update state 只做通信检查和快照读取，不写入或触发更新。
-
-## PC 串口工具
-
-安装锁定依赖后，从根目录启动：
-
-```powershell
-.\test_pyqt\run.bat
-```
-
-使用已安装锁定依赖的 Python 环境打包为独立目录：
-
-```powershell
-.\test_pyqt\run.bat package
-```
-
-产物入口为
-`build\test_pyqt\dist\MB_DDF_HW_Test_PC\MB_DDF_HW_Test_PC.exe`。打包脚本会将产品协议
-CSV 一并收录。当前环境中的 PyInstaller 6.17.0 产物尚未在 Windows 7 SP1 x64 实机验证，
-交付前仍需在目标系统完成启动、串口枚举及 `614400 / 8E1` 联调。
-
-与板端回显或产品协议服务联调时，板端链路固定为 COM3，配置为
-`614400 / 8E1 / 无流控`。PC 工具保留通用串口控件，但联调配置必须与板端一致。
-
-PC 测试是 Windows 主机运行 Python 测试的明确例外：
-
-```powershell
-$env:QT_QPA_PLATFORM = 'offscreen'
-python -m pytest -q .\test_pyqt\tests
-```
 
 ## 协议兼容与限制
 

@@ -36,8 +36,7 @@ src/MB_DDF_Demo/HardwareExamples.cpp
 该画像编入 COM3 产品协议服务、系统测试、硬件测试 provider 和舵机 DDS bridge，启用
 硬件层并关闭 DDS Adapter；同一构建另产出用户独立启停的 `MB_DDF_v2_HelmControl`。
 
-`IMU_STREAM` 复用该 HW_TEST 的 COM3 产品协议服务，但不是 `test_pyqt` 的第 12 个页面，
-也不进入旧工具的“执行全部”或“连续”功能。宿主工程通过
+`IMU_STREAM` 复用该 HW_TEST 的 COM3 产品协议服务。宿主工程通过
 `configs/mbddf_imu_stream.testcfg.json` 只以 `device_stream` 运行：PC 发送一次 `09/10`，
 DUT 从 COM4（偏移 `0x100000`、event 3、`921600/8E1`）读取 FPGA 已处理的 59 字节
 payload，经 COM3 主动上送完整 `09/01`，停止时最多发送一次 `09/11`。至少一帧有效反馈
@@ -168,13 +167,13 @@ DH、舵控板级输出、DDS 舵机连续实测和 SPI Flash 写操作；本版
 link 2 是 COM3 控制口，必须在打开硬件前返回 `CHANNEL_INVALID`，其余 link 也拒绝。
 BUS_LOOP 使用内部 `loopback=true`，BUS_ECHO 使用 `loopback=false`：DUT 每个请求只发送
 一次完整 114 字节，独立 PC/夹具必须在 5 秒内原样回发，长度或内容不符即失败。BUS 不再
-提供网口或 SPI Flash 路径，SPI Flash 仅由独立 `SPI_FLASH_TEST` 处理。“执行全部”先配置
+提供网口或 SPI Flash 路径，SPI Flash 仅由独立 `SPI_FLASH_TEST` 处理。DH 路径先配置
 DH0=80 ms、DH1..22=63 ms 的 23 路脉宽，再按电源使能、回线使能、Multiple 模式和通道位图执行 DH 控制；23 路遥测电压
 从 ADS1258 `raw[1]`、`raw[4..25]` 读取，板端完成分段定标后按
 `0.001 V/LSB` 回告。DH 控制默认回告 50 次、间隔 2500 us，间隔不得低于 2500 us；板端
 按每帧实际采样起点计算下一截止点并在采样后立即发送，串口发送时间不额外叠加到间隔。
-当前 PC 导航和“执行全部”使用舵控板级命令
-`HELM_BOARD_TEST (07/02)`：B9 低 4 位保留、高 4 位写四路方向，B10-B13 分别下发四路
+舵控板级命令 `HELM_BOARD_TEST (07/02)` 的 B9 低 4 位保留、高 4 位写四路方向，
+B10-B13 分别下发四路
 整数占空比 `0..100%`，读取四路 AD7606，并回读 `pwm_duty_match`、raw duty、peak、方向、
 使能及 PWM/AD 状态。板端按 `raw=(uint64_t(peak)*percent+50)/100` 换算占空比；命令结束后
 保持输出和 AD7606 状态，不自动恢复。`07/02` 不查询连续 DDS 舵机实测的状态，也不会
@@ -185,88 +184,11 @@ Web 主基线通过 `HELM_START (07/10)` 运行舵机连续实测：`start` 单�
 `sweep_duration_s` 指定对数扫频总时长；DUT 每 1 ms 经 DDS 发布一条完整指令，
 `HELM_FEEDBACK (07/01)` 每帧批量携带 1..5 个完整 41 字节反馈样本，
 `HELM_STOP (07/11)` 只关闭本次 DDS bridge。`MB_DDF_v2_HelmControl` 由用户独立操作，
-测试服务不启动、停止或占有它，启动顺序不限。旧 PyQt 导航仍只显示 `07/02` 板级页。
+测试服务不启动、停止或占有它，启动顺序不限。
 SYSTEM_STATUS 的 `net_init_time` 当前固定为 `0 s`；RK3588 温度来自 `center_thermal`
 hwmon，K7 温度来自 XADC 全局 `0x150000` 的局部 `0x200`，缺失实际温度源或其他未确认
 硬件映射均返回明确错误。完整合同见
 [COM3 产品协议设计](../design/product_protocol_csv/codedesign.md)。
-
-### 3.5 PC 串口工具
-
-Windows 串口工具位于 `test_pyqt`，连接板端 COM3 对应的 Windows 串口。板端 COM3
-不表示必须选择 Windows 的 `COM3`，应选择与板端 COM3 物理连接的主机串口。窗口顶部
-是紧凑连接状态栏，显示当前 Windows COM、连接状态和解析模式，并提供连接/断开、
-执行全部和停止操作；详细串口配置及完整彩色日志集中在“连接与日志”页。启动：
-
-```powershell
-.\test_pyqt\run.bat
-# 或
-.\test_pyqt\run.ps1
-```
-
-需要生成免 Python 安装的独立目录时，使用同一个固定 `pyqt5_env` 环境执行：
-
-```powershell
-.\test_pyqt\run.bat package
-# 或
-.\test_pyqt\run.ps1 -Package
-```
-
-打包结果位于
-`build\test_pyqt\dist\MB_DDF_HW_Test_PC\MB_DDF_HW_Test_PC.exe`，协议 CSV 位于产物内部，
-不需要另行复制。当前 `pyqt5_env` 安装的 PyInstaller 6.17.0 尚未在 Windows 7 SP1 x64
-实机验证；交付 Win7 前必须补做启动、端口枚举、串口打开和协议收发验证。
-
-工具默认使用 `614400 / 8 / Even / 1 / None`；界面保留通用串口参数，但联调本工程
-COM3 画像时必须保持该默认值。发送区只接受十六进制 payload。线序帧为
-`[55 AA][LEN][DATA][CRC_LO CRC_HI]`，CRC-16/XMODEM 的校验范围
-是长度字节和 payload；单次 payload 为 1..255 字节。半帧超过 500 ms 会复位解析器，
-CRC 错误不会被报告为有效回显。
-
-左侧使用单层纵向标签，依次为“连接与日志”“串口回显”“系统状态”“内存”
-“SPI Flash”“总线”“DI”“DO”“电气健康”“DH 脉宽配置”“DH 控制”
-“舵控板级”和“定时器”。进入“串口回显”页会选择回显解析，进入任一硬件测试页会选择
-产品协议；“连接与日志”页不改变当前解析模式。切换标签不会取消在途测试或清空已显示
-结果。舵机连续实测由根仓 Web 主基线操作，旧 PyQt 导航不创建该设备流页面。
-
-串口回显页联调前先运行 `debug.bat com3_echo`；任一硬件测试页联调前先运行
-`debug.bat hw_test_run`。串口回显支持 1..255 字节 payload；旧 PyQt 可见硬件测试页只
-发送其协议规定的 48/123 字节数据段，一次只保留一个普通待响应请求，并把 DH 突发单独路由。
-除 BUS 外，每个硬件测试页的“执行”按钮旁提供“连续”按钮；连续是用户显式开启的重复执行，
-每轮请求收到终态后等待 200 ms 再发下一轮，不会与在途请求重叠。BUS_ECHO 的连续轮次由
-根宿主 `mbddf.serial_test` 在同一次 BIZ `single` 运行的 `executeStep()` 中依次处理；旧 PyQt
-只经 COM3 控制口发一次请求，既不是 COM1/COM2/COM4
-的外部回送端，也不能作为外部 ECHO 验收证据。再次点击“连续”或点击顶部“停止”会取消
-后续轮次；涉及写入的页面仍只能在已隔离且允许写入的目标板上使用。
-DH 控制页完整缓存 23 路点火状态和遥测电压，但曲线只绘制本次请求选中的通道；回告较多时
-只批量刷新界面，原始回告仍完整缓存，超过 5000 个显示点时均匀抽样绘图。用户可指定保存
-目录；完成、失败或停止时，PC 将完整去重回告写入 UTF-8-SIG TSV 长表，文件名固定为
-`DH_data_YYYYMMDD_HHMMSS_ffffff.txt`。11 个硬件测试页分别保存各自的参数、状态和最近
-结果，每页通过“结果 / 原始字段”视图
-展示专用指标、位图、表格或图表以及协议原始字段，不再共用全局响应表。顶部“执行全部”
-会收集各页当前参数，其中舵控项执行 `07/02` 板级测试；任一页参数无效时会定位该页且
-不发送请求。
-
-界面显示未执行、执行中、执行完成、执行失败和通信失败；后三项是终态。它不根据测量值
-判定硬件通过与否。DH 控制页保留多帧报告并允许选择查看；舵控板级页分别设置四路 PWM
-整数占空比 `0..100%` 和方向，并显示请求百分比、`pwm_duty_match`、raw duty、peak、
-方向回读及四路 AD7606。保留的旧扫频页面仍维持
-原有语义：HELM_START/HELM_STOP ACK 不覆盖反馈曲线，停止时等待 HELM_STOP 响应，板端
-返回清理错误时不得显示为执行完成。定时器的 TIMER_STOP ACK 不覆盖 START 阶段的抖动
-统计。
-
-电气健康页从响应 B31-B32 读取 XADC `value_YX`，只显示 `activate_bits.bit0` 并命名为
-“BC激活好”；bit1..7 固定为 0 且不显示。舵控板级页读取 AD7606 四路舵反馈。板端直接
-发送 XADC 12 位 ADC code 和 AD7606 有符号 16 位 raw，PC 分别按
-`10.09/4096 V/code`、`10/65536 V/code` 换算。
-ADS1258 由板端按当前 v4 两芯片诊断定标换算，完整公式统一见
-[硬件层详细设计](../design/hardware-layer-architecture.md)；电气健康的
-`c_volt/b_volt/v28_5` 按 `0.01 V/LSB` 编码。“BC激活好”对应的 `activate_bits.bit0` 来自 DH
-`BatteryStatus` 高字节 `0xAA/0xFF`，其他高字节值返回 `REG_READ_WRITE_FAILED`。
-电气健康页选择“连续”后会在页面指定目录累计每轮完整响应；停止、断连或关闭窗口时一次性
-保存为 UTF-8-SIG TSV，文件名为 `ElectricalHealth_data_YYYYMMDD_HHMMSS_ffffff.txt`。
-每行对应一次响应，包含 PC 接收相对时间（微秒）、序号、status/err_code、10 路已解码电压、
-原始 `activate_bits` 和 `bc_activate_good`（bit0）；失败响应的测量字段写为 `NA`。
 
 ## 4. DDS 示例
 
